@@ -14,6 +14,8 @@
 
 #include "vk_api.h"
 #include "vk_draw.h"
+#include "amd_profile.h"
+#include "vk_discord.h"
 #include "vk_internal.h"
 #include "gpu_choice.h"
 #include "vk_menu.h"
@@ -335,14 +337,44 @@ bool create_device() {
         // default to 64 where they like, and the networks' output came out as coloured noise (Hookshot issues 10 and 14)
         VkPhysicalDeviceSubgroupSizeControlProperties sc{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_PROPERTIES};
         VkPhysicalDeviceSubgroupProperties sg{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};
+        dev.vk12_props = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES};
+        sc.pNext = &dev.vk12_props;
         sg.pNext = &sc;
         VkPhysicalDeviceProperties2 p2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
         p2.pNext = &sg;
         vkGetPhysicalDeviceProperties2(dev.physical, &p2);
-        const bool pin = f13.subgroupSizeControl && sc.minSubgroupSize <= 32 && sc.maxSubgroupSize >= 32 && !getenv("RX_VK_NO_SUBGROUP_PIN");
+        dev.subgroup_size = sg.subgroupSize ? sg.subgroupSize : 32;
+        dev.min_subgroup_size = sc.minSubgroupSize ? sc.minSubgroupSize : dev.subgroup_size;
+        dev.max_subgroup_size = sc.maxSubgroupSize ? sc.maxSubgroupSize : dev.subgroup_size;
+        dev.subgroup_ops = sg.supportedOperations;
+        dev.subgroup_quad_all_stages = sg.quadOperationsInAllStages != VK_FALSE;
+        const bool pin = f13.subgroupSizeControl && dev.min_subgroup_size <= 32 && dev.max_subgroup_size >= 32 && !getenv("RX_VK_NO_SUBGROUP_PIN");
         dev.sg32_stages = pin ? sc.requiredSubgroupSizeStages : 0;
-        logf("vk: subgroups: default %u lanes, %u-%u, pinned to 32 on stages %#x", sg.subgroupSize, sc.minSubgroupSize, sc.maxSubgroupSize,
-             (unsigned)dev.sg32_stages);
+        logf("vk: subgroups: default %u lanes, %u-%u, pinned to 32 on stages %#x (ops %#x, quad all stages %d)", dev.subgroup_size,
+             dev.min_subgroup_size, dev.max_subgroup_size, (unsigned)dev.sg32_stages, (unsigned)dev.subgroup_ops,
+             (int)dev.subgroup_quad_all_stages);
+    }
+    if (getenv("RX_VK_NO_MESH")) mesh.meshShader = mesh.taskShader = VK_FALSE;
+    if (dev.props.vendorID == 0x1002) {
+        const auto arch = amd_profile::detect_arch(dev.props.vendorID, dev.props.deviceID, dev.props.deviceName,
+                                                   dev.min_subgroup_size, dev.mesh_shader, dev.coop_matrix);
+        uint64_t vram_bytes = 0, rebar_mb = 0;
+        for (uint32_t h = 0; h < dev.memory.memoryHeapCount; h++)
+            if (dev.memory.memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
+                vram_bytes = std::max<uint64_t>(vram_bytes, dev.memory.memoryHeaps[h].size);
+        for (uint32_t i = 0; i < dev.memory.memoryTypeCount; i++) {
+            const uint32_t flags = dev.memory.memoryTypes[i].propertyFlags;
+            if ((flags & (VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)) ==
+                (VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT))
+                rebar_mb = std::max<uint64_t>(rebar_mb, dev.memory.memoryHeaps[dev.memory.memoryTypes[i].heapIndex].size >> 20);
+        }
+        const int rec_preset = amd_profile::recommended_preset(
+            vram_bytes, dev.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU);
+        logf("vk: AMD %s (%s, %s %s): VRAM %llu MB, host-visible %llu MB (%s), mesh shaders %s, Wave32 pinned %#x (unpinned Wave64), preset %s",
+             amd_profile::arch_name(arch), dev.props.deviceName, dev.vk12_props.driverName, dev.vk12_props.driverInfo,
+             (unsigned long long)(vram_bytes >> 20), (unsigned long long)rebar_mb,
+             rebar_mb > 512 ? "ReBAR/SAM" : "256 MB BAR", dev.mesh_shader ? "on" : "off (RDNA 1 baseline)",
+             (unsigned)dev.sg32_stages, amd_profile::preset_label(rec_preset));
     }
     if (!f13.dynamicRendering || !f13.synchronization2 || !f12.timelineSemaphore) {
         logf("vk: the GPU lacks dynamic rendering, synchronization2 or timeline semaphores");
@@ -350,10 +382,6 @@ bool create_device() {
     }
     mesh.multiviewMeshShader = mesh.primitiveFragmentShadingRateMeshShader = VK_FALSE;   // (not used)
     dev.mesh_shader = dev.mesh_shader && mesh.meshShader && mesh.taskShader;
-    // (hookshot, issue 640) RDNA1 and older GPUs: no mesh shaders, but task and mesh programs run as compute shaders
-    // that write their vertices to buffers, drawn through an ordinary graphics pipeline. It needs buffer device addresses.
-    dev.mesh_fallback = !dev.mesh_shader && f12.bufferDeviceAddress && !getenv("RX_VK_NO_MESH_FALLBACK");
-    if (dev.mesh_fallback) logf("vk: no mesh shaders: task and mesh programs run as compute shaders (issue 640 fallback)");
     if (robust) logf("vk: robust buffer access %s", robust_ok ? "on" : "not supported");
     f.features.robustBufferAccess = robust_ok ? VK_TRUE : VK_FALSE;   // (off by default: the game's accesses stay in their buffers)
     dev.features = f.features;
@@ -537,7 +565,7 @@ bool started_up() {
         printf("@@stage shaders Preparing shaders\n");
         fflush(stdout);
         part = 0;
-        const bool prepared = prepare_run(progress, false);
+        const bool prepared = prepare_run(progress);
         part = 1;
         if (prepared) predict_run(progress);
         part = 2;
@@ -549,14 +577,17 @@ bool started_up() {
     if (FILE* f = fopen(skipped_path().c_str(), "rb")) {
         fclose(f);
         logf("vk: the shaders' preparation was skipped at the build: left to when each is first drawn");
+        discord_start(dev.props.deviceName, dev.props.vendorID, dev.props.deviceID, dev.max_subgroup_size, dev.mesh_shader);
         return true;
     }
+    discord_start(dev.props.deviceName, dev.props.vendorID, dev.props.deviceID, dev.max_subgroup_size, dev.mesh_shader);
     if (precompile_wanted()) {   // (a release build, before the game: nothing to build during play)
         // (a console while it lasts: there is no window yet, and a long wait with nothing on screen looks like a hang)
         static HANDLE console = nullptr;
         const auto progress = [](size_t done, size_t total) {
             static bool tried = false;
             if (!total) return;
+            discord_set_shader_progress(done, total);
             if (!tried) {
                 tried = true;
                 if (AllocConsole()) {
@@ -582,10 +613,10 @@ bool started_up() {
             DWORD wrote = 0;
             WriteFile(console, line, (DWORD)n, &wrote, nullptr);
         };
-        const bool update = prepare_is_update();   // (an update: what the notes name now, the rest in play)
-        if (!update && prepare_run(progress, false)) predict_run(progress);
+        if (prepare_run(progress)) predict_run(progress);
         precompile_run(progress);
-        if (update) prepare_background();
+        pipeline_cache_save(true);
+        discord_set_in_game();
         if (console) CloseHandle(console), console = nullptr, FreeConsole();
     }
     return true;
@@ -670,7 +701,7 @@ __attribute__((visibility("default")))
 #endif
 const MkwVkRenderer* mkwvk_init(const MkwVkHost* h) {
     using namespace mkwvk;
-    if (!h || h->version != MKWVK_API_VERSION) return nullptr;
+    if (!h || (h->version != 4 && h->version != 6 && h->version != 7)) return nullptr;
     host = h;
     if (!load_global()) {
         logf("vk: vulkan-1.dll not found");
@@ -681,10 +712,9 @@ const MkwVkRenderer* mkwvk_init(const MkwVkHost* h) {
          dev.props.deviceName, VK_VERSION_MAJOR(dev.props.apiVersion), VK_VERSION_MINOR(dev.props.apiVersion),
          dev.props.driverVersion, dev.mesh_shader ? "yes" : "no", dev.external_memory_host ? "yes" : "no",
          dev.graphics_pipeline_library ? "yes" : "no");
-    if (!dev.mesh_shader && !dev.mesh_fallback && !getenv("RX_VK_NO_MESH_WARNING")) {
+    if (!dev.mesh_shader && !getenv("RX_VK_NO_MESH_WARNING")) {
         // (the game draws its foliage, grass and many effects with mesh shaders: without them those draws are left out and the
-        // picture is broken (an RX 580's "static"-like scenes, 2026-11-08). Said once, on its own thread, and the game goes on.)
-        // (a GPU with no buffer device addresses has no fallback to run either)
+        // picture is broken (an RX 580's "static"-like scenes, 2026-11-08). Said once, on its own thread, and the game goes on)
         logf("vk: this GPU has no mesh shaders: the game's foliage, grass and many effects cannot be drawn");
 #ifdef _WIN32
         std::thread([name = std::string(dev.props.deviceName)] {
@@ -696,7 +726,7 @@ const MkwVkRenderer* mkwvk_init(const MkwVkHost* h) {
         }).detach();
 #endif
     }
-    table.version = MKWVK_API_VERSION;
+    table.version = h->version;
     table.start = start;
     table.resize = resize;
     table.describe = describe;
