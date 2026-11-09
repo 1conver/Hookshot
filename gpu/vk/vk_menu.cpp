@@ -13,8 +13,10 @@
 #include <vector>
 
 #include "vk_paths.h"
+#include "vk_discord.h"
+#include "vk_jobs.h"
+#include "vk_draw.h"
 #include "vk_menu.h"
-#include "oot_cheat_items.h"
 #include "vk_work.h"   // (after the others: counts the commands that do GPU work, for full_barrier)
 #ifndef HOOKSHOT_VERSION   // (nx2/build.py gives it to this file: nx2/version.py)
 #define HOOKSHOT_VERSION "unknown"
@@ -63,35 +65,8 @@ const char* tx_percent(int v) {
     snprintf(b, sizeof b, "%d%%", v);
     return b;
 }
-// The output the menu's sizes are shown for: the Output resolution row's (applied at the next start), so the rows below follow a change
-// at once; the handheld profile runs the game's own (1536x864)
-struct Out {
-    uint32_t w, h;
-};
-Out shown_output() {
-    static const Out t[] = {{2048, 1152}, {2560, 1440}, {3840, 2160}};
-    return opts.handheld ? Out{1536, 864} : t[std::min(std::max(opts.output_res, 0), 2)];
-}
-constexpr int kResPercent[] = {0, 100, 75, 67, 50};
-// The size the game draws the 3D at for a fixed scale of its output, a twelfth of it: every twelfth asked came out exact at the three
-// outputs (2048x1152: 0.58 drew 1195x672, 0.6667 1366x768). So the scale the game is given is the twelfth too: 0.67 drew 2615x1471 at
-// 3840x2160, not the 2560x1440 of 8/12.
-int twelfths(float scale) { return std::min(std::max((int)(scale * 12.0f + 0.5f), 1), 12); }
-void game_size(float scale, uint32_t& w, uint32_t& h) {
-    const Out o = shown_output();
-    const int k = twelfths(scale);
-    w = (o.w * k + 11) / 12, h = o.h * k / 12;
-}
 const char* tx_resolution(int v) {
-    static char b[48];
-    if (v <= 0 || v > 4) return "Auto (dynamic)";
-    uint32_t w, h;
-    game_size(kResPercent[v] / 100.0f, w, h);
-    snprintf(b, sizeof b, "%d%% (%ux%u)", kResPercent[v], w, h);
-    return b;
-}
-const char* tx_output_res(int v) {
-    static const char* t[] = {"2048x1152 (game, restart)", "2560x1440 (restart)", "3840x2160 (restart)"};
+    static const char* t[] = {"Auto", "100%", "75%", "67%", "50%"};
     return t[v];
 }
 const char* tx_speed(int v) { return v ? "Real time" : "Per frame"; }
@@ -115,6 +90,7 @@ const char* tx_gpu(int v) {
     return buf;
 }
 const char* tx_pad_layout(int v);
+const char* tx_button_icons(int v);
 const char* tx_robust(int v) {
     static const char* t[] = {"Auto (restart)", "Off (restart)", "On (restart)"};
     return (unsigned)v < 3 ? t[v] : t[0];
@@ -136,15 +112,15 @@ void sync_preset_budgets(int p) {
 void apply_preset(int p) {
     switch (p) {
     case 1: // Minimum (4GB VRAM / iGPU)
-        opts.resolution = 4; opts.upscale = 2; opts.sharpness = 50;
-        opts.framegen = 2;   opts.pace = 1;    opts.realtime = 1; opts.handheld = 1;
+        opts.resolution = 4; opts.upscale = 0; opts.sharpness = 0;
+        opts.framegen = 0;   opts.pace = 0;    opts.realtime = 1; opts.handheld = 1;
         break;
     case 2: // Low (6GB VRAM)
-        opts.resolution = 2; opts.upscale = 2; opts.sharpness = 35;
-        opts.framegen = 2;   opts.pace = 1;    opts.realtime = 1; opts.handheld = 1;
+        opts.resolution = 2; opts.upscale = 1; opts.sharpness = 25;
+        opts.framegen = 0;   opts.pace = 1;    opts.realtime = 1; opts.handheld = 1;
         break;
     case 3: // Balanced (8GB VRAM)
-        opts.resolution = 1; opts.upscale = 1; opts.sharpness = 25;
+        opts.resolution = 0; opts.upscale = 1; opts.sharpness = 25;
         opts.framegen = 2;   opts.pace = 1;    opts.realtime = 1; opts.handheld = 0;
         break;
     case 4: // High (12GB VRAM)
@@ -177,9 +153,6 @@ Row rows[] = {
     {TAB_GRAPHICS, "Resolution", &opts.resolution, 0, 4, 1, tx_resolution,
      "How sharp the 3D is drawn. Auto lets the game lower it when the GPU is busy. A fixed percentage stays steady: lower is "
      "faster."},
-    {TAB_GRAPHICS, "Output resolution", &opts.output_res, 0, 2, 1, tx_output_res,
-     "The size the game draws its whole frame at, HUD included, before it is scaled to your window. The 3D is drawn at the "
-     "Resolution percentage of it. Docked only. Applies after a restart."},
     {TAB_GRAPHICS, "Upscaling", &opts.upscale, 0, 2, 1, tx_upscale,
      "The filter that scales the picture to your window. Off is the plain copy. Catmull-Rom is sharper, Lanczos sharper still."},
     {TAB_GRAPHICS, "Sharpness", &opts.sharpness, 0, 100, 10, tx_percent,
@@ -192,15 +165,21 @@ Row rows[] = {
      "Bounds-checked buffer reads: a read past a buffer's end is dropped instead of stopping the GPU. Auto is on, on every card; "
      "Off can be faster on some NVIDIA cards. Applies after restart."},
 
-    // Gameplay (3 rows)
+    // Gameplay (4 rows)
     {TAB_GAMEPLAY, "FPS counter", &opts.show_fps, 0, 1, 1, tx_onoff,
      "Shows frames per second in the top right corner. With frame generation on, it also shows the game's own rate."},
+    // [HOOKSHOT-FLAG-NET-GRAPH]
+    {TAB_GAMEPLAY, "Net graph", &opts.net_graph, 0, 1, 1, tx_onoff,
+     "Shows real-time frame pacing, wait/idle status, and a spinner showing background shader/pipeline compilations."},
     {TAB_GAMEPLAY, "Game speed", &opts.realtime, 0, 1, 1, tx_speed,
      "Per frame: the game slows down whenever it runs below 60 fps. Real time: it keeps normal speed down to 15 fps by taking "
      "longer steps."},
     {TAB_GAMEPLAY, "Text speed", &opts.text_speed, 0, 3, 1, tx_text_speed,
      "How fast the letters of dialogue and other messages appear. Normal is the game's own pace, with its pauses. Instant shows "
      "each page at once, as pressing A does."},
+    {TAB_GAMEPLAY, "Discord Rich Presence", &opts.discord, 0, 1, 1, tx_onoff,
+     "Shows on your Discord profile that you are playing Ocarina of Time, with its cover, the time played and your GPU. Off "
+     "clears it at once."},
 
     // Controls (8 rows)
     {TAB_CONTROLS, "Controller in background", &opts.pad_background, 0, 1, 1, tx_onoff,
@@ -218,98 +197,14 @@ Row rows[] = {
      "Inverts horizontal look (left/right) on the right analog stick."},
     {TAB_CONTROLS, "Invert camera Y", &opts.invert_cam_y, 0, 1, 1, tx_onoff,
      "Inverts vertical look (up/down) on the right analog stick."},
-    {TAB_CONTROLS, "Layout preset", &opts.pad_layout, 0, 3, 1, tx_pad_layout,
-     "Nintendo (default Switch order), Xbox / PC (A for action/talk), or Swap Face. Individual bindings switch this to Custom."},
+    {TAB_CONTROLS, "Button icons", &opts.button_icons, 0, 2, 1, tx_button_icons,
+     "Controller button style and prompt labels: Nintendo (A/B/X/Y), Xbox / PC (A/B/X/Y), or PlayStation (Cross/Circle/Square/Triangle)."},
+    {TAB_CONTROLS, "Layout preset", &opts.pad_layout, 0, 4, 1, tx_pad_layout,
+     "Nintendo (default Switch order), Xbox / PC or PlayStation (bottom button for action/talk), or Swap Face. The Controls "
+     "page names the buttons as on that pad. Individual bindings switch this to Custom."},
     {TAB_CONTROLS, "Controls", nullptr, 0, 0, 0, nullptr,   // (hookshot: opens its page)
      "Which gamepad button and which keys press each of the Switch's buttons."},
-    {TAB_GAMEPLAY, "Cheats", nullptr, 0, 0, 0, nullptr,
-     "Open the private gameplay tools."},
 };
-constexpr int kCheatsRow = sizeof rows / sizeof rows[0] - 1;
-bool cheats_enabled = false;
-std::atomic<int> protect_hearts{-1};
-// -1 disables the shortcut, 0 enables it on the ground, and 1 means flying.
-std::atomic<int> player_flight{-1};
-std::atomic<int> free_camera{0};
-std::atomic<int> cheat_action{0};
-int clock_hour = 12;
-int pouch_item = 0;
-int pouch_delta = 1;
-int cheat_selected = 0;
-constexpr const char* pouch_items[] = {"Deku Seeds", "Deku Nuts", "Deku Sticks", "Bombs", "Arrows"};
-constexpr int kPouchItems = sizeof pouch_items / sizeof pouch_items[0];
-// (teleport list: generated by work/oot-teleport-tools/write_destinations.py)
-// (the order of oot_destinations in host/hos_main.c; Enter sends 1000 + the index)
-constexpr const char* teleport_names[] = {
-    "Kokiri Forest",
-    "Hyrule Field",
-    "Kakariko Village",
-    "Market",
-    "Hyrule Castle",
-    "Lost Woods",
-    "Sacred Forest Meadow",
-    "Lake Hylia",
-    "Graveyard",
-    "Death Mountain Trail",
-    "Death Mountain Crater",
-    "Goron City",
-    "Zora's River",
-    "Zora's Domain",
-    "Zora's Fountain",
-    "Gerudo Valley",
-    "Gerudo Fortress",
-    "Haunted Wasteland",
-    "Desert Colossus",
-    "Inside the Deku Tree",
-    "Dodongo's Cavern",
-    "Jabu-Jabu's Belly",
-    "Forest Temple",
-    "Fire Temple",
-    "Water Temple",
-    "Shadow Temple",
-    "Spirit Temple",
-    "Bottom of the Well",
-    "Ice Cavern",
-    "Gerudo Training Ground",
-    "Ganon's Castle"};
-constexpr const char* teleport_notes[] = {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, "adult only", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
-struct TeleportSection { const char* name; int first; };
-constexpr TeleportSection teleport_sections[] = {{"Overworld", 0}, {"Dungeons", 19}};
-constexpr int kTeleportSections = sizeof teleport_sections / sizeof teleport_sections[0];
-// (end of the generated teleport list)
-constexpr int kTeleports = sizeof teleport_names / sizeof teleport_names[0];
-int teleport_choice = 0;
-int teleport_scroll = 0;   // (the first list line shown on the Teleport page)
-constexpr int kTeleportLines = 20;   // (list lines the Teleport page shows at once)
-// the Inventory page (gpu/vk/oot_cheat_items.h): items and their section headings, counts from the game side
-#define OOT_MENU_ITEM_LABEL(label, name, kind) label,
-#define OOT_MENU_ITEM_KIND(label, name, kind) kind,
-#define OOT_MENU_NO_SECTION(name)
-constexpr const char* item_names[] = {OOT_CHEAT_ITEMS(OOT_MENU_NO_SECTION, OOT_MENU_ITEM_LABEL)};
-constexpr unsigned char item_kinds[] = {OOT_CHEAT_ITEMS(OOT_MENU_NO_SECTION, OOT_MENU_ITEM_KIND)};
-constexpr int kItems = sizeof item_names / sizeof item_names[0];
-// (each section's first item: a counter that a section heading reads and an item bumps)
-constexpr int item_section_count() {
-    int n = 0;
-#define OOT_MENU_COUNT_SECTION(title) n++;
-#define OOT_MENU_SKIP_ITEM(label, name, kind)
-    OOT_CHEAT_ITEMS(OOT_MENU_COUNT_SECTION, OOT_MENU_SKIP_ITEM)
-    return n;
-}
-constexpr int kItemSections = item_section_count();
-struct ItemSections { TeleportSection s[kItemSections]; };
-constexpr ItemSections make_item_sections() {
-    ItemSections r{};
-    int section = 0, item = 0;
-#define OOT_MENU_ADD_SECTION(title) r.s[section].name = title, r.s[section].first = item, section++;
-#define OOT_MENU_ADD_ITEM(label, name, kind) item++;
-    OOT_CHEAT_ITEMS(OOT_MENU_ADD_SECTION, OOT_MENU_ADD_ITEM)
-    return r;
-}
-constexpr ItemSections item_sections = make_item_sections();
-std::atomic<int> item_counts[kItems];   // (-1 until the game side reports: OOT_CHEAT_ITEM_BASE + i)
-int item_choice = 0, item_scroll = 0;
-constexpr int kCheatRows = 11;
 constexpr int kRows = sizeof rows / sizeof rows[0];
 constexpr int kMenuWidth = 480;   // (at a scale of 1: 720 lines)
 
@@ -318,7 +213,7 @@ int tab_selected[TAB_COUNT] = {0, 0, 0};
 
 int tab_row_count(int t) {
     int c = 0;
-    for (int i = 0; i < kRows; i++) if (rows[i].tab == (MenuTab)t && (i != kCheatsRow || cheats_enabled)) c++;
+    for (int i = 0; i < kRows; i++) if (rows[i].tab == (MenuTab)t) c++;
     return c;
 }
 /// The most rows a tab has: the menu keeps that height whichever tab is shown
@@ -331,7 +226,7 @@ int max_tab_rows() {
 int tab_row_to_global(int t, int local_idx) {
     int count = 0;
     for (int i = 0; i < kRows; i++) {
-        if (rows[i].tab == (MenuTab)t && (i != kCheatsRow || cheats_enabled)) {
+        if (rows[i].tab == (MenuTab)t) {
             if (count == local_idx) return i;
             count++;
         }
@@ -353,7 +248,6 @@ std::string ini_path() {
     return dir.substr(0, dir.find_last_of("\\/") + 1) + "hookshot_options.ini";
 }
 const char* ini_key(const Row& r) {
-    if (r.value == &opts.output_res) return "output_res";   // (host/nn_applet.c reads it at the start)
     static char k[32];
     size_t n = 0;
     for (const char* p = r.name; *p && n + 1 < sizeof k; p++) k[n++] = *p == ' ' ? '_' : (char)tolower(*p);
@@ -365,9 +259,13 @@ const char* const bind_names[HOS_KEY_N] = {"a", "b", "x", "y", "ls", "rs", "l", 
                                            "left", "up", "right", "down", "move_up", "move_down", "move_left",
                                            "move_right", "cam_up", "cam_down", "cam_left", "cam_right"};
 bool can_bind() { return host && host->binding && host->bind && host->pad_raw; }
+const char* tx_button_icons(int v) {
+    static const char* t[] = {"Nintendo", "Xbox / PC", "PlayStation"};
+    return t[std::min(std::max(v, 0), 2)];
+}
 const char* tx_pad_layout(int v) {
-    static const char* t[] = {"Nintendo (Def)", "Xbox / PC", "Swap Face", "Custom"};
-    return t[std::min(std::max(v, 0), 3)];
+    static const char* t[] = {"Nintendo (Def)", "Xbox / PC", "PlayStation", "Swap Face", "Custom"};
+    return t[std::min(std::max(v, 0), 4)];
 }
 void apply_pad_layout(int layout) {
     if (!can_bind()) return;
@@ -376,12 +274,20 @@ void apply_pad_layout(int layout) {
         host->bind(HOS_BIND_PAD, HOS_SW_B, 0, HOS_PAD_SOUTH);
         host->bind(HOS_BIND_PAD, HOS_SW_X, 0, HOS_PAD_NORTH);
         host->bind(HOS_BIND_PAD, HOS_SW_Y, 0, HOS_PAD_WEST);
+        opts.button_icons = 0;
     } else if (layout == 1) { // Xbox / PC Standard (Bottom=A, Right=B, Left=X, Top=Y)
         host->bind(HOS_BIND_PAD, HOS_SW_A, 0, HOS_PAD_SOUTH);
         host->bind(HOS_BIND_PAD, HOS_SW_B, 0, HOS_PAD_EAST);
         host->bind(HOS_BIND_PAD, HOS_SW_X, 0, HOS_PAD_WEST);
         host->bind(HOS_BIND_PAD, HOS_SW_Y, 0, HOS_PAD_NORTH);
-    } else if (layout == 2) { // Swap Face Buttons (Bottom=A, Right=B, Top=X, Left=Y)
+        opts.button_icons = 1;
+    } else if (layout == 2) { // PlayStation (Bottom=Cross, Right=Circle, Left=Square, Top=Triangle)
+        host->bind(HOS_BIND_PAD, HOS_SW_A, 0, HOS_PAD_SOUTH);
+        host->bind(HOS_BIND_PAD, HOS_SW_B, 0, HOS_PAD_EAST);
+        host->bind(HOS_BIND_PAD, HOS_SW_X, 0, HOS_PAD_WEST);
+        host->bind(HOS_BIND_PAD, HOS_SW_Y, 0, HOS_PAD_NORTH);
+        opts.button_icons = 2;
+    } else if (layout == 3) { // Swap Face Buttons (Bottom=A, Right=B, Top=X, Left=Y)
         host->bind(HOS_BIND_PAD, HOS_SW_A, 0, HOS_PAD_SOUTH);
         host->bind(HOS_BIND_PAD, HOS_SW_B, 0, HOS_PAD_EAST);
         host->bind(HOS_BIND_PAD, HOS_SW_X, 0, HOS_PAD_NORTH);
@@ -395,9 +301,11 @@ int detect_pad_layout() {
     const int x = host->binding(HOS_BIND_PAD, HOS_SW_X, 0);
     const int y = host->binding(HOS_BIND_PAD, HOS_SW_Y, 0);
     if (a == HOS_PAD_EAST && b == HOS_PAD_SOUTH && x == HOS_PAD_NORTH && y == HOS_PAD_WEST) return 0;
-    if (a == HOS_PAD_SOUTH && b == HOS_PAD_EAST && x == HOS_PAD_WEST && y == HOS_PAD_NORTH) return 1;
-    if (a == HOS_PAD_SOUTH && b == HOS_PAD_EAST && x == HOS_PAD_NORTH && y == HOS_PAD_WEST) return 2;
-    return 3;
+    if (a == HOS_PAD_SOUTH && b == HOS_PAD_EAST && x == HOS_PAD_WEST && y == HOS_PAD_NORTH) {
+        return (opts.pad_layout == 2 || opts.button_icons == 2) ? 2 : 1;
+    }
+    if (a == HOS_PAD_SOUTH && b == HOS_PAD_EAST && x == HOS_PAD_NORTH && y == HOS_PAD_WEST) return 3;
+    return 4;
 }
 void save() {
     // (hookshot) the lines that are not the menu's are kept: the controls, pad_ and key_ (host/nn_hid.c)
@@ -439,11 +347,40 @@ const Control controls[] = {{HOS_SW_A, "A"}, {HOS_SW_B, "B"}, {HOS_SW_X, "X"}, {
                             {HOS_KEY_CAM_RIGHT, "Camera right"}};
 constexpr int kControls = sizeof controls / sizeof controls[0];   // (then "Reset to defaults")
 bool keys_only(int i) { return i < kControls && controls[i].button >= HOS_SW_N; }   // (no gamepad input for those)
+int active_button_style() {
+    int style = opts.button_icons;
+    if (style < 0 || style > 2) {
+        if (opts.pad_layout == 2) style = 2; // PlayStation
+        else if (opts.pad_layout == 1) style = 1; // Xbox / PC
+        else style = 0; // Nintendo
+    }
+    return style;
+}
 const char* pad_name(int p) {
-    static const char* t[HOS_PAD_N] = {"Bottom button", "Right button", "Left button", "Top button", "Select / Back",
-                                       "Home", "Start", "Left stick press", "Right stick press", "L1 / LB", "R1 / RB",
-                                       "D-pad up", "D-pad down", "D-pad left", "D-pad right", "L2 / LT", "R2 / RT"};
-    return p >= 0 && p < HOS_PAD_N ? t[p] : "None";
+    if (p < 0 || p >= HOS_PAD_N) return "None";
+    const int style = active_button_style();
+    if (style == 2) { // PlayStation
+        static const char* const t[HOS_PAD_N] = {
+            "Cross", "Circle", "Square", "Triangle", "Share / Create",
+            "PS Button", "Options", "L3", "R3", "L1", "R1",
+            "D-pad up", "D-pad down", "D-pad left", "D-pad right", "L2", "R2"
+        };
+        return t[p];
+    } else if (style == 1) { // Xbox / PC
+        static const char* const t[HOS_PAD_N] = {
+            "A", "B", "X", "Y", "View / Back",
+            "Xbox Guide", "Menu / Start", "LS press", "RS press", "LB", "RB",
+            "D-pad up", "D-pad down", "D-pad left", "D-pad right", "LT", "RT"
+        };
+        return t[p];
+    } else { // Nintendo
+        static const char* const t[HOS_PAD_N] = {
+            "B", "A", "Y", "X", "Minus (-)",
+            "Home", "Plus (+)", "Left stick press", "Right stick press", "L", "R",
+            "D-pad up", "D-pad down", "D-pad left", "D-pad right", "ZL", "ZR"
+        };
+        return t[p];
+    }
 }
 const char* key_name(int vk) {
     static char b[16];
@@ -508,7 +445,7 @@ const std::vector<int>& bindable_keys() {
     }
     return k;
 }
-int page = 0;          // 0 the options, 1 the controls, 2 the cheats, 3 the teleport list
+int page = 0;          // 0 the options, 1 the controls
 int csel = 0, ccol = 0;   // the controls' row (kControls: reset) and column (0 the gamepad, 1 the keyboard)
 int listening = 0;     // waiting for the new input: 1 a gamepad's, 2 a key
 bool listen_armed = false;   // (once what started it was let go)
@@ -528,7 +465,7 @@ struct Bitmap {
     bool keyed = false;                   // (black is see-through: copied as the runs of pixels in between)
     std::vector<VkBufferImageCopy> runs;
 };
-Bitmap menu_bmp, fps_bmp;
+Bitmap menu_bmp, fps_bmp, net_graph_bmp;
 std::mutex bmp_mu;
 int scale_of(uint32_t h) { return std::max(1u, h / 720); }
 
@@ -547,19 +484,6 @@ void gdi_draw(Bitmap& out, uint32_t w, uint32_t h, void (*paint)(HDC, uint32_t, 
     HGDIOBJ old = SelectObject(dc, bmp);
     paint(dc, w, h, scale);
     GdiFlush();
-    if (const char* dir = &out == &menu_bmp ? getenv("RX_VK_MENU_DUMP") : nullptr) {   // (test runs: each drawing of the menu, as menu_<n>.bmp)
-        static int n = 0;
-        char path[1024];
-        snprintf(path, sizeof path, "%s/menu_%03d.bmp", dir, n++);
-        if (FILE* f = fopen(path, "wb")) {   // (the 14-byte file header and the 40-byte info header, little-endian: 32-bit, top-down)
-            uint8_t hd[54] = {'B', 'M'};
-            auto put = [&](int at, uint32_t v, int bytes) { for (int i = 0; i < bytes; i++) hd[at + i] = (uint8_t)(v >> (8 * i)); };
-            put(2, 54 + w * h * 4, 4), put(10, 54, 4), put(14, 40, 4), put(18, w, 4), put(22, (uint32_t)-(int32_t)h, 4), put(26, 1, 2),
-                put(28, 32, 2);
-            fwrite(hd, 1, sizeof hd, f), fwrite(bits, 4, (size_t)w * h, f);
-            fclose(f);
-        }
-    }
     const bool rgba = dev.swap_format == VK_FORMAT_R8G8B8A8_UNORM || dev.swap_format == VK_FORMAT_R8G8B8A8_SRGB;
     std::lock_guard lk(bmp_mu);
     out.w = w, out.h = h;
@@ -636,12 +560,11 @@ void paint_menu(HDC dc, uint32_t w, uint32_t h, int s) {
     HFONT title = font(20 * s, FW_SEMIBOLD), body = font(16 * s, FW_NORMAL);
     HGDIOBJ old = SelectObject(dc, title);
     SetTextColor(dc, RGB(236, 240, 236));
-    const char* heading = page == 4 ? "Inventory" : page == 3 ? "Teleport" : page == 2 ? "Cheats" : "Hookshot";
-    TextOutA(dc, 16 * s, 12 * s, heading, (int)strlen(heading));
+    TextOutA(dc, 16 * s, 12 * s, "Hookshot", 8);
     {   // (which build, beside the title, so a report can say it without opening the log; the release alone when the whole
         // line would run into the title)
         SIZE tsz{};
-        GetTextExtentPoint32A(dc, heading, (int)strlen(heading), &tsz);
+        GetTextExtentPoint32A(dc, "Hookshot", 8, &tsz);
         HFONT small = font(12 * s, FW_NORMAL);
         SelectObject(dc, small);
         SetTextColor(dc, RGB(140, 150, 144));
@@ -693,102 +616,12 @@ void paint_menu(HDC dc, uint32_t w, uint32_t h, int s) {
         SetTextColor(dc, RGB(140, 150, 144));
         const char* hint = listening ? "Press the new one   Esc cancels"
                                      : "Enter binds   Delete clears   Esc goes back";
-        const char* hint2 = "Gamepad: D-pad moves, bottom button binds, right one goes back";
+        const int style = active_button_style();
+        const char* hint2 = style == 2 ? "Gamepad: D-pad moves, Cross binds, Circle goes back"
+                                       : (style == 1 ? "Gamepad: D-pad moves, A binds, B goes back"
+                                                     : "Gamepad: D-pad moves, B binds, A goes back");
         TextOutA(dc, 16 * s, top + (kControls + 1) * rh + 6 * s, hint, (int)strlen(hint));
         TextOutA(dc, 16 * s, top + (kControls + 1) * rh + 26 * s, hint2, (int)strlen(hint2));
-        SelectObject(dc, old);
-        DeleteObject(title);
-        DeleteObject(body);
-        return;
-    }
-    if (page == 3 || page == 4) {   // the teleport list and the inventory: a heading line per section, then its rows
-        const bool inv = page == 4;
-        const int n = inv ? kItems : kTeleports, sections = inv ? kItemSections : kTeleportSections;
-        const TeleportSection* sec = inv ? item_sections.s : teleport_sections;
-        const int choice = inv ? item_choice : teleport_choice, scroll = inv ? item_scroll : teleport_scroll;
-        const int rh = 24 * s, top = 48 * s;
-        for (int line = scroll; line < std::min(n + sections, scroll + kTeleportLines); line++) {
-            const int y = top + (line - scroll) * rh;
-            int section = 0;
-            while (section + 1 < sections && line >= sec[section + 1].first + section + 1) section++;
-            if (line == sec[section].first + section) {
-                SetTextColor(dc, RGB(96, 176, 112));
-                TextOutA(dc, 16 * s, y + 4 * s, sec[section].name, (int)strlen(sec[section].name));
-                continue;
-            }
-            const int i = line - section - 1;
-            if (i == choice) fill(dc, 8 * s, y, (int)w - 16 * s, rh, RGB(44, 72, 54));
-            SetTextColor(dc, i == choice ? RGB(255, 255, 255) : RGB(196, 204, 198));
-            const char* label = inv ? item_names[i] : teleport_names[i];
-            TextOutA(dc, 32 * s, y + 3 * s, label, (int)strlen(label));
-            char value[24] = "";
-            const char* note = nullptr;
-            if (inv) {
-                const int have = item_counts[i].load(std::memory_order_relaxed);
-                if (have < 0) note = "?";
-                else if (item_kinds[i]) snprintf(value, sizeof value, "%d", have), note = value;
-                else note = have > 0 ? "Have" : "-";
-            } else note = teleport_notes[i];
-            if (note) {
-                SIZE size{};
-                GetTextExtentPoint32A(dc, note, (int)strlen(note), &size);
-                if (!inv || strcmp(note, "Have")) SetTextColor(dc, RGB(140, 150, 144));
-                TextOutA(dc, (int)w - 16 * s - size.cx, y + 3 * s, note, (int)strlen(note));
-            }
-        }
-        SetTextColor(dc, RGB(140, 150, 144));
-        char count[32];
-        snprintf(count, sizeof count, "%d of %d", choice + 1, n);
-        SIZE size{};
-        GetTextExtentPoint32A(dc, count, (int)strlen(count), &size);
-        TextOutA(dc, (int)w - 16 * s - size.cx, 22 * s, count, (int)strlen(count));
-        const int bottom = top + kTeleportLines * rh + 8 * s;
-        const char* hint = inv ? "Up/Down choose   Enter unlocks or relocks   Left/Right amount"
-                               : "Up/Down choose   Left/Right next section   Enter travels   Esc back";
-        TextOutA(dc, 16 * s, bottom, hint, (int)strlen(hint));
-        const char* hint2 = inv ? "Q/E or bumpers: next section   PgUp/PgDn/Home/End jump   Esc back"
-                                : "PgUp/PgDn/Home/End jump. Link arrives at the map's own entrance.";
-        TextOutA(dc, 16 * s, bottom + 20 * s, hint2, (int)strlen(hint2));
-        SelectObject(dc, old);
-        DeleteObject(title);
-        DeleteObject(body);
-        return;
-    }
-    if (page == 2) {
-        const char* labels[] = {"Heart protection", "No-clip flight", "Mark position",
-                                "Return to mark", "Set time", "Inventory item", "Change quantity", "Free camera",
-                                "Teleport", "Switch age", "Inventory"};
-        char clock_text[12], quantity[12];
-        snprintf(clock_text, sizeof clock_text, "%02d:00", clock_hour);
-        snprintf(quantity, sizeof quantity, "%+d", pouch_delta);
-        const char* values[] = {tx_onoff(protect_hearts.load() == 1), tx_onoff(player_flight.load() >= 0),
-                                "", "", clock_text, pouch_items[pouch_item], quantity, tx_onoff(free_camera.load()),
-                                teleport_names[teleport_choice], "", ""};
-        const char* help[] = {"Protects Link's hearts. Hits can still knock him back.",
-            "Enable double-tap Jump for takeoff and landing. Hold Jump to climb or L to descend.",
-            "Remember Link's position for this loaded scene.",
-            "Teleport Link to the marked position in the current scene.",
-            "Choose an hour with Left or Right. Enter sets the world clock.",
-            "Choose a consumable with Left or Right.",
-            "Choose how many to add or remove. Enter applies the change.",
-            "Move and look with your usual controls. Page Up / Page Down or R / L changes height.",
-            "Enter opens the map list (Left or Right also changes the map here). Link travels through the game's own map change, in his current age.",
-            "Swaps Link between child and adult and reloads this map in the other age (the Market when this map has no match).",
-            "Enter opens the inventory editor: unlock or relock equipment, items, upgrades and quest items, and change amounts."};
-        for (int i = 0; i < kCheatRows; i++) {
-            const int y = (44 + i * 28) * s;
-            if (i == cheat_selected) fill(dc, 8 * s, y, (int)w - 16 * s, 28 * s, RGB(44, 72, 54));
-            SetTextColor(dc, i == cheat_selected ? RGB(255, 255, 255) : RGB(196, 204, 198));
-            TextOutA(dc, 16 * s, y + 4 * s, labels[i], (int)strlen(labels[i]));
-            const char* value = values[i];
-            SIZE size{};
-            GetTextExtentPoint32A(dc, value, (int)strlen(value), &size);
-            TextOutA(dc, (int)w - 16 * s - size.cx, y + 4 * s, value, (int)strlen(value));
-        }
-        SetTextColor(dc, RGB(176, 186, 180));
-        wrap_help(dc, help[cheat_selected], (int)w - 32 * s, 16 * s, (54 + kCheatRows * 28) * s, true);
-        const char* hint = "Enter applies   Esc goes back";
-        TextOutA(dc, 16 * s, (105 + kCheatRows * 28) * s, hint, (int)strlen(hint));
         SelectObject(dc, old);
         DeleteObject(title);
         DeleteObject(body);
@@ -801,8 +634,10 @@ void paint_menu(HDC dc, uint32_t w, uint32_t h, int s) {
     HFONT small_font = font(12 * s, FW_SEMIBOLD);
     SelectObject(dc, small_font);
     SetTextColor(dc, RGB(110, 135, 120));
-    TextOutA(dc, 16 * s, tab_y + 8 * s, "[Q / LB]", 8);
-    const char* rb_hint = "[E / RB]";
+    const int style = active_button_style();
+    const char* lb_hint = style == 2 ? "[Q / L1]" : (style == 1 ? "[Q / LB]" : "[Q / L]");
+    const char* rb_hint = style == 2 ? "[E / R1]" : (style == 1 ? "[E / RB]" : "[E / R]");
+    TextOutA(dc, 16 * s, tab_y + 8 * s, lb_hint, (int)strlen(lb_hint));
     SIZE rbsz{};
     GetTextExtentPoint32A(dc, rb_hint, (int)strlen(rb_hint), &rbsz);
     TextOutA(dc, (int)w - 16 * s - rbsz.cx, tab_y + 8 * s, rb_hint, (int)strlen(rb_hint));
@@ -887,7 +722,9 @@ void paint_menu(HDC dc, uint32_t w, uint32_t h, int s) {
     wrap_help(dc, rows[tab_row_to_global(cur_tab, tab_selected[cur_tab])].help, (int)w - 32 * s, 16 * s, help_top + 4 * s, true);
     SelectObject(dc, body);
     SetTextColor(dc, RGB(140, 150, 144));
-    const char* hint = "Arrows change   Q/E or LB/RB: tabs   Insert, F1 or Home closes";   // (fits 448 px at 16 px)
+    const char* hint = style == 2 ? "Arrows change   Q/E or L1/R1: tabs   Insert, F1 or PS closes"
+                                  : (style == 1 ? "Arrows change   Q/E or LB/RB: tabs   Insert, F1 or Guide closes"
+                                                : "Arrows change   Q/E or L/R: tabs     Insert, F1 or Home closes");
     TextOutA(dc, 16 * s, help_top + 4 * s + help_px + 10 * s, hint, (int)strlen(hint));
     SelectObject(dc, old);
     DeleteObject(title);
@@ -929,6 +766,127 @@ void paint_fps(HDC dc, uint32_t w, uint32_t h, int s) {
     DeleteObject(label);
     DeleteObject(big);
 }
+
+// [HOOKSHOT-FLAG-NET-GRAPH]
+float g_net_frame_ms = 16.6f;
+float g_net_frame_hist[48] = {};
+int g_net_hist_pos = 0;
+
+void paint_net_graph(HDC dc, uint32_t w, uint32_t h, int s) {
+    // Fill background with a solid obsidian dark panel
+    fill(dc, 0, 0, (int)w, (int)h, RGB(18, 22, 26));
+
+    // Outer subtle border
+    HPEN border_pen = CreatePen(PS_SOLID, 1, RGB(52, 64, 76));
+    HGDIOBJ old_pen = SelectObject(dc, border_pen);
+    HGDIOBJ old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+    Rectangle(dc, 0, 0, (int)w, (int)h);
+    SelectObject(dc, old_pen);
+    SelectObject(dc, old_brush);
+    DeleteObject(border_pen);
+
+    SetBkMode(dc, TRANSPARENT);
+
+    // Read current state
+    const int pending_jobs = jobs_pending();
+    int64_t pending_skips = 0, waits = 0;
+    double wait_ms = 0;
+    draw_stats3(&pending_skips, &waits, &wait_ms);
+
+    static int64_t last_waits = 0;
+    const bool had_recent_wait = (waits > last_waits) || (g_net_frame_ms > 45.0f);
+    last_waits = waits;
+
+    HFONT f_bold = hard_font(13 * s, FW_BOLD);
+    HFONT f_norm = hard_font(12 * s, FW_NORMAL);
+    HGDIOBJ old_font = SelectObject(dc, f_bold);
+
+    // Line 1: Frame pacing and Wait state
+    char line1[64];
+    snprintf(line1, sizeof line1, "Frame: %.1f ms", g_net_frame_ms);
+    SetTextAlign(dc, TA_LEFT | TA_TOP);
+    outlined(dc, 8 * s, 6 * s, line1, RGB(240, 244, 248), s);
+
+    SetTextAlign(dc, TA_RIGHT | TA_TOP);
+    if (had_recent_wait || pending_jobs > 0) {
+        outlined(dc, (int)w - 8 * s, 6 * s, "[ESPERA]", RGB(255, 170, 40), s);
+    } else {
+        outlined(dc, (int)w - 8 * s, 6 * s, "[FLUIDO]", RGB(72, 255, 110), s);
+    }
+
+    // Line 2: Animated circular spinner + pending shaders counter
+    SelectObject(dc, f_norm);
+    SetTextAlign(dc, TA_LEFT | TA_TOP);
+
+    static uint32_t spin_tick = 0;
+    spin_tick++;
+    const int cx = 14 * s;
+    const int cy = 27 * s;
+    const int r = 5 * s;
+
+    if (pending_jobs > 0) {
+        const double angle = (spin_tick * 40.0) * (3.14159265 / 180.0);
+        HPEN spin_pen = CreatePen(PS_SOLID, 2 * s, RGB(64, 220, 255));
+        HGDIOBJ prev_p = SelectObject(dc, spin_pen);
+        Arc(dc, cx - r, cy - r, cx + r, cy + r,
+            cx + (int)(r * cos(angle)), cy + (int)(r * sin(angle)),
+            cx - (int)(r * cos(angle)), cy - (int)(r * sin(angle)));
+        SelectObject(dc, prev_p);
+        DeleteObject(spin_pen);
+
+        char spin_txt[64];
+        snprintf(spin_txt, sizeof spin_txt, "Shaders: %d cargando...", pending_jobs);
+        outlined(dc, 26 * s, 21 * s, spin_txt, RGB(64, 220, 255), s);
+    } else {
+        HBRUSH dot_br = CreateSolidBrush(RGB(72, 255, 110));
+        HGDIOBJ prev_b = SelectObject(dc, dot_br);
+        HPEN dot_pen = CreatePen(PS_SOLID, 1, RGB(72, 255, 110));
+        HGDIOBJ prev_p = SelectObject(dc, dot_pen);
+        Ellipse(dc, cx - r + 1, cy - r + 1, cx + r - 1, cy + r - 1);
+        SelectObject(dc, prev_p);
+        SelectObject(dc, prev_b);
+        DeleteObject(dot_pen);
+        DeleteObject(dot_br);
+
+        outlined(dc, 26 * s, 21 * s, "Shaders: Listos (0)", RGB(160, 230, 180), s);
+    }
+
+    // Line 3: Sparkline histogram of frame pacing
+    const int gx = 8 * s;
+    const int gy = 38 * s;
+    const int gw = (int)w - 16 * s;
+    const int gh = (int)h - gy - 6 * s;
+
+    fill(dc, gx, gy, gw, gh, RGB(10, 12, 15));
+
+    // 16.6ms target reference line (60 fps)
+    const int ref_y = gy + gh - (int)(gh * (16.6f / 66.6f));
+    HPEN ref_pen = CreatePen(PS_DOT, 1, RGB(60, 80, 100));
+    HGDIOBJ prev_p = SelectObject(dc, ref_pen);
+    MoveToEx(dc, gx, ref_y, nullptr);
+    LineTo(dc, gx + gw, ref_y);
+    SelectObject(dc, prev_p);
+    DeleteObject(ref_pen);
+
+    const int n_bars = std::min<int>(gw / (3 * s), 48);
+    const int bar_w = std::max(1, (gw / n_bars) - 1);
+    for (int i = 0; i < n_bars; i++) {
+        const int hist_idx = (g_net_hist_pos + i) % 48;
+        const float ms = g_net_frame_hist[hist_idx];
+        if (ms <= 0.0f) continue;
+        const int bh = std::min<int>(gh - 2, (int)(gh * (ms / 66.6f)));
+        const int bx = gx + i * (bar_w + 1);
+        const int by = gy + gh - bh;
+        COLORREF bar_col = RGB(72, 220, 110);
+        if (ms > 50.0f) bar_col = RGB(255, 75, 75);
+        else if (ms > 25.0f) bar_col = RGB(255, 200, 60);
+        fill(dc, bx, by, bar_w, bh, bar_col);
+    }
+
+    SelectObject(dc, old_font);
+    DeleteObject(f_bold);
+    DeleteObject(f_norm);
+}
 /// The tallest help text at scale s, in pixels: the menu keeps that height whichever row is selected
 int measure_help(int s) {
     HDC dc = CreateCompatibleDC(nullptr);
@@ -942,14 +900,6 @@ int measure_help(int s) {
     return most;
 }
 void redraw_menu(int s) {
-    if (page == 3 || page == 4) {
-        gdi_draw(menu_bmp, kMenuWidth * s, (100u + kTeleportLines * 24u) * s, paint_menu, s);
-        return;
-    }
-    if (page == 2) {
-        gdi_draw(menu_bmp, kMenuWidth * s, (136u + kCheatRows * 28u) * s, paint_menu, s);
-        return;
-    }
     if (page == 1) {
         gdi_draw(menu_bmp, 600u * s, (uint32_t)((64 + (kControls + 1) * 24 + 52) * s), paint_menu, s);
         return;
@@ -970,7 +920,7 @@ struct Upload {
     void* map = nullptr;
     uint64_t size = 0, version = 0;
 };
-Upload ups[2][3];   // (the menu's, the counter's; a frame in flight's each)
+Upload ups[3][3];   // (the menu's, the counter's, the net graph's; a frame in flight's each)
 
 void copy_over(VkCommandBuffer cmd, VkImage dst, Bitmap& b, Upload& u, int x, int y, uint32_t w, uint32_t h) {
     std::lock_guard lk(bmp_mu);
@@ -1001,14 +951,7 @@ void menu_init() {
     static bool done;
     if (done) return;
     done = true;
-    for (auto& count : item_counts) count.store(-1, std::memory_order_relaxed);
     bool has_options = false;
-    const char* cheats = getenv("HOS_OOT_CHEATS");
-    cheats_enabled = cheats && !strcmp(cheats, "1");
-    if (cheats_enabled) {
-        const char* hearts = getenv("HOS_OOT_PROTECT_HEARTS");
-        protect_hearts.store(hearts && !strcmp(hearts, "1"));
-    }
     if (FILE* f = fopen(ini_path().c_str(), "r")) {
         has_options = true;
         char line[80];
@@ -1048,13 +991,8 @@ void menu_init() {
             if (r.value == &opts.upscale) *r.value = std::min(std::max(atoi(e), r.lo), r.hi);
     if (const char* e = getenv("HOS_REALTIME_STEP")) opts.realtime = atoi(e) != 0;
     if (const char* e = getenv("HOS_DYNRES")) opts.resolution = atoi(e) != 0 ? 0 : 1;
-    if (const char* e = getenv("HOS_OUTPUT_RES")) opts.output_res = std::min(std::max(atoi(e), 0), 2);
-}
-
-bool resolution_auto() { return opts.resolution == 0; }
-int resolution_scale() {
-    const float s = opts.resolution > 0 && opts.resolution <= 4 ? kResPercent[opts.resolution] / 100.0f : 0;
-    return s > 0 ? (int)(twelfths(s) * 10000.0f / 12.0f + 0.5f) : 0;   // (the twelfth game_size labels)
+    discord_set_preset(opts.preset);
+    discord_set_enabled(opts.discord != 0);
 }
 
 void menu_set_gpu_count(int count) {
@@ -1068,10 +1006,6 @@ void menu_set_gpu_count(int count) {
 }
 
 bool menu_is_open() { return open_now.load(std::memory_order_relaxed); }
-int menu_heart_protection() { return protect_hearts.load(std::memory_order_relaxed); }
-int menu_player_flight() { return cheats_enabled ? player_flight.load(std::memory_order_relaxed) : -1; }
-int menu_free_camera() { return free_camera.load(std::memory_order_relaxed); }
-int menu_take_cheat_action() { return cheat_action.exchange(0, std::memory_order_relaxed); }
 
 void menu_note_frame(bool game_frame) {
     shown_frames.fetch_add(1, std::memory_order_relaxed);
@@ -1118,51 +1052,18 @@ bool fps_take(int64_t now, int64_t shown, int64_t game, int64_t* next, int64_t* 
 }
 
 void menu_option_set(int id, int value) {
-    if (id >= OOT_CHEAT_ITEM_BASE && id < OOT_CHEAT_ITEM_BASE + kItems) {   // (the game side's inventory counts)
-        if (item_counts[id - OOT_CHEAT_ITEM_BASE].exchange(value, std::memory_order_relaxed) != value && page == 4)
-            menu_refresh = true;
-        return;
-    }
-    if (id == HOS_OPT_CHEAT_FLIGHT) {
-        if (cheats_enabled) {
-            int expected = value ? 0 : 1;
-            player_flight.compare_exchange_strong(expected, value != 0, std::memory_order_relaxed);
-        }
-        return;
-    }
     if (id != 7) return;
     opts.mouse_sens = std::min(std::max(value, 10), 500);   // (the keys work while the menu is closed: it shows it when opened)
     save();
 }
 
-/// Scrolls the teleport list so the chosen map (and its section heading, at the top) is in view
-void teleport_reveal() {
-    int section = 0;
-    while (section + 1 < kTeleportSections && teleport_choice >= teleport_sections[section + 1].first) section++;
-    const int line = teleport_choice + section + 1;
-    if (teleport_choice == teleport_sections[section].first) teleport_scroll = std::min(teleport_scroll, line - 1);
-    if (line < teleport_scroll) teleport_scroll = line;
-    if (line >= teleport_scroll + kTeleportLines) teleport_scroll = line - kTeleportLines + 1;
-    teleport_scroll = std::max(0, std::min(teleport_scroll, kTeleports + kTeleportSections - kTeleportLines));
-}
-/// Scrolls the inventory so the chosen item (and its section heading, at the top) is in view
-void item_reveal() {
-    int section = 0;
-    while (section + 1 < kItemSections && item_choice >= item_sections.s[section + 1].first) section++;
-    const int line = item_choice + section + 1;
-    if (item_choice == item_sections.s[section].first) item_scroll = std::min(item_scroll, line - 1);
-    if (line < item_scroll) item_scroll = line;
-    if (line >= item_scroll + kTeleportLines) item_scroll = line - kTeleportLines + 1;
-    item_scroll = std::max(0, std::min(item_scroll, kItems + kItemSections - kTeleportLines));
-}
 void menu_tick() {
     fullscreen_tick();
-    enum { K_N = 17 };
+    enum { K_N = 13 };
     static bool held[K_N];
     static const int keys[K_N] = {VK_INSERT, VK_UP, VK_DOWN, VK_LEFT, VK_RIGHT, VK_ESCAPE, VK_F1,   // (F1: for keyboards without Insert)
                                   VK_RETURN, VK_DELETE, VK_BACK,
-                                  'Q', 'E', VK_TAB,   // (the tabs: Q and E, Tab and Shift+Tab)
-                                  VK_PRIOR, VK_NEXT, VK_HOME, VK_END};   // (the long lists: a page, the ends)
+                                  'Q', 'E', VK_TAB};   // (the tabs: Q and E, Tab and Shift+Tab)
     HWND fg = GetForegroundWindow();
     DWORD pid = 0;
     if (fg) GetWindowThreadProcessId(fg, &pid);
@@ -1170,8 +1071,7 @@ void menu_tick() {
     bool press[K_N] = {};
     for (int i = 0; i < K_N; i++) {
         const bool down = mine && (GetAsyncKeyState(keys[i]) & 0x8000) != 0;
-        const bool queued = host && host->take_key_press && host->take_key_press(keys[i]);
-        press[i] = host && host->take_key_press ? mine && queued : down && !held[i];
+        press[i] = down && !held[i];
         held[i] = down;
     }
     // (hookshot) the gamepads, by position: Home, or Select and Start together, as Insert; the D-pad as the arrows,
@@ -1183,35 +1083,9 @@ void menu_tick() {
     pad_held = raw;
     auto pad = [&](int p) { return listening != 1 && (pad_press >> p & 1) != 0; };
     if (pad(HOS_PAD_GUIDE) || chord_now) press[0] = true;
-    {   // holding an arrow or the D-pad repeats it: after 0.35 s, 12 a second, then 30 a second after 1.5 s held
-        static int64_t held_since[5], next_repeat[5];
-        const int pads[5] = {0, HOS_PAD_UP, HOS_PAD_DOWN, HOS_PAD_LEFT, HOS_PAD_RIGHT};
-        const int64_t t = prof_now();
-        for (int i = 1; i <= 4; i++) {
-            const bool down = held[i] || (open_now.load() && listening != 1 && (raw >> pads[i] & 1));
-            if (!down) { held_since[i] = 0; continue; }
-            if (!held_since[i]) { held_since[i] = t, next_repeat[i] = t + 350000000LL; continue; }
-            if (t >= next_repeat[i] && open_now.load() && listening == 0) {
-                press[i] = true;
-                next_repeat[i] = t + (t - held_since[i] > 1500000000LL ? 33000000LL : 83000000LL);
-            }
-        }
-    }
     if (open_now.load() && listening != 1) {
         press[1] |= pad(HOS_PAD_UP), press[2] |= pad(HOS_PAD_DOWN), press[3] |= pad(HOS_PAD_LEFT);
         press[4] |= pad(HOS_PAD_RIGHT), press[5] |= pad(HOS_PAD_EAST), press[7] |= pad(HOS_PAD_SOUTH);
-    }
-    {   // RX_VK_MENU_SCRIPT (test runs, which never have the focus): timed menu keys, "<seconds>:<INS|UP|DOWN|LEFT|RIGHT|ESC|ENTER|TABL|TABR>,..."
-        static const char* next = getenv("RX_VK_MENU_SCRIPT");
-        static const int64_t start = prof_now();
-        double at;
-        char key[8];
-        int n = 0;
-        if (next && sscanf(next, "%lf:%7[A-Z]%n", &at, key, &n) == 2 && (prof_now() - start) / 1e9 >= at) {
-            static const char* names[] = {"INS", "UP", "DOWN", "LEFT", "RIGHT", "ESC", "", "ENTER", "", "", "TABL", "TABR"};
-            for (int i = 0; i < 12; i++) press[i] |= *names[i] && !strcmp(key, names[i]);
-            next = next[n] == ',' ? next + n + 1 : nullptr;
-        }
     }
     bool tab_left = press[10] || pad(HOS_PAD_LSHOULDER) || pad(HOS_PAD_LTRIGGER);
     bool tab_right = press[11] || press[12] || pad(HOS_PAD_RSHOULDER) || pad(HOS_PAD_RTRIGGER);
@@ -1266,6 +1140,7 @@ void menu_tick() {
                 if (csel == kControls) {
                     host->bind(HOS_BIND_PAD, -1, 0, 0);
                     opts.pad_layout = 0;
+                    opts.button_icons = 0;
                     save();
                 }
                 else listening = ccol ? 2 : 1, listen_armed = false, listen_end = prof_now() + 6000000000LL;
@@ -1282,108 +1157,6 @@ void menu_tick() {
             }
         }
         if (changed) redraw_menu(scale);
-    } else if (open_now.load() && page == 2) {
-        if (press[5]) page = 0, changed = true;
-        else {
-            if (press[1] || press[2]) {
-                cheat_selected = (cheat_selected + kCheatRows + (press[2] ? 1 : -1)) % kCheatRows;
-                changed = true;
-            }
-            if (cheat_selected < 2 && (press[3] || press[4] || press[7])) {
-                if (cheat_selected == 0) protect_hearts.store(!protect_hearts.load());
-                else player_flight.store(player_flight.load() < 0 ? 0 : -1);
-                changed = true;
-            }
-            if (cheat_selected == 4 && (press[3] || press[4])) {
-                clock_hour = (clock_hour + (press[4] ? 1 : 23)) % 24;
-                changed = true;
-            }
-            if (cheat_selected == 5 && (press[3] || press[4])) {
-                pouch_item = (pouch_item + kPouchItems + (press[4] ? 1 : -1)) % kPouchItems;
-                changed = true;
-            }
-            if (cheat_selected == 6 && (press[3] || press[4])) {
-                const int step = press[4] ? 1 : -1;
-                pouch_delta = std::clamp(pouch_delta + step, -10, 10);
-                if (!pouch_delta) pouch_delta = step;
-                changed = true;
-            }
-            if (press[7] && cheat_selected >= 2 && cheat_selected <= 4) {
-                cheat_action.store(cheat_selected == 4 ? 100 + clock_hour : cheat_selected);
-            }
-            if (press[7] && cheat_selected == 6) {
-                cheat_action.store(200 + pouch_item * 32 + pouch_delta + 10);
-            }
-            if (press[7] && cheat_selected == 7) {
-                free_camera.store(!free_camera.load());
-                changed = true;
-            }
-            if (cheat_selected == 8 && (press[3] || press[4])) {
-                teleport_choice = (teleport_choice + kTeleports + (press[4] ? 1 : -1)) % kTeleports;
-                changed = true;
-            }
-            if (press[7] && cheat_selected == 8) page = 3, teleport_reveal(), changed = true;
-            if (press[7] && cheat_selected == 10) page = 4, item_reveal(), changed = true;
-            if (press[7] && cheat_selected == 9) {
-                cheat_action.store(999);   // (host/hos_main.c OOT_AGE_ACTION)
-                open_now = false;
-                changed = true;
-            }
-        }
-        if (changed) redraw_menu(scale);
-    } else if (open_now.load() && page == 4) {   // the inventory
-        if (press[5]) page = 2, changed = true;
-        else {
-            if (press[1] || press[2]) {
-                item_choice = (item_choice + kItems + (press[2] ? 1 : -1)) % kItems;
-                changed = true;
-            }
-            if (press[13] || press[14] || press[15] || press[16]) {   // (Page Up / Page Down, Home / End)
-                item_choice = press[15] ? 0 : press[16] ? kItems - 1
-                            : std::clamp(item_choice + (press[14] ? 1 : -1) * (kTeleportLines - 2), 0, kItems - 1);
-                changed = true;
-            }
-            if (tab_left || tab_right) {
-                int section = 0;
-                while (section + 1 < kItemSections && item_choice >= item_sections.s[section + 1].first) section++;
-                if (tab_right || item_choice == item_sections.s[section].first)
-                    section = (section + kItemSections + (tab_left ? -1 : 1)) % kItemSections;
-                item_choice = item_sections.s[section].first;
-                changed = true;
-            }
-            if (press[7]) cheat_action.store(OOT_CHEAT_ITEM_ACTION + item_choice * 256 + 200);
-            else if (press[3] || press[4]) cheat_action.store(OOT_CHEAT_ITEM_ACTION + item_choice * 256 + 64 + (press[4] ? 1 : -1));
-            if (changed) item_reveal();
-        }
-        if (changed) redraw_menu(scale);
-    } else if (open_now.load() && page == 3) {   // the teleport list
-        if (press[5]) page = 2, changed = true;
-        else if (press[7]) {
-            cheat_action.store(1000 + teleport_choice);
-            open_now = false, page = 2;   // (back to the game: the map change starts with an event)
-            changed = true;
-        } else {
-            if (press[1] || press[2]) {
-                teleport_choice = (teleport_choice + kTeleports + (press[2] ? 1 : -1)) % kTeleports;
-                changed = true;
-            }
-            if (press[13] || press[14] || press[15] || press[16]) {   // (Page Up / Page Down, Home / End)
-                teleport_choice = press[15] ? 0 : press[16] ? kTeleports - 1
-                                : std::clamp(teleport_choice + (press[14] ? 1 : -1) * (kTeleportLines - 2), 0, kTeleports - 1);
-                changed = true;
-            }
-            if (press[3] || press[4] || tab_left || tab_right) {   // (to the first map of the previous or next section)
-                int section = 0;
-                while (section + 1 < kTeleportSections && teleport_choice >= teleport_sections[section + 1].first) section++;
-                const bool back = press[3] || tab_left;
-                if (!back || teleport_choice == teleport_sections[section].first)
-                    section = (section + kTeleportSections + (back ? -1 : 1)) % kTeleportSections;
-                teleport_choice = teleport_sections[section].first;
-                changed = true;
-            }
-            if (changed) teleport_reveal();
-        }
-        if (changed) redraw_menu(scale);
     } else if (open_now.load()) {
         if (press[5]) open_now = false;
         // (the tabs: LB and RB, Q and E, or Tab)
@@ -1394,28 +1167,35 @@ void menu_tick() {
         if (press[1]) selected = (selected + tab_count - 1) % tab_count, changed = true;
         if (press[2]) selected = (selected + 1) % tab_count, changed = true;
         Row& r = rows[tab_row_to_global(cur_tab, selected)];
-        if (press[7] && &r == &rows[kCheatsRow]) page = 2, changed = true;
-        else if (press[7] && !r.value && can_bind()) page = 1, csel = 0, ccol = 0, changed = true;
+        if (press[7] && !r.value && can_bind()) page = 1, csel = 0, ccol = 0, changed = true;
         if ((press[3] || press[4] || press[7]) && r.value) {   // (Enter, or the bottom face button, as Right)
             if (press[7]) press[4] = true;
             int v = *r.value + (press[4] ? r.step : -r.step);
             if (r.value == &opts.framegen && v == 1) v = press[4] ? 2 : 0;   // (off, 2x ... 8x)
             if (r.value == &opts.mouse_sens) v = std::min(std::max(v, r.lo), r.hi);   // (a scale: it stops at its ends)
             if (r.value == &opts.pad_layout) {
-                if (v > 2) v = press[4] ? 0 : 2;
-                if (v < 0) v = 2;
+                if (v > 3) v = press[4] ? 0 : 3;
+                if (v < 0) v = 3;
                 *r.value = v;
                 apply_pad_layout(*r.value);
+            } else if (r.value == &opts.button_icons) {
+                *r.value = v > r.hi ? r.lo : v < r.lo ? r.hi : v;
+            } else if (r.value == &opts.discord) {
+                *r.value = v > r.hi ? r.lo : v < r.lo ? r.hi : v;
+                discord_set_enabled(*r.value != 0);
             } else if (r.value == &opts.preset) {
                 *r.value = v > r.hi ? r.lo : v < r.lo ? r.hi : v;
                 apply_preset(*r.value);
+                discord_set_preset(opts.preset);
             } else {
                 *r.value = v > r.hi ? r.lo : v < r.lo ? r.hi : v;
-                if (r.value != &opts.fullscreen && r.value != &opts.show_fps && r.value != &opts.gpu_device &&
+                if (r.value != &opts.fullscreen && r.value != &opts.show_fps && r.value != &opts.net_graph && r.value != &opts.gpu_device &&
                     r.value != &opts.invert_cam_x && r.value != &opts.invert_cam_y && r.value != &opts.mouse_native &&
-                    r.value != &opts.mouse_sens && r.value != &opts.mouse_invert) {   // (the controls are not the preset's)
+                    r.value != &opts.mouse_sens && r.value != &opts.mouse_invert && r.value != &opts.discord &&
+                    r.value != &opts.button_icons && r.value != &opts.pad_layout) {   // (the controls and toggles are not the preset's)
                     opts.preset = 0; // Custom
                     sync_preset_budgets(0);
+                    discord_set_preset(opts.preset);
                 }
             }
             changed = true;
@@ -1444,6 +1224,22 @@ void menu_tick() {
             gdi_draw(fps_bmp, 120u * scale, 54u * scale, paint_fps, scale);
         }
     }
+    // [HOOKSHOT-FLAG-NET-GRAPH]
+    if (opts.net_graph) {
+        static int64_t last_tick_time = 0;
+        const int64_t now = prof_now();
+        if (last_tick_time != 0) {
+            const double delta_ms = (now - last_tick_time) / 1000000.0;
+            if (delta_ms > 0.1 && delta_ms < 1000.0) {
+                g_net_frame_ms = (float)delta_ms;
+                g_net_frame_hist[g_net_hist_pos] = g_net_frame_ms;
+                g_net_hist_pos = (g_net_hist_pos + 1) % 48;
+            }
+        }
+        last_tick_time = now;
+        net_graph_bmp.keyed = false;
+        gdi_draw(net_graph_bmp, 220u * scale, 68u * scale, paint_net_graph, scale);
+    }
 }
 
 void menu_record(VkCommandBuffer cmd, VkImage dst, int slot, uint32_t w, uint32_t h) {
@@ -1461,6 +1257,22 @@ void menu_record(VkCommandBuffer cmd, VkImage dst, int slot, uint32_t w, uint32_
         const uint32_t fw = fps_bmp.w;
         lk.unlock();
         if (fw) copy_over(cmd, dst, fps_bmp, ups[1][slot], (int)w - (int)fw - (int)(12 * cur_scale), (int)(10 * cur_scale), w, h);
+    }
+    // [HOOKSHOT-FLAG-NET-GRAPH]
+    if (opts.net_graph) {
+        VkMemoryBarrier2 mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+        mb.srcStageMask = mb.dstStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+        mb.srcAccessMask = mb.dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+        VkDependencyInfo di{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+        di.memoryBarrierCount = 1, di.pMemoryBarriers = &mb;
+        vkCmdPipelineBarrier2(cmd, &di);
+        std::unique_lock lk(bmp_mu);
+        const uint32_t nw = net_graph_bmp.w, nh = net_graph_bmp.h;
+        lk.unlock();
+        if (nw && nh) {
+            copy_over(cmd, dst, net_graph_bmp, ups[2][slot],
+                      (int)(14 * cur_scale), (int)h - (int)nh - (int)(14 * cur_scale), w, h);
+        }
     }
     if (open_now.load(std::memory_order_relaxed)) {
         std::unique_lock lk(bmp_mu);
