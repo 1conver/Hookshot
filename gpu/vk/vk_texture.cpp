@@ -119,6 +119,12 @@ VkFormat storage_view_format(VkFormat f) {
     case VK_FORMAT_R16G16B16A16_UNORM: case VK_FORMAT_R16G16B16A16_SNORM: return VK_FORMAT_R32G32_UINT;
     case VK_FORMAT_R8G8_SNORM: case VK_FORMAT_R16_SNORM: return VK_FORMAT_R16_UINT;
     case VK_FORMAT_R8_SNORM: return VK_FORMAT_R8_UINT;
+    // (compressed: one block a texel, written raw by the game's encoders)
+    case VK_FORMAT_BC1_RGB_UNORM_BLOCK: case VK_FORMAT_BC1_RGBA_UNORM_BLOCK: case VK_FORMAT_BC4_UNORM_BLOCK:
+    case VK_FORMAT_BC4_SNORM_BLOCK: return VK_FORMAT_R32G32_UINT;
+    case VK_FORMAT_BC2_UNORM_BLOCK: case VK_FORMAT_BC3_UNORM_BLOCK: case VK_FORMAT_BC5_UNORM_BLOCK:
+    case VK_FORMAT_BC5_SNORM_BLOCK: case VK_FORMAT_BC6H_UFLOAT_BLOCK: case VK_FORMAT_BC6H_SFLOAT_BLOCK:
+    case VK_FORMAT_BC7_UNORM_BLOCK: return VK_FORMAT_R32G32B32A32_UINT;
     default: return f;
     }
 }
@@ -301,6 +307,7 @@ bool astc_ready() {
     VkShaderModule m = VK_NULL_HANDLE;
     if (vkCreateShaderModule(dev.device, &mi, nullptr, &m) != VK_SUCCESS) return false;
     VkComputePipelineCreateInfo ci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+    // [HOOKSHOT-FLAG-AMD-OPTIMIZED-SHADERS-2026] Standard compiler optimization enabled on AMD (avoiding -O0 register corruption)
     ci.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     ci.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
     ci.stage.module = m;
@@ -318,7 +325,9 @@ VkImageView make_view(Texture* tex, VkImageViewType type, VkFormat f, VkImageAsp
                       uint32_t nlevels, uint32_t layer0, uint32_t nlayers, const VkComponentMapping& cm,
                       VkImageUsageFlags usage) {
     if (!usage || (usage & tex->usage) != usage) return VK_NULL_HANDLE;
-    if (is_bc(tex->format) && !is_bc(f) && (nlevels != 1 || nlayers != 1)) return VK_NULL_HANDLE;
+    // (block-texel views of a compressed image: one level; several layers where the driver takes them)
+    const bool block_view = is_bc(tex->format) && !is_bc(f);
+    if (block_view && nlevels != 1) return VK_NULL_HANDLE;
     VkImageViewUsageCreateInfo uci{VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO};
     uci.usage = usage & tex->usage;
     VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
@@ -329,6 +338,11 @@ VkImageView make_view(Texture* tex, VkImageViewType type, VkFormat f, VkImageAsp
     vi.components = cm;
     vi.subresourceRange = {aspect, level0, nlevels, layer0, nlayers};
     VkImageView v = VK_NULL_HANDLE;
+    if (vkCreateImageView(dev.device, &vi, nullptr, &v) == VK_SUCCESS) return v;
+    if (!block_view || nlayers == 1) return VK_NULL_HANDLE;
+    // (Vulkan 1.1 says a block-texel view is of a single layer; some drivers hold to it)
+    vi.subresourceRange.layerCount = 1;
+    if (vi.viewType == VK_IMAGE_VIEW_TYPE_2D_ARRAY) vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
     if (vkCreateImageView(dev.device, &vi, nullptr, &v) != VK_SUCCESS) return VK_NULL_HANDLE;
     return v;
 }
@@ -404,6 +418,8 @@ bool bc_ready() {
     static int state = 0;
     if (state) return state > 0;
     state = -1;
+    // [HOOKSHOT-FLAG-AMD-TEXTURES-2026] bc_ready enabled for terrain/world arrays to prevent VRAM saturation
+    if (getenv("RX_VK_NO_BC")) return false;
     if (!astc_ready() || getenv("RX_VK_ASTC_RGBA8") || !dev.features.textureCompressionBC) return false;
     VkFormatProperties fp{};
     vkGetPhysicalDeviceFormatProperties(dev.physical, VK_FORMAT_BC3_UNORM_BLOCK, &fp);
@@ -429,6 +445,7 @@ bool bc_ready() {
     VkShaderModule m = VK_NULL_HANDLE;
     if (vkCreateShaderModule(dev.device, &mi, nullptr, &m) != VK_SUCCESS) return false;
     VkComputePipelineCreateInfo ci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+    // [HOOKSHOT-FLAG-AMD-OPTIMIZED-SHADERS-2026] Standard compiler optimization enabled on AMD (avoiding -O0 register corruption)
     ci.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     ci.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
     ci.stage.module = m;
@@ -816,6 +833,7 @@ bool unswizzle_ready() {
     VkShaderModule m = VK_NULL_HANDLE;
     if (vkCreateShaderModule(dev.device, &mi, nullptr, &m) != VK_SUCCESS) return false;
     VkComputePipelineCreateInfo ci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+    // [HOOKSHOT-FLAG-AMD-OPTIMIZED-SHADERS-2026] Standard compiler optimization enabled on AMD (avoiding -O0 register corruption)
     ci.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     ci.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
     ci.stage.module = m;
@@ -1164,8 +1182,11 @@ bool upload(Texture& tex, const Ranges* dirty) {
                     } else if (from < total && total - from >= need) {
                         src = guest_bytes(tex.gpu + from, need, scratch);
                     } else {
+                        // (the last GOB-block row: as it was at the submit too, not what the game wrote since)
+                        std::vector<uint8_t> tail;
+                        const uint8_t* part = from < total ? guest_bytes(tex.gpu + from, total - from, tail) : nullptr;
                         scratch.assign(need, 0);
-                        if (from < total) host->gpu_read(tex.gpu + from, scratch.data(), total - from);
+                        if (part) std::memcpy(scratch.data(), part, total - from);
                         src = scratch.data();
                     }
                     const auto u0 = std::chrono::steady_clock::now();
@@ -1491,11 +1512,16 @@ Texture* create(const Key& key, const nvn_tex* t, VkFormat vf, bool astc, int bw
         static const bool all = [] {
             if (const char* e = getenv("RX_VK_ASTC_BC_ALL")) return e[0] == '1';
             uint64_t used = 0, allowed = 0;
+            // [HOOKSHOT-FLAG-AMD-VRAM-BUDGET-2026] On Windows, 8GB GPUs report ~6.8-7.0 GB allowed budget due to OS reservation.
+            // Only genuine low-VRAM GPUs (< 6 GB) should force fine actor/character textures into BC3.
             const bool small = vram_usage(&used, &allowed) && allowed && allowed < (6ull << 30);
             if (small) logf("vk: %llu MB of VRAM allowed: all large ASTC textures kept as BC3", (unsigned long long)(allowed >> 20));
             return small;
         }();
-        const uint64_t min_bytes = (bw * bh >= 36 || all) ? low : 64ull << 20;
+        // [HOOKSHOT-FLAG-AMD-ACTOR-RGBA8-2026] Keep fine character models, clothing, weapons, and UI in RGBA8
+        // so Link's tunic, equipment, and actor textures are never subject to lossy 5:6:5 BC3 compression.
+        const bool fine_actor = (bw * bh < 36) && x.layers == 1;
+        const uint64_t min_bytes = (fine_actor || !all) ? (64ull << 20) : low;
         uint64_t px = 0;
         for (uint32_t l = 0; l < x.levels; l++)
             px += (uint64_t)std::max(1u, x.width >> l) * std::max(1u, x.height >> l);
@@ -1507,10 +1533,8 @@ Texture* create(const Key& key, const nvn_tex* t, VkFormat vf, bool astc, int bw
         // it on an RX 6600 XT; an RX 6700 XT here). On AMD such a texture is encoded at the nearest size whose blocks halve
         // evenly down to its 16-texel levels (1365 -> 1536, 683 -> 768; 768 and 1536 stay) and keeps only the levels that
         // halve evenly: the game samples with normalized coordinates, so a resized level covers the same area. Where that
-        // would grow it by more than a quarter, or past the scratch, it stays RGBA8. RX_VK_UNEVEN_RGBA8=1: RGBA8 instead of resizing.
-        // OFF by default since v2.0.6: in v2.0.5 an RX 6700 XT's GPU time went from 10-13 ms to 70-100 ms a frame in play
-        // with it (issue 823, logs of both versions), and AMD players saw rainbow ground (Discord). RX_VK_UNEVEN_BC=0: on
-        // (every card); unset or 1: BC3 as in v2.0.4.
+        // would grow it by more than a quarter, or past the scratch, it stays RGBA8. RX_VK_UNEVEN_BC=1: BC3 as before;
+        // =0: this on other cards too. RX_VK_UNEVEN_RGBA8=1: RGBA8 instead of resizing.
         using bc_levels::first_uneven;
         using bc_levels::even_size;
         const bool uneven = first_uneven(x.width, x.height, x.levels) < x.levels;
@@ -1571,9 +1595,12 @@ Texture* create(const Key& key, const nvn_tex* t, VkFormat vf, bool astc, int bw
                  VK_IMAGE_CREATE_EXTENDED_USAGE_BIT;
         const VkFormat raw = bpb == 8 ? VK_FORMAT_R32G32_UINT : VK_FORMAT_R32G32B32A32_UINT;
         VkImageFormatProperties limits{};
+        // (asked without STORAGE: AMD's driver checks that against the compressed format and says no, though it makes
+        // the image and its raw views (RX 6600 XT, amdvlk); without them the game's BC encoders wrote nowhere and
+        // Link's clothes showed stale blocks. If the image is then refused, it is made again without)
         if ((format_props(raw).optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) &&
             vkGetPhysicalDeviceImageFormatProperties(dev.physical, x.format, x.type, VK_IMAGE_TILING_OPTIMAL,
-                x.usage | VK_IMAGE_USAGE_STORAGE_BIT, flags, &limits) == VK_SUCCESS)
+                x.usage, flags, &limits) == VK_SUCCESS)
             x.usage |= VK_IMAGE_USAGE_STORAGE_BIT;
     }
     if (x.type == VK_IMAGE_TYPE_2D && x.layers >= 6 && x.width == x.height && x.samples == VK_SAMPLE_COUNT_1_BIT)
@@ -1627,7 +1654,9 @@ Texture* create(const Key& key, const nvn_tex* t, VkFormat vf, bool astc, int bw
              x.sparse_req.formatProperties.imageGranularity.width, x.sparse_req.formatProperties.imageGranularity.height,
              x.sparse_req.imageMipTailFirstLod, (unsigned long long)(x.sparse_req.imageMipTailSize >> 10),
              x.sparse_req.formatProperties.flags & VK_SPARSE_IMAGE_FORMAT_SINGLE_MIPTAIL_BIT ? ", one for all layers" : " a layer");
-    } else if (!create_image(ci, x.image, x.allocation)) {
+    } else if (!create_image(ci, x.image, x.allocation) &&
+               !((ci.usage & VK_IMAGE_USAGE_STORAGE_BIT) && (is_bc(x.format) || is_astc(x.format)) &&
+                 (ci.usage &= ~VK_IMAGE_USAGE_STORAGE_BIT, x.usage = ci.usage, create_image(ci, x.image, x.allocation)))) {
         static int logged;
         if (logged++ < 16)
             logf("vk: image %ux%ux%u x%u levels %u format %d (NVN %#x) not made", x.width, x.height, x.depth, x.layers,

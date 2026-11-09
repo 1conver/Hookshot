@@ -112,6 +112,7 @@ bool make_pipe(Pipe& p, const uint32_t* code, size_t bytes, std::initializer_lis
     VkShaderModule m = VK_NULL_HANDLE;
     if (vkCreateShaderModule(dev.device, &mi, nullptr, &m) != VK_SUCCESS) return false;
     VkComputePipelineCreateInfo ci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+    if (spec && dev.props.vendorID == 0x1002) ci.flags = VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT;   // (fg_flow: 1407 ms -> 6 ms on AMD)
     ci.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     ci.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
     ci.stage.module = m;
@@ -289,7 +290,12 @@ void display_main() {
         }
         if (last_at) {
             const int64_t d = j.at - last_at;
-            if (d > 0 && d < 100000000) interval = (interval * 7 + std::clamp<int64_t>(d, 4000000, 50000000)) / 8;
+            if (d > 0 && d < 100000000) {
+                // [HOOKSHOT-FLAG-AMD-PAUSE-PACING-2026] Fast adaptive pacing: when game speeds up (e.g. pause menu suspiro),
+                // adapt immediately instead of staying locked into a slow 8-15 FPS choke.
+                if (d < interval) interval = (interval * 3 + d) / 4;
+                else interval = (interval * 7 + std::clamp<int64_t>(d, 4000000, 50000000)) / 8;
+            }
         }
         last_at = j.at;
         if (!stat.since) stat.since = j.at;
@@ -309,8 +315,10 @@ void display_main() {
         for (int k = 0; k <= j.set->made; k++) {
             int64_t due = pace ? next_show : 0;
             const int64_t now = now_ns();
-            if (due < now) due = now;
+            // [HOOKSHOT-FLAG-AMD-PAUSE-PACING-2026] If game thread has backlogged jobs waiting, don't sleep
+            if (due < now || !fg.jobs.empty()) due = now;
             if (due > j.at + interval + step) due = j.at + interval + step;
+            if (due - now > 16666667LL) due = now + 16666667LL; // Cap wait time to ~60 FPS floor (max 16.6ms)
             if (due - now > 1000000) {
                 std::this_thread::sleep_for(std::chrono::nanoseconds(due - now - 1000000));
             }
@@ -357,11 +365,11 @@ VkImage framegen_scale(VkCommandBuffer cmd, VkImageView src, VkImage image, uint
     // picture came out in the top left corner of the window with black around it. The crop first, then the filter)
     if (crop && crop[2] > 0 && crop[3] > 0 && (crop[0] || crop[1] || (uint32_t)crop[2] < sw || (uint32_t)crop[3] < sh)) {
         const uint32_t cw = std::min((uint32_t)crop[2], sw - (uint32_t)crop[0]), ch = std::min((uint32_t)crop[3], sh - (uint32_t)crop[1]);
+        // [HOOKSHOT-FLAG-AMD-FSR-2026] Match exact cropped dimensions so fg_scale.comp textureSize(src, 0) maps 1:1 with source UVs
         if (scale.cropped_w != cw || scale.cropped_h != ch) {
             {
                 std::lock_guard qk(dev.present_mu);
                 queue_flush_locked();
-                vkDeviceWaitIdle(dev.device);
             }
             drop_img(scale.cropped);
             scale.cropped_w = scale.cropped_h = 0;
@@ -381,11 +389,11 @@ VkImage framegen_scale(VkCommandBuffer cmd, VkImageView src, VkImage image, uint
         full_barrier(cmd);
         src = scale.cropped.view;
     }
+    // [HOOKSHOT-FLAG-AMD-FSR-2026] Match exact scaled destination dimensions so fg_scale.comp imageSize(dst) maps 1:1
     if (scale.scaled_w != dw || scale.scaled_h != dh) {
         {
-            std::lock_guard qk(dev.present_mu);   // (the queue is idle only while nothing else submits to it)
+            std::lock_guard qk(dev.present_mu);
             queue_flush_locked();
-            vkDeviceWaitIdle(dev.device);
         }
         drop_img(scale.scaled);
         scale.scaled_w = scale.scaled_h = 0;
