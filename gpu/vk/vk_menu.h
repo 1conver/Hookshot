@@ -68,6 +68,9 @@ struct Options {
     int volume = 100;     // (hookshot) the game's sound in percent, 0 to 100 (host/nn_audio.c: HOS_OPT_VOLUME, 27)
     int mute_background = 0;   // (hookshot) no sound while another window has the focus (host/nn_audio.c: HOS_OPT_MUTE_BACKGROUND, 28)
     int mic = 1;          // (hookshot) the ocarina's microphone: 0 Off, 1 the system's default, 2.. a device as host->mic_name lists it (host/nn_audio_in.c)
+    int vsync = 1;        // VSync: 1 on (FIFO / Mailbox, tear-free), 0 off (Immediate)
+    int language = 1;     // Language: 0 English, 1 Spanish (clean ASCII)
+    int net_graph = 1;    // Net graph: 0 off, 1 on (transparent frame pacing & shader compiler stats)
 };
 extern Options opts;
 /// (vk_memory.cpp) true when the quality preset's memory budgets (vram_mb, mirror_mb) are to be used: the card has no more

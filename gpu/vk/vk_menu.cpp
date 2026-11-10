@@ -30,6 +30,7 @@
 #include "vk_menu.h"
 #include "vk_menu_hit.h"
 #include "vk_draw.h"   // (pipeline_cache_save: Restart now keeps what was built)
+#include "vk_jobs.h"
 #include "oot_cheat_items.h"
 #include "vk_progress.h"   // (StartupView, version_text: the start-up screen)
 #include "vk_ui.h"
@@ -94,35 +95,57 @@ const char* hint_in(const char* const* t, int n, int lo, int v, int variant) {
         return hint_in(t, (int)(sizeof t / sizeof t[0]), lo, v, variant);                                                    \
     }
 const char* tx_framegen(int v) {
+    if (opts.language == 1) {
+        static const char* es[] = {"Desactivado", "Auto", "2x", "3x", "4x", "5x", "6x", "7x", "8x"};
+        return es[v < 0 ? 0 : v > 8 ? 8 : v];
+    }
     static const char* t[] = {"Off", "Auto", "2x", "3x", "4x", "5x", "6x", "7x", "8x"};
-    return t[v];
+    return t[v < 0 ? 0 : v > 8 ? 8 : v];
 }
-const char* tx_onoff(int v) { return v ? "On" : "Off"; }
-const char* tx_profile(int v) { return v ? "Handheld" : "Docked"; }   // (opts.handheld: the Profile row)
+const char* tx_onoff(int v) { return opts.language == 1 ? (v ? "Activado" : "Desactivado") : (v ? "On" : "Off"); }
+const char* tx_profile(int v) { return opts.language == 1 ? (v ? "Portatil (Handheld)" : "Sobremesa (Docked)") : (v ? "Handheld" : "Docked"); }
 const char* tx_menu_shortcut(int v) {
-    static const char* const names[] = {"Insert or F1", "F1 only"};   // (F1 is never turned off: the menu is always one key away)
+    if (opts.language == 1) {
+        static const char* const names[] = {"Insert o F1", "Solo F1"};
+        return names[v ? 1 : 0];
+    }
+    static const char* const names[] = {"Insert or F1", "F1 only"};
     return names[v ? 1 : 0];
 }
-const char* tx_hdr(int v) { return v == 1 ? "Expanded" : v == 2 ? "Native (the game's)" : "Off"; }
+const char* tx_hdr(int v) {
+    if (opts.language == 1) return v == 1 ? "Expandido" : v == 2 ? "Nativo (del juego)" : "Desactivado";
+    return v == 1 ? "Expanded" : v == 2 ? "Native (the game's)" : "Off";
+}
 const char* tx_nits(int v) {
     static char b[24];
     snprintf(b, sizeof b, "%d nits", v);
     return b;
 }
 const char* tx_fps_cap(int v) {
+    if (opts.language == 1) {
+        static const char* const t[] = {"60 (consola)", "90", "120", "144", "165", "240"};
+        return t[v < 0 ? 0 : v > 5 ? 5 : v];
+    }
     static const char* const t[] = {"60 (the console's)", "90", "120", "144", "165", "240"};
     return t[v < 0 ? 0 : v > 5 ? 5 : v];
 }
-// (hookshot) Motion controls: the choice, and whether a connected controller has a gyroscope (host/pad_sdl.c). Either can be
-// chosen whatever is connected: a pad plugged in later is read when it comes
 const char* tx_gyro(int v) {
     const int status = host && host->gyro_status ? host->gyro_status() : -1;
+    if (opts.language == 1) {
+        if (status == 2) return v ? "Activado (giroscopio detectado)" : "Desactivado (giroscopio detectado)";
+        if (status == 1) return v ? "Activado (sin giroscopio en mando)" : "Desactivado (sin giroscopio en mando)";
+        if (status == 0) return v ? "Activado (sin mando)" : "Desactivado (sin mando)";
+        return v ? "Activado" : "Desactivado";
+    }
     if (status == 2) return v ? "On (gyro found)" : "Off (gyro found)";
     if (status == 1) return v ? "On (no gyro on this pad)" : "Off (no gyro on this pad)";
     if (status == 0) return v ? "On (no controller)" : "Off (no controller)";
     return v ? "On" : "Off";
 }
-const char* tx_mousecam(int v) { return v ? "Native" : "As the stick"; }
+const char* tx_mousecam(int v) {
+    if (opts.language == 1) return v ? "Nativa (FPS)" : "Como stick derecho";
+    return v ? "Native" : "As the stick";
+}
 const char* tx_sens(int v) {
     static char b[12];
     snprintf(b, sizeof b, "%.2f", v / 100.0);
@@ -385,16 +408,30 @@ const char* tx_output_res(int v) {
 }
 /// Anisotropic filtering: the game's own, or 2x to 16x (vk_draw.cpp aniso_override)
 const char* tx_anisotropy(int v) {
+    if (opts.language == 1) {
+        static const char* es[] = {"Consola (1x-2x)", "2x", "4x", "8x", "16x"};
+        return (unsigned)v < 5 ? es[v] : es[4];
+    }
     static const char* t[] = {"Game's", "2x", "4x", "8x", "16x"};
     return (unsigned)v < 5 ? t[v] : t[4];
 }
-const char* tx_speed(int v) { return v ? "Real time" : "Per frame"; }
+const char* tx_speed(int v) {
+    if (opts.language == 1) return v ? "Tiempo real" : "Por fotograma";
+    return v ? "Real time" : "Per frame";
+}
 const char* tx_text_speed(int v) {
+    if (opts.language == 1) {
+        static const char* es[] = {"Normal", "2x (Rapido)", "4x (Muy rapido)", "Instantaneo"};
+        return es[std::min(std::max(v, 0), 3)];
+    }
     static const char* t[] = {"Normal", "2x", "4x", "Instant"};
     if ((unsigned)v >= sizeof t / sizeof t[0]) return t[0];
     return t[v];
 }
-const char* tx_ultrawide(int v) { return v ? "Monitor's shape" : "16:9"; }
+const char* tx_ultrawide(int v) {
+    if (opts.language == 1) return v ? "Ajuste de monitor" : "16:9";
+    return v ? "Monitor's shape" : "16:9";
+}
 const char* tx_prompts(int v) {
     static const char* t[HOS_PROMPT_N + 1] = {"Auto", "Switch", "Xbox", "PlayStation 4", "PlayStation 5", "Steam Deck"};
     return t[std::min(std::max(v, 0), (int)HOS_PROMPT_N)];
@@ -489,21 +526,40 @@ const char* tx_stick_dead_zone(int v) {
 }
 // (hookshot) Audio output: the speakers the game mixes for, read once at its start (host/nn_audio.c au_menu_output)
 const char* tx_audio_output(int v) {
+    if (opts.language == 1) {
+        static const char* es[] = {"Automatico", "Estereo", "Envolvente 5.1"};
+        return (unsigned)v < 3 ? es[v] : es[0];
+    }
     static const char* t[] = {"Auto", "Stereo", "5.1"};
     return (unsigned)v < 3 ? t[v] : t[0];
 }
 // (hookshot) the motion's deadzone: the console's three zero-drift modes, the rate under which the pad counts as still
 const char* tx_deadzone(int v) {
+    if (opts.language == 1) {
+        static const char* es[] = {"Baja", "Estandar", "Alta"};
+        return es[v < 0 ? 0 : v > 2 ? 2 : v];
+    }
     static const char* t[] = {"Low", "Standard", "High"};
     return t[v < 0 ? 0 : v > 2 ? 2 : v];
 }
 const char* tx_robust(int v) {
+    if (opts.language == 1) {
+        static const char* es[] = {"Auto", "Desactivado", "Activado"};
+        return (unsigned)v < 3 ? es[v] : es[0];
+    }
     static const char* t[] = {"Auto", "Off", "On"};
     return (unsigned)v < 3 ? t[v] : t[0];
 }
 const char* tx_preset(int v) {
+    if (opts.language == 1) {
+        static const char* es[] = {"Personalizado", "Minimo (4GB)", "Bajo (6GB)", "Equilibrado (8GB)", "Alto (12GB)", "Ultra (16GB+)"};
+        return es[std::min(std::max(v, 0), 5)];
+    }
     static const char* t[] = {"Custom", "Minimum (4GB)", "Low (6GB)", "Balanced (8GB)", "High (12GB)", "Ultra (16GB+)"};
     return t[std::min(std::max(v, 0), 5)];
+}
+const char* tx_language(int v) {
+    return v == 1 ? "Espanol" : "English";
 }
 void sync_preset_budgets(int p) {
     switch (p) {
@@ -621,8 +677,8 @@ MENU_HINTS(hn_gyro, 0, "The sticks alone aim.",
            "Switch Pro controllers and pads in Switch mode, DualSense and DualShock 4. The value says whether the "
            "connected pad has a gyroscope.")
 MENU_HINTS(hn_pad_layout, 0, "The Switch's order: A on the right, B at the bottom, X at the top, Y on the left.",
-           "A at the bottom (action and talk), B on the right, X on the left, Y at the top.",
-           "A at the bottom, B on the right; X and Y as on the Switch.",
+           "Xbox / PC: A at the bottom, B on the right, X on the left, Y at the top.",
+           "PlayStation: X at the bottom, Circle on the right, Square on the left, Triangle at the top.",
            "Bindings of your own, from the Controls page.")
 MENU_HINTS(hn_prompts, 0,
            "Those of the first controller, from its name (SDL's). The Switch's when it has none, as with XInput alone.")
@@ -685,6 +741,8 @@ Row rows[] = {
     {TAB_GRAPHICS, "Robust buffers", &opts.robust, 0, 2, 1, tx_robust,
      "Bounds-checked buffer reads: a read past a buffer's end is dropped instead of stopping the GPU. Applies after a "
      "restart.", hn_robust, true},
+    {TAB_GRAPHICS, "VSync", &opts.vsync, 0, 1, 1, tx_onoff,
+     "Sincroniza los fotogramas con el refresco de pantalla para eliminar cortes horizontales (tearing).", nullptr, false, true},
 
     // Audio
     {TAB_AUDIO, "Volume", &opts.volume, 0, 100, 5, tx_percent,
@@ -710,6 +768,10 @@ Row rows[] = {
     {TAB_GAMEPLAY, "Discord status", &opts.discord, 0, 1, 1, tx_onoff,
      "Shows \"Playing Hookshot\" and the time played in your Discord status, while Discord runs on this PC.", nullptr, false,
      true},
+    {TAB_GAMEPLAY, "Net graph", &opts.net_graph, 0, 1, 1, tx_onoff,
+     "Muestra informacion transparente de tiempos de fotograma y estado de shaders.", nullptr, false, true},
+    {TAB_GAMEPLAY, "Language", &opts.language, 0, 1, 1, tx_language,
+     "Idioma de los textos del menu de configuracion F1.", nullptr, false, true},
 
     // Controls (11 rows; Motion opens the 6 TAB_MOTION rows, Controls its page with the 2 TAB_PAGE rows)
     {TAB_CONTROLS, "Controller in background", &opts.pad_background, 0, 1, 1, tx_onoff,
@@ -795,6 +857,8 @@ Row rows[] = {
     {TAB_DEBUG, "Sampler cache", &opts.sampler_cache, 0, 1, 1, tx_onoff,
      "What a sampler holds is kept beside it on the replay thread, so resolving a sampler that was not registered anew takes no "
      "lock. Helps while the game streams textures. Applies after restart.", nullptr, true},
+    {TAB_DEBUG, "Reload scene shaders", nullptr, 0, 0, 0, nullptr,
+     "Recarga y recompila en caliente todos los shaders de la escena actual (o presiona F10 en cualquier momento).", nullptr, false, true},
     // (Restart and Quit stay the table's last two: kRestartRow and kQuitRow count back from its end)
     {TAB_GAMEPLAY, "Restart", nullptr, 0, 0, 0, nullptr,
      "Starts the game again. Save your progress first. Press Enter or A twice to restart. Esc or B "
@@ -1079,7 +1143,11 @@ const char* const bind_names[HOS_KEY_N] = {"a", "b", "x", "y", "ls", "rs", "l", 
                                            "move_right", "cam_up", "cam_down", "cam_left", "cam_right"};
 bool can_bind() { return host && host->binding && host->bind && host->pad_raw; }
 const char* tx_pad_layout(int v) {
-    static const char* t[] = {"Nintendo (Def)", "Xbox / PC", "Swap Face", "Custom"};
+    if (opts.language == 1) {
+        static const char* es[] = {"Nintendo (Def)", "Xbox / PC", "PlayStation", "Personalizado"};
+        return es[std::min(std::max(v, 0), 3)];
+    }
+    static const char* t[] = {"Nintendo (Def)", "Xbox / PC", "PlayStation", "Custom"};
     return t[std::min(std::max(v, 0), 3)];
 }
 void apply_pad_layout(int layout) {
@@ -1094,7 +1162,7 @@ void apply_pad_layout(int layout) {
         host->bind(HOS_BIND_PAD, HOS_SW_B, 0, HOS_PAD_EAST);
         host->bind(HOS_BIND_PAD, HOS_SW_X, 0, HOS_PAD_WEST);
         host->bind(HOS_BIND_PAD, HOS_SW_Y, 0, HOS_PAD_NORTH);
-    } else if (layout == 2) { // Swap Face Buttons (Bottom=A, Right=B, Top=X, Left=Y)
+    } else if (layout == 2) { // PlayStation (Bottom=X/Cross->A, Right=O/Circle->B, Top=Triangle->X, Left=Square->Y)
         host->bind(HOS_BIND_PAD, HOS_SW_A, 0, HOS_PAD_SOUTH);
         host->bind(HOS_BIND_PAD, HOS_SW_B, 0, HOS_PAD_EAST);
         host->bind(HOS_BIND_PAD, HOS_SW_X, 0, HOS_PAD_NORTH);
@@ -1461,6 +1529,240 @@ void scroll_bar(ui::Ctx& c, float x, float top, float bottom, int n, int shown, 
     c.d->AddRectFilled(ImVec2(x - 2 * s, top), ImVec2(x + 2 * s, bottom), ui::rgba(0, 0, 0, 140), 2 * s);
     c.d->AddRectFilled(ImVec2(x - 2 * s, y0), ImVec2(x + 2 * s, y1), ui::kAccent, 2 * s);
 }
+const char* tr_row_name(const char* name) {
+    if (opts.language != 1 || !name) return name;
+    if (!strcmp(name, "Quality preset")) return "Ajuste de calidad";
+    if (!strcmp(name, "Fullscreen")) return "Pantalla completa";
+    if (!strcmp(name, "GPU device")) return "Dispositivo GPU";
+    if (!strcmp(name, "Frame generation")) return "Generacion de fotogramas";
+    if (!strcmp(name, "Frame pacing")) return "Sincronizacion de cuadros";
+    if (!strcmp(name, "HDR")) return "HDR";
+    if (!strcmp(name, "HDR paper white")) return "HDR blanco de papel";
+    if (!strcmp(name, "HDR peak brightness")) return "HDR brillo maximo";
+    if (!strcmp(name, "Game frame rate cap")) return "Limite de FPS del juego";
+    if (!strcmp(name, "NVIDIA Reflex")) return "NVIDIA Reflex";
+    if (!strcmp(name, "AMD Anti-Lag 2")) return "AMD Anti-Lag 2";
+    if (!strcmp(name, "Output resolution")) return "Resolucion de salida";
+    if (!strcmp(name, "Upscaler")) return "Escalador";
+    if (!strcmp(name, "DLSS model")) return "Modelo DLSS";
+    if (!strcmp(name, "Render resolution")) return "Resolucion de renderizado";
+    if (!strcmp(name, "Window scaling filter")) return "Filtro de escalado";
+    if (!strcmp(name, "Sharpness")) return "Nitidez";
+    if (!strcmp(name, "Anisotropic filtering")) return "Filtrado anisotropico";
+    if (!strcmp(name, "Profile")) return "Perfil";
+    if (!strcmp(name, "Ultrawide")) return "Ultrawide";
+    if (!strcmp(name, "Ultrawide menus")) return "Menus Ultrawide";
+    if (!strcmp(name, "Robust buffers")) return "Buffers robustos";
+    if (!strcmp(name, "VSync")) return "Sincronizacion vertical (VSync)";
+    if (!strcmp(name, "Volume")) return "Volumen";
+    if (!strcmp(name, "Mute in background")) return "Silenciar en segundo plano";
+    if (!strcmp(name, "Audio output")) return "Salida de audio";
+    if (!strcmp(name, "FPS counter")) return "Contador de FPS";
+    if (!strcmp(name, "Menu size")) return "Tamano del menu";
+    if (!strcmp(name, "Game speed")) return "Velocidad del juego";
+    if (!strcmp(name, "Text speed")) return "Velocidad del texto";
+    if (!strcmp(name, "Microphone")) return "Microfono";
+    if (!strcmp(name, "Discord status")) return "Estado de Discord";
+    if (!strcmp(name, "Net graph")) return "Grafico de rendimiento";
+    if (!strcmp(name, "Language")) return "Idioma";
+    if (!strcmp(name, "Controller in background")) return "Mando en segundo plano";
+    if (!strcmp(name, "Mouse camera")) return "Camara con raton";
+    if (!strcmp(name, "Mouse sensitivity")) return "Sensibilidad del raton";
+    if (!strcmp(name, "Invert mouse vertical")) return "Invertir raton vertical";
+    if (!strcmp(name, "Invert camera X")) return "Invertir camara horizontal";
+    if (!strcmp(name, "Invert camera Y")) return "Invertir camara vertical";
+    if (!strcmp(name, "Stick dead zone")) return "Zona muerta de sticks";
+    if (!strcmp(name, "Rumble strength")) return "Vibracion del mando";
+    if (!strcmp(name, "Motion controls")) return "Control por movimiento (Giroscopio)";
+    if (!strcmp(name, "Motion sensitivity X")) return "Sensibilidad giroscopio X";
+    if (!strcmp(name, "Motion sensitivity Y")) return "Sensibilidad giroscopio Y";
+    if (!strcmp(name, "Invert motion X")) return "Invertir giroscopio X";
+    if (!strcmp(name, "Invert motion Y")) return "Invertir giroscopio Y";
+    if (!strcmp(name, "Motion deadzone")) return "Zona muerta de giroscopio";
+    if (!strcmp(name, "Motion")) return "Movimiento";
+    if (!strcmp(name, "Layout preset")) return "Distribucion de mando";
+    if (!strcmp(name, "Button prompts")) return "Iconos de botones";
+    if (!strcmp(name, "Controls")) return "Controles";
+    if (!strcmp(name, "Menu shortcut")) return "Acceso rapido al menu";
+    if (!strcmp(name, "Debug tools")) return "Herramientas de depuracion";
+    if (!strcmp(name, "Heart protection")) return "Proteccion de corazones";
+    if (!strcmp(name, "No-clip flight")) return "Vuelo no-clip";
+    if (!strcmp(name, "Mark position")) return "Guardar posicion";
+    if (!strcmp(name, "Return to mark")) return "Volver a posicion";
+    if (!strcmp(name, "Set time")) return "Ajustar hora";
+    if (!strcmp(name, "Inventory item")) return "Objeto de inventario";
+    if (!strcmp(name, "Change quantity")) return "Cambiar cantidad";
+    if (!strcmp(name, "Free camera")) return "Camara libre";
+    if (!strcmp(name, "Teleport")) return "Teletransporte";
+    if (!strcmp(name, "Switch age")) return "Cambiar edad de Link";
+    if (!strcmp(name, "Inventory")) return "Editor de inventario";
+    if (!strcmp(name, "Developer")) return "Desarrollador";
+    if (!strcmp(name, "Descriptor reuse")) return "Reutilizacion de descriptores";
+    if (!strcmp(name, "Sampler cache")) return "Cache de muestreadores";
+    if (!strcmp(name, "Reload scene shaders") || !strcmp(name, "Recargar shaders (F10)")) return "Recargar shaders (F10)";
+    if (!strcmp(name, "Restart")) return "Reiniciar";
+    if (!strcmp(name, "Quit")) return "Salir";
+    return name;
+}
+
+const char* tr_help(const char* name, const char* default_help) {
+    if (opts.language != 1 || !name) return default_help;
+    if (!strcmp(name, "VSync") || strstr(name, "VSync"))
+        return "Sincroniza los fotogramas con el refresco de pantalla para eliminar cortes horizontales (tearing) y tartamudeos.";
+    if (!strcmp(name, "Net graph") || strstr(name, "Grafico de rendimiento"))
+        return "Muestra en tiempo real los milisegundos por fotograma, estabilidad de cuadros y el estado de compilacion de shaders.";
+    if (!strcmp(name, "Language") || strstr(name, "Idioma"))
+        return "Selecciona el idioma de la interfaz del menu de configuracion.";
+    if (!strcmp(name, "Reload scene shaders") || strstr(name, "Recargar shaders"))
+        return "Fuerza la recompilacion en caliente de todos los shaders y tuberias graficas de la escena actual sin reiniciar el juego. Tambien puedes presionar F10 en cualquier momento.";
+    if (!strcmp(name, "Layout preset") || strstr(name, "Distribucion de mando"))
+        return "Configura la distribucion de los botones de accion. El modo PlayStation ajusta X abajo, O a la derecha, Cuadrado a la izquierda e Y/Triangulo arriba.";
+    if (!strcmp(name, "Button prompts") || strstr(name, "Iconos de botones"))
+        return "Iconos mostrados en los textos y tutoriales dentro del juego.";
+    if (!strcmp(name, "Quality preset") || strstr(name, "Ajuste de calidad"))
+        return "Ajusta limites de VRAM y escalado segun la memoria de tu tarjeta grafica.";
+    if (!strcmp(name, "Fullscreen") || strstr(name, "Pantalla completa"))
+        return "Ocupa toda la pantalla sin bordes de ventana. Equivalente a presionar F11.";
+    if (!strcmp(name, "Frame generation") || strstr(name, "Generacion de fotogramas"))
+        return "Genera fotogramas intermedios para mayor fluidez de movimiento.";
+    if (!strcmp(name, "Frame pacing") || strstr(name, "Sincronizacion de cuadros"))
+        return "Sincroniza y suaviza la cadencia de aparicion de cada fotograma.";
+    if (!strcmp(name, "Game frame rate cap") || strstr(name, "Limite de FPS del juego"))
+        return "Limita los fotogramas generados por el juego. Se aplica tras reiniciar.";
+    if (!strcmp(name, "Output resolution") || strstr(name, "Resolucion de salida"))
+        return "Resolucion de salida previa al escalado final a la ventana. Se aplica tras reiniciar.";
+    if (!strcmp(name, "Upscaler") || strstr(name, "Escalador"))
+        return "Algoritmo de escalado para la resolucion 3D.";
+    if (!strcmp(name, "Render resolution") || strstr(name, "Resolucion de renderizado"))
+        return "Proporcion de resolucion nativa en la que se renderiza el 3D.";
+    if (!strcmp(name, "Window scaling filter") || strstr(name, "Filtro de escalado"))
+        return "Metodo de escalado hacia la ventana si difiere de la resolucion de salida.";
+    if (!strcmp(name, "Sharpness") || strstr(name, "Nitidez"))
+        return "Filtro de nitidez de imagen aplicado a la ventana.";
+    if (!strcmp(name, "Anisotropic filtering") || strstr(name, "Filtrado anisotropico"))
+        return "Mantiene las texturas nitidas en angulos inclinados y suelo lejano.";
+    if (!strcmp(name, "Profile") || strstr(name, "Perfil"))
+        return "Ejecuta el juego en modo Docked (sobremesa) o Handheld (portatil). Se aplica tras reiniciar.";
+    if (!strcmp(name, "Ultrawide"))
+        return "Adapta la camara a pantallas mas anchas o estrechas que 16:9. Se aplica tras reiniciar.";
+    if (!strcmp(name, "Robust buffers") || strstr(name, "Buffers robustos"))
+        return "Lectura segura de buffers en GPU: evita caidas del controlador grafico si hay desbordamiento.";
+    if (!strcmp(name, "Volume") || strstr(name, "Volumen"))
+        return "Volumen maestro de reproduccion del juego.";
+    if (!strcmp(name, "Mute in background") || strstr(name, "Silenciar en segundo plano"))
+        return "Silencia el juego cuando la ventana no tiene el foco.";
+    if (!strcmp(name, "FPS counter") || strstr(name, "Contador de FPS"))
+        return "Muestra el contador de fotogramas por segundo en la esquina superior derecha.";
+    if (!strcmp(name, "Menu size") || strstr(name, "Tamano del menu"))
+        return "Tamano de visualizacion de este menu y elementos de interfaz.";
+    if (!strcmp(name, "Game speed") || strstr(name, "Velocidad del juego"))
+        return "Mantiene la velocidad en tiempo real si el juego cae por debajo de 60 fps.";
+    if (!strcmp(name, "Text speed") || strstr(name, "Velocidad del texto"))
+        return "Velocidad de aparicion del texto en los dialogos.";
+    if (!strcmp(name, "Discord status") || strstr(name, "Estado de Discord"))
+        return "Muestra estado de partida en Discord con carátula e informacion de GPU.";
+    if (!strcmp(name, "Controller in background") || strstr(name, "Mando en segundo plano"))
+        return "Permite seguir controlando el juego con mando mientras otra ventana esta activa.";
+    if (!strcmp(name, "Mouse camera") || strstr(name, "Camara con raton"))
+        return "Permite mover la camara nativamente con el raton.";
+    if (!strcmp(name, "Mouse sensitivity") || strstr(name, "Sensibilidad del raton"))
+        return "Sensibilidad del giro de camara al mover el raton.";
+    if (!strcmp(name, "Invert camera X") || strstr(name, "Invertir camara horizontal"))
+        return "Invierte el eje horizontal del stick derecho de camara.";
+    if (!strcmp(name, "Invert camera Y") || strstr(name, "Invertir camara vertical"))
+        return "Invierte el eje vertical del stick derecho de camara.";
+    if (!strcmp(name, "Stick dead zone") || strstr(name, "Zona muerta de sticks"))
+        return "Zona muerta minima de los sticks analogicos.";
+    if (!strcmp(name, "Rumble strength") || strstr(name, "Vibracion del mando"))
+        return "Intensidad de vibracion del mando.";
+    if (!strcmp(name, "Motion controls") || strstr(name, "Control por movimiento"))
+        return "Apunta con el giroscopio del mando (DualSense, DualShock 4, Switch Pro).";
+    if (!strcmp(name, "Restart") || strstr(name, "Reiniciar"))
+        return "Reinicia el juego guardando configuracion previa. Presiona Enter o A dos veces para reiniciar.";
+    if (!strcmp(name, "Quit") || strstr(name, "Salir"))
+        return "Guarda y sale del juego. Presiona Enter o A dos veces para salir.";
+    return default_help;
+}
+
+// Net Graph metrics and drawing
+static float g_net_frame_ms = 16.6f;
+static float g_net_frame_hist[60] = {};
+static int g_net_hist_pos = 0;
+static int64_t g_last_frame_time = 0;
+
+void draw_net_graph(ui::Ctx& c) {
+    const float s = c.s;
+    const bool es = (opts.language == 1);
+    
+    // Position at bottom-left corner in safe area
+    const float gw = 230.0f * s;
+    const float gh = 62.0f * s;
+    const ImVec2 a(c.safe + 8 * s, c.h - c.safe - gh - 6 * s);
+    const ImVec2 b = a + ImVec2(gw, gh);
+    
+    // Transparent floating background with subtle rounded obsidian tint
+    c.d->AddRectFilled(a, b, ui::rgba(14, 18, 22, 175), 4.0f * s);
+    c.d->AddRect(a, b, ui::rgba(45, 60, 75, 190), 4.0f * s, 0, std::max(1.0f, s));
+    
+    const int pending_jobs = jobs_pending();
+    const bool reloading = is_shader_reloading();
+    
+    // Line 1: Frame ms and status pill
+    char line1[48];
+    snprintf(line1, sizeof line1, "Frame: %.1f ms", g_net_frame_ms);
+    ui::text_mid(c, c.f.strong, 13.0f * s, a.x + 8 * s, a.y + 11 * s, ui::rgba(235, 242, 248), line1);
+    
+    const char* status_tag = reloading ? (es ? "[RECARGANDO]" : "[RELOADING]") :
+                             pending_jobs > 0 ? (es ? "[COMPILANDO]" : "[COMPILING]") :
+                             (es ? "[ESTABLE]" : "[STEADY]");
+    const ImU32 status_color = reloading ? ui::rgba(255, 175, 60) :
+                               pending_jobs > 0 ? ui::rgba(230, 205, 135) :
+                               ui::rgba(110, 220, 190);
+    const float stw = ui::size_of(c.f.strong, 12.0f * s, status_tag).x;
+    ui::text_mid(c, c.f.strong, 12.0f * s, b.x - 8 * s - stw, a.y + 11 * s, status_color, status_tag);
+    
+    // Line 2: Shaders queue status
+    char line2[64];
+    if (reloading) {
+        snprintf(line2, sizeof line2, es ? "Recargando shaders (F10)..." : "Reloading shaders (F10)...");
+    } else if (pending_jobs > 0) {
+        snprintf(line2, sizeof line2, es ? "Shaders: %d en cola..." : "Shaders: %d in queue...", pending_jobs);
+    } else {
+        snprintf(line2, sizeof line2, es ? "Shaders: Listos (0)" : "Shaders: Ready (0)");
+    }
+    const ImU32 line2_col = (reloading || pending_jobs > 0) ? ui::rgba(230, 205, 135) : ui::rgba(150, 185, 200);
+    ui::text_mid(c, c.f.body, 11.5f * s, a.x + 8 * s, a.y + 25 * s, line2_col, line2);
+    
+    // Line 3: Sparkline histogram of frame pacing
+    const float px0 = a.x + 8 * s;
+    const float py0 = a.y + 35 * s;
+    const float pw = gw - 16 * s;
+    const float ph = gh - 39 * s;
+    
+    // Reference line at 16.6ms (60 FPS)
+    const float ref_y = py0 + ph - (ph * (16.6f / 50.0f));
+    c.d->AddLine(ImVec2(px0, ref_y), ImVec2(px0 + pw, ref_y), ui::rgba(70, 95, 120, 140), 1.0f);
+    
+    // 50 bars
+    const int bar_count = 50;
+    const float bar_w = (pw - (bar_count - 1)) / (float)bar_count;
+    for (int i = 0; i < bar_count; i++) {
+        const int idx = (g_net_hist_pos + i) % 60;
+        const float ms = g_net_frame_hist[idx];
+        if (ms <= 0.0f) continue;
+        const float clamped_ms = std::min(ms, 50.0f);
+        const float bh = std::max(2.0f * s, ph * (clamped_ms / 50.0f));
+        const float bx = px0 + i * (bar_w + 1.0f);
+        const float by = py0 + ph - bh;
+        
+        ImU32 bar_col = ui::rgba(100, 215, 185); // Mint (good)
+        if (ms > 33.3f) bar_col = ui::rgba(235, 110, 110); // Red/Coral (drop below 30)
+        else if (ms > 20.0f) bar_col = ui::rgba(235, 200, 120); // Amber (minor hitch)
+        
+        c.d->AddRectFilled(ImVec2(bx, by), ImVec2(bx + bar_w, py0 + ph), bar_col, 1.0f);
+    }
+}
+
 /// The banner with a page's title in the middle (the Controls, Cheats and list pages), its height
 float title_banner(ui::Ctx& c, const char* title, const char* right) {
     const float hh = banner_h(c), s = c.s;
@@ -1473,6 +1775,8 @@ float title_banner(ui::Ctx& c, const char* title, const char* right) {
 /// least (the tallest help the page can have, so it does not jump)
 void help_box(ui::Ctx& c, float x0, float x1, float y0, const char* title, const char* help, const char* hint, const char* gold_line,
               float min_h = 0, bool after_restart = false, float y_min = 0, float y_max = FLT_MAX) {
+    title = tr_row_name(title);
+    help = tr_help(title, help);
     // (y_max: the box ends above it, the prompt strip's top: moved up as far as y_min (under the banner) when it is taller than
     // the room below y0, its reserved height (min_h) given up first, its text cut at its foot only if it still does not fit)
     const float s = c.s, w = x1 - x0 - 48 * s;
@@ -1490,7 +1794,7 @@ void help_box(ui::Ctx& c, float x0, float x1, float y0, const char* title, const
     if (title) ui::text(c, c.f.heading, 21 * s, ImVec2(x0 + 24 * s, y), ui::kInk, title), y += 32 * s;
     if (after_restart) {   // (this row's change applies at the next start: said here, not in the row, where it would cut the name)
         ui::diamond(c, ImVec2(x0 + 29 * s, y + 10 * s), 4 * s, ui::kGoldHi);
-        ui::text_mid(c, c.f.strong, 16 * s, x0 + 42 * s, y + 10 * s, ui::kGoldHi, "Takes effect after a restart");
+        ui::text_mid(c, c.f.strong, 16 * s, x0 + 42 * s, y + 10 * s, ui::kGoldHi, opts.language == 1 ? "Se aplica tras reiniciar" : "Takes effect after a restart");
         y += note;
     }
     if (help) ui::para(c, c.f.body, 18 * s, ImVec2(x0 + 24 * s, y), ui::kInk, help, w);
@@ -1527,6 +1831,7 @@ void column(ui::Ctx& c, float x0, float x1, float top) {
 /// A row's name cell, selected or not; pending: a change that applies after a restart, a small gold diamond at its right end
 /// (the help says it in words)
 void name_cell(ui::Ctx& c, ImVec2 a, ImVec2 b, const char* name, bool sel, bool pending = false, float px = 18.5f) {
+    name = tr_row_name(name);
     const float s = c.s, mid = (a.y + b.y) * 0.5f;
     c.d->AddRectFilled(a, b, sel ? ui::kCellNameSel : ui::kCellName);
     c.d->AddRect(a, b, ui::kEdge, 0, std::max(1.0f, s));
@@ -1593,8 +1898,13 @@ std::string restart_line(ui::Ctx& c, float px, float width) {
         int named = 0, more = 0;
         for (int i = 0; i < restart_state.n; i++)
             if ((all >> i) & 1) (named < keep ? (shown |= 1u << i, named++) : more++);
-        line = "Restart needed: " + mr::names(restart_names, restart_state.n, shown);
-        if (more) line += (named ? " and " : "") + std::to_string(more) + (named ? " more" : more > 1 ? " settings" : " setting");
+        if (opts.language == 1) {
+            line = "Reinicio necesario: " + mr::names(restart_names, restart_state.n, shown);
+            if (more) line += (named ? " y " : "") + std::to_string(more) + (named ? " mas" : more > 1 ? " ajustes" : " ajuste");
+        } else {
+            line = "Restart needed: " + mr::names(restart_names, restart_state.n, shown);
+            if (more) line += (named ? " and " : "") + std::to_string(more) + (named ? " more" : more > 1 ? " settings" : " setting");
+        }
         if (ui::size_of(c.f.strong, px, line.c_str()).x <= width) break;
     }
     return line;
@@ -1738,7 +2048,9 @@ void draw_options(ui::Ctx& c) {
     ui::banner(c, hh);
     // the tabs in the banner: dark ink on the tan, the shown one light on a dark inset; the tab keys at their ends (a click there
     // is the previous or the next tab)
-    const char* const tab_titles[TAB_COUNT] = {"Graphics", "Audio", "Gameplay", "Controls", "Debug"};
+    const char* const tab_titles_en[TAB_COUNT] = {"Graphics", "Audio", "Gameplay", "Controls", "Debug"};
+    const char* const tab_titles_es[TAB_COUNT] = {"Graficos", "Sonido", "Juego", "Controles", "Debug"};
+    const char* const* tab_titles = (opts.language == 1) ? tab_titles_es : tab_titles_en;
     float tw[TAB_COUNT], total = 0;
     for (int i = 0; i < TAB_COUNT; i++) tw[i] = ui::size_of(c.f.heading, 23 * s, tab_titles[i]).x + 56 * s, total += tw[i];
     float x = (c.w - total) * 0.5f;
@@ -1784,16 +2096,21 @@ void draw_options(ui::Ctx& c) {
     if (help_tall_w != hx1 - hx0) help_tall_w = hx1 - hx0, help_tall = measure_help(c, hx1 - hx0 - 48 * s);
     // (a row that opens a page (Motion, Controls, Open debug tools): A or Enter opens it; Restart and Quit: A or Enter twice)
     const bool confirms = &selr == &rows[kRestartRow] || &selr == &rows[kQuitRow];
-    ui::Prompt prompt_list[5] = {{ui::kUpDown, "Choose"}, {ui::kLeftRight, "Change"}, {ui::kTabs, "Tabs"}, {ui::kBack, "Close"}};
+    ui::Prompt prompt_list[5] = {
+        {ui::kUpDown, opts.language == 1 ? "Elegir" : "Choose"},
+        {ui::kLeftRight, opts.language == 1 ? "Cambiar" : "Change"},
+        {ui::kTabs, opts.language == 1 ? "Pestanas" : "Tabs"},
+        {ui::kBack, opts.language == 1 ? "Cerrar" : "Close"}
+    };
     int prompts_n = cur_tab == TAB_MOTION ? 3 : 4;
-    if (!selr.value) prompt_list[1] = {ui::kConfirm, confirms ? (pending == &selr ? "Confirm" : selr.name) : "Open"};
-    if (cur_tab == TAB_MOTION) prompt_list[2] = {ui::kBack, "Back"};   // (Esc: to Controls)
+    if (!selr.value) prompt_list[1] = {ui::kConfirm, confirms ? (pending == &selr ? (opts.language == 1 ? "Confirmar" : "Confirm") : tr_row_name(selr.name)) : (opts.language == 1 ? "Abrir" : "Open")};
+    if (cur_tab == TAB_MOTION) prompt_list[2] = {ui::kBack, opts.language == 1 ? "Volver" : "Back"};   // (Esc: to Controls)
     if (selr.cheat >= 0) {   // (a debug tool: Change when Left and Right do something, then what confirm does)
         prompts_n = 1;
         if (selr.cheat <= 1 || selr.cheat == 7 || cheat_chooses(selr.cheat) || age_shown(selr.cheat))
-            prompt_list[prompts_n++] = {ui::kLeftRight, "Change"};
+            prompt_list[prompts_n++] = {ui::kLeftRight, opts.language == 1 ? "Cambiar" : "Change"};
         if (const char* says = cheat_confirm(selr.cheat)) prompt_list[prompts_n++] = {ui::kConfirm, says};
-        prompt_list[prompts_n++] = {ui::kTabs, "Tabs"}, prompt_list[prompts_n++] = {ui::kBack, "Close"};
+        prompt_list[prompts_n++] = {ui::kTabs, opts.language == 1 ? "Pestanas" : "Tabs"}, prompt_list[prompts_n++] = {ui::kBack, opts.language == 1 ? "Cerrar" : "Close"};
     }
     const float bar_top = ui::prompt_bar_top(c);   // (the strip itself drawn last, over all: below)
     float bottom = std::min(c.h - c.safe, bar_top) - 10 * s;   // (the rows end above the prompts)
@@ -1871,25 +2188,31 @@ void draw_options(ui::Ctx& c) {
 void draw_controls(ui::Ctx& c) {
     // (the page's own rows first, kTop of them (the layout preset, the button prompts), then a row per control and Reset to
     // defaults: one list, csel its selection)
-    const float s = c.s, hh = title_banner(c, "Controls", nullptr);
+    const float s = c.s, hh = title_banner(c, opts.language == 1 ? "Controles" : "Controls", nullptr);
     float cx0, cx1, hx0, hx1;
     bool narrow;
     columns(c, &cx0, &cx1, &hx0, &hx1, &narrow);
     column(c, cx0, cx1, hh);
     const int n = kTop + kControls + 1, sel_i = csel - kTop;   // (sel_i: the control's, kControls Reset; negative: a page row)
-    const ui::Prompt idle[] = {{ui::kUpDown, "Choose"}, {ui::kLeftRight, "Column"}, {ui::kConfirm, "Bind"}, {ui::kKey, "Clear", "Del"},
-                               {ui::kBack, "Back"}};
-    const ui::Prompt option[] = {{ui::kUpDown, "Choose"}, {ui::kLeftRight, "Change"}, {ui::kBack, "Back"}};
-    const ui::Prompt wait[] = {{ui::kBack, "Cancel"}};
+    const ui::Prompt idle_en[] = {{ui::kUpDown, "Choose"}, {ui::kLeftRight, "Column"}, {ui::kConfirm, "Bind"}, {ui::kKey, "Clear", "Del"}, {ui::kBack, "Back"}};
+    const ui::Prompt idle_es[] = {{ui::kUpDown, "Elegir"}, {ui::kLeftRight, "Columna"}, {ui::kConfirm, "Asignar"}, {ui::kKey, "Borrar", "Del"}, {ui::kBack, "Volver"}};
+    const ui::Prompt option_en[] = {{ui::kUpDown, "Choose"}, {ui::kLeftRight, "Change"}, {ui::kBack, "Back"}};
+    const ui::Prompt option_es[] = {{ui::kUpDown, "Elegir"}, {ui::kLeftRight, "Cambiar"}, {ui::kBack, "Volver"}};
+    const ui::Prompt wait_en[] = {{ui::kBack, "Cancel"}};
+    const ui::Prompt wait_es[] = {{ui::kBack, "Cancelar"}};
+    const ui::Prompt* idle = opts.language == 1 ? idle_es : idle_en;
+    const ui::Prompt* option = opts.language == 1 ? option_es : option_en;
+    const ui::Prompt* wait = opts.language == 1 ? wait_es : wait_en;
     const float bar_top = ui::prompt_bar_top(c);   // (the strip itself drawn last, over all: below)
     const Row* page_row = sel_i < 0 ? &rows[tab_row_to_global(TAB_PAGE, csel)] : nullptr;
-    const char* title = page_row ? page_row->name : sel_i < kControls ? controls[sel_i].name : "Reset to defaults";
-    const char* help = listening ? (listening == 1 ? "Press the gamepad button to use. Esc cancels." : "Press the key to use. Esc cancels.")
+    const char* title = page_row ? page_row->name : sel_i < kControls ? controls[sel_i].name : (opts.language == 1 ? "Valores por defecto" : "Reset to defaults");
+    const char* help = listening ? (listening == 1 ? (opts.language == 1 ? "Presiona el boton del mando a usar. Esc cancela." : "Press the gamepad button to use. Esc cancels.")
+                                                   : (opts.language == 1 ? "Presiona la tecla a usar. Esc cancela." : "Press the key to use. Esc cancels."))
                        : page_row ? page_row->help
-                                  : "Which gamepad button and which keys press each of the Switch's buttons. Enter binds the one "
-                                    "selected; Delete clears it. The game's button icons follow after a restart.";
+                                  : (opts.language == 1 ? "Que boton del mando y que teclas presionan cada boton de Switch. Enter asigna; Supr limpia. Los iconos del juego se actualizan tras reiniciar."
+                                                        : "Which gamepad button and which keys press each of the Switch's buttons. Enter binds the one selected; Delete clears it. The game's button icons follow after a restart.");
     const char* hint = page_row ? (page_row->hint ? page_row->hint(*page_row->value, -1) : nullptr)
-                                : "Gamepad: the D-pad moves, A binds, B goes back.";
+                                : (opts.language == 1 ? "Mando: D-pad mueve, A asigna, B vuelve." : "Gamepad: the D-pad moves, A binds, B goes back.");
     float bottom = std::min(c.h - c.safe, bar_top) - 10 * s;   // (the rows end above the prompts)
     if (narrow) {
         bottom = std::min(bar_top, c.h - c.safe) - 200 * s;
@@ -1901,9 +2224,9 @@ void draw_controls(ui::Ctx& c) {
     }
     const float rx0 = cx0 + 44 * s, rx1 = cx1 - 44 * s, pad_x = rx0 + (rx1 - rx0) * 0.36f, key_x = rx0 + (rx1 - rx0) * 0.68f;
     float top = hh + 22 * s;
-    ui::text_mid(c, c.f.body, 15 * s, rx0 + 20 * s, top + 10 * s, ui::kDim, "Button");
-    ui::text_mid(c, c.f.body, 15 * s, pad_x + 14 * s, top + 10 * s, ui::kDim, "Gamepad");
-    ui::text_mid(c, c.f.body, 15 * s, key_x + 14 * s, top + 10 * s, ui::kDim, "Keyboard");
+    ui::text_mid(c, c.f.body, 15 * s, rx0 + 20 * s, top + 10 * s, ui::kDim, opts.language == 1 ? "Boton" : "Button");
+    ui::text_mid(c, c.f.body, 15 * s, pad_x + 14 * s, top + 10 * s, ui::kDim, opts.language == 1 ? "Mando" : "Gamepad");
+    ui::text_mid(c, c.f.body, 15 * s, key_x + 14 * s, top + 10 * s, ui::kDim, opts.language == 1 ? "Teclado" : "Keyboard");
     top += 26 * s;
     const float rh = 36 * s, pitch = 42 * s;
     int shown = 0;
@@ -1926,7 +2249,7 @@ void draw_controls(ui::Ctx& c) {
             continue;
         }
         if (i == kControls) {
-            ui::button(c, ImVec2(rx0, y), ImVec2(pad_x - 8 * s, y + rh), "Reset to defaults", sel);
+            ui::button(c, ImVec2(rx0, y), ImVec2(pad_x - 8 * s, y + rh), opts.language == 1 ? "Valores por defecto" : "Reset to defaults", sel);
             hits.add(rx0, y0, pad_x - 8 * s, y1, menu_hit::kCtlRow, i);
             continue;
         }
@@ -2236,19 +2559,22 @@ void draw_ask(ui::Ctx& c) {
     const float hb = 50 * s;   // (a tan title strip, as the banner, its title in dark ink)
     c.d->AddRectFilledMultiColor(p, ImVec2(q.x, p.y + hb), ui::kBannerTop, ui::kBannerTop, ui::kBanner, ui::kBanner);
     c.d->AddRectFilled(ImVec2(p.x, p.y + hb - 3 * s), ImVec2(q.x, p.y + hb), ui::kBannerEdge);
-    ui::text_mid_centre(c, c.f.heading, 23 * s, (p.x + q.x) * 0.5f, p.y + hb * 0.5f, ui::kBannerInk, "Restart Needed");
-    const std::string ask = "Restart to apply " + restart_list(" and ") + "?";
+    ui::text_mid_centre(c, c.f.heading, 23 * s, (p.x + q.x) * 0.5f, p.y + hb * 0.5f, ui::kBannerInk, opts.language == 1 ? "Reinicio Necesario" : "Restart Needed");
+    const std::string ask = (opts.language == 1 ? "Reiniciar para aplicar " : "Restart to apply ") + restart_list(opts.language == 1 ? " y " : " and ") + "?";
     ui::para(c, c.f.body, 19 * s, ImVec2(p.x + 28 * s, p.y + 64 * s), ui::kInk, ask.c_str(), W - 56 * s);
-    ui::text_mid(c, c.f.body, 16 * s, p.x + 28 * s, p.y + 124 * s, ui::kSoft, "Progress since your last save is lost.");
+    ui::text_mid(c, c.f.body, 16 * s, p.x + 28 * s, p.y + 124 * s, ui::kSoft, opts.language == 1 ? "El progreso sin guardar se perdera." : "Progress since your last save is lost.");
     const float bw = 210 * s, bh = 46 * s, gap = 24 * s, by = p.y + 160 * s, x0 = (p.x + q.x) * 0.5f - bw - gap * 0.5f;
-    const char* labels[2] = {"Later", "Restart Now"};
+    const char* labels_en[2] = {"Later", "Restart Now"};
+    const char* labels_es[2] = {"Mas tarde", "Reiniciar ahora"};
+    const char* const* labels = opts.language == 1 ? labels_es : labels_en;
     for (int i = 0; i < 2; i++) {
         const ImVec2 a(x0 + i * (bw + gap), by), b = a + ImVec2(bw, bh);
         ui::button(c, a, b, labels[i], i == ask_sel);
         hits.add(a.x, a.y, b.x, b.y, menu_hit::kButton, i);
     }
-    const ui::Prompt prompt_list[] = {{ui::kLeftRight, "Choose"}, {ui::kConfirm, "Confirm"}, {ui::kBack, "Later"}};
-    ui::prompt_bar(c, prompt_list, 3);
+    const ui::Prompt prompt_list_en[] = {{ui::kLeftRight, "Choose"}, {ui::kConfirm, "Confirm"}, {ui::kBack, "Later"}};
+    const ui::Prompt prompt_list_es[] = {{ui::kLeftRight, "Elegir"}, {ui::kConfirm, "Confirmar"}, {ui::kBack, "Mas tarde"}};
+    ui::prompt_bar(c, opts.language == 1 ? prompt_list_es : prompt_list_en, 3);
 }
 
 void draw_menu(ui::Ctx& c);
@@ -2531,7 +2857,19 @@ void menu_note_present_sizes(uint32_t picture_w, uint32_t picture_h, uint32_t wi
     present_sizes.store(c(picture_w) << 48 | c(picture_h) << 32 | c(window_w) << 16 | c(window_h), std::memory_order_relaxed);
 }
 void menu_note_frame(bool game_frame, int shown) {
-    if (shown) shown_frames.fetch_add(shown, std::memory_order_relaxed);
+    if (shown) {
+        shown_frames.fetch_add(shown, std::memory_order_relaxed);
+        const int64_t now = prof_now();
+        if (g_last_frame_time != 0) {
+            const double delta_ms = (now - g_last_frame_time) / 1000000.0;
+            if (delta_ms > 0.1 && delta_ms < 1000.0) {
+                g_net_frame_ms = (float)delta_ms;
+                g_net_frame_hist[g_net_hist_pos] = g_net_frame_ms;
+                g_net_hist_pos = (g_net_hist_pos + 1) % 60;
+            }
+        }
+        g_last_frame_time = now;
+    }
     if (game_frame) game_frames.fetch_add(1, std::memory_order_relaxed);
 }
 
@@ -2698,6 +3036,9 @@ void menu_tick() {
         press[i] = enabled && (host && host->take_key_press ? mine && queued : down && !held[i]);
         held[i] = down;
         if (press[i]) pad_last = false;   // (the keys: their names in the prompts)
+    }
+    if (mine && (GetAsyncKeyState(VK_F10) & 1)) {
+        trigger_shader_reload();
     }
     // (hookshot) the gamepads, by position: Home, or Select and Start together, as Insert; the D-pad as the arrows; the
     // buttons the Switch's A and B are bound to as Enter and Esc, as in the game (vk_menu_keys.h; with the Nintendo layout A
@@ -3043,6 +3384,7 @@ void menu_tick() {
                 }
             }
         } else if (r.cheat >= 0) cheat_press(r.cheat, press, changed);   // (a debug tool: on the Debug tab itself)
+        else if (press[7] && !r.value && !strcmp(r.name, "Reload scene shaders")) trigger_shader_reload(), changed = true;
         else if (press[7] && is_motion_row(r)) cur_tab = TAB_MOTION, tab_selected[TAB_MOTION] = 0, press[7] = false, changed = true;
         else if (press[7] && !r.value && can_bind()) page = 1, csel = 0, ccol = 0, changed = true;
         if ((press[3] || press[4] || press[7]) && r.value) {   // (Enter, or A, as Right)
@@ -3088,8 +3430,9 @@ void menu_tick() {
 void menu_record(VkCommandBuffer cmd, uint32_t index, uint32_t w, uint32_t h) {
     const bool start = startup_on.load(std::memory_order_acquire);
     const bool fps = opts.show_fps && !start;   // (no game frames yet: not "0 FPS" over the start-up screen)
+    const bool net = opts.net_graph && !start;
     const bool open = open_now.load(std::memory_order_relaxed);
-    if (!start && !fps && !open) {   // (nothing shows: no ImGui frame, no render pass)
+    if (!start && !fps && !net && !open) {   // (nothing shows: no ImGui frame, no render pass)
         // (but a new window size or Menu size since the last bake: one frame with nothing drawn that bakes the menu's glyphs
         // and measures its page for the new size, so the next open has no hitch whatever was resized while nothing showed)
         if (prebake_needed(w, h) && ui::begin(w, h)) {
@@ -3113,17 +3456,21 @@ void menu_record(VkCommandBuffer cmd, uint32_t index, uint32_t w, uint32_t h) {
     if (start) draw_startup(c);   // (under the menu)
     if (open) draw_menu(c);
     if (fps) draw_fps(c, open);
+    if (net) draw_net_graph(c);
     ui::record(cmd, index, w, h);
 }
 
 void menu_record_image(VkCommandBuffer cmd, VkImage image, VkImageView view, uint32_t w, uint32_t h) {
+    const bool start = startup_on.load(std::memory_order_acquire);
     const bool open = open_now.load(std::memory_order_relaxed);
-    const bool fps = opts.show_fps && !startup_on.load(std::memory_order_acquire);
-    if (!open && !fps) return;
+    const bool fps = opts.show_fps && !start;
+    const bool net = opts.net_graph && !start;
+    if (!open && !fps && !net) return;
     if (!ui::begin(w, h)) return;
     ui::Ctx c = ui_ctx(w, h);
     if (open) draw_menu(c);
     if (fps) draw_fps(c, open);
+    if (net) draw_net_graph(c);
     ui::record_to(cmd, image, view, w, h);
 }
 

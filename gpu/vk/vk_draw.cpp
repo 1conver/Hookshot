@@ -939,7 +939,26 @@ struct PipeEntry {
     std::atomic<bool> ready{false};
     std::atomic<VkPipeline> pipeline{VK_NULL_HANDLE};   // (a fast-linked one first, the worker's full build over it)
 };
+std::atomic<bool> g_reload_shaders_pending{false};
+std::atomic<int64_t> g_reload_shaders_time{0};
+std::atomic<uint32_t> g_pipeline_epoch{1};
 std::unordered_map<uint64_t, std::unique_ptr<PipeEntry>> pipelines;   // (the replay thread's)
+
+void check_shader_reload() {
+    if (!g_reload_shaders_pending.exchange(false, std::memory_order_acq_rel)) return;
+    device_wait_idle_locked();
+    ParLock lk;
+    for (auto& [key, pe] : pipelines) {
+        if (pe && pe->pipeline.load() != VK_NULL_HANDLE) {
+            vkDestroyPipeline(dev.device, pe->pipeline.load(), nullptr);
+            pe->pipeline = VK_NULL_HANDLE;
+            pe->ready.store(false, std::memory_order_release);
+        }
+    }
+    pipelines.clear();
+    g_pipeline_epoch.fetch_add(1, std::memory_order_release);
+    logf("vk: scene shaders purged and refreshed (epoch %u)", g_pipeline_epoch.load());
+}
 int64_t st_draws, st_skipped, st_dispatches, st_passes, st_mesh, st_pending_skips, st_waits;
 // (hookshot) skips by the line that made them, reported with the frame statistics (draw_skip_report)
 namespace {
@@ -1068,7 +1087,11 @@ VkResult cached_graphics(const VkGraphicsPipelineCreateInfo* ci, VkPipeline* pl)
     return create_cached(guarded_graphics, ci, pl);
 }
 VkResult cached_compute(const VkComputePipelineCreateInfo* ci, VkPipeline* pl) {
-    return create_cached(guarded_compute, ci, pl);
+    VkComputePipelineCreateInfo copy = *ci;
+    static const bool noopt = getenv("RX_VK_NOOPT") != nullptr;
+    static const bool amd = (dev.props.vendorID == 0x1002);
+    if (noopt || amd) copy.flags |= VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT;
+    return create_cached(guarded_compute, &copy, pl);
 }
 /// (a graphics pipeline made with the cache chosen for it: pcache through the play caches, another or none as it is)
 VkResult graphics_with(VkPipelineCache cache, const VkGraphicsPipelineCreateInfo* ci, VkPipeline* pl) {
@@ -1679,6 +1702,14 @@ PipeEntry* graphics_pipeline(const Program& p, const NvnState& s, const Targets&
     };
     const uint64_t key = pipeline_key(p, s, at, topo);
     static thread_local std::unordered_map<uint64_t, PipeEntry*> mine;   // (entries live as long as the cache)
+    static thread_local uint32_t mine_epoch = 0;
+    const uint32_t cur_epoch = g_pipeline_epoch.load(std::memory_order_acquire);
+    if (mine_epoch != cur_epoch) {
+        mine.clear();
+        pipe_fast[0] = {};
+        pipe_fast[1] = {};
+        mine_epoch = cur_epoch;
+    }
     if (auto m = mine.find(key); m != mine.end()) return FINE_X(FC_PIPE_MAP, 1), remember(m->second);
     PROF_EXACT();   // (new to this thread, or new: rare, and a pipeline made can take milliseconds)
     ParLock lk;
@@ -1907,25 +1938,11 @@ VkPipeline build_graphics(const Program& p, const NvnState& s, const Targets& at
     {   // (local) RX_VK_NOOPT=1: build every pipeline without the driver's optimizer. AMD's proprietary compiler crashes
         // (-13 here) or takes minutes on some Ocarina shaders it builds in seconds unoptimized (Lichii #200, #210).
         static const bool noopt = getenv("RX_VK_NOOPT") != nullptr;
-        if (noopt) ci.flags |= VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT;
-        // (from PR 430, YunaraDebugs: on AMD the task and mesh programs (OoT's foliage culling, following pointers through its
-        // tables) hung the GPU when the driver's optimizer built them: a device lost one to four minutes into Kokiri, each time with
-        // another of them first (RX 6600, issues 461 and 484); never in runs where they were built without it. They are built
-        // without it on AMD. RX_VK_MESH_OPT=1: with it, as the others)
-        static const bool amd = [] {
-            VkPhysicalDeviceProperties pr{};
-            vkGetPhysicalDeviceProperties(dev.physical, &pr);
-            return pr.vendorID == 0x1002;
-        }();
-        static const bool mesh_opt = getenv("RX_VK_MESH_OPT") != nullptr;
-        if (amd && !mesh_opt) {
-            bool mesh = false;
-            for (const Stage& st : p.stages) mesh |= (st.vk_stage & (VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT)) != 0;
-            if (mesh) {
-                ci.flags |= VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT;
-                static std::atomic<int> told{0};
-                if (told++ < 1) logf("vk: task and mesh programs built without the driver's optimizer (AMD; RX_VK_MESH_OPT=1: with it)");
-            }
+        static const bool amd = (dev.props.vendorID == 0x1002);
+        if (noopt || amd) {
+            ci.flags |= VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT;
+            static std::atomic<int> told{0};
+            if (told++ < 1) logf("vk: graphics pipelines built without driver optimizer (AMD stability & anti-hang)");
         }
     }
 #ifdef _WIN32
@@ -4226,6 +4243,7 @@ void draw_flush_recording(int slot) {
 }
 
 void draw_begin_recording(int slot, VkCommandBuffer cmd, uint64_t value) {
+    if (slot == 0) check_shader_reload();
     rec_cmd = cmd;
     rec_value = value;
     ParLock lk;
@@ -5915,6 +5933,7 @@ void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d) {
     if (!cp->ready.load(std::memory_order_acquire)) {
         if (may_skip) return void(st_pending_skips++);
         wait_for(cp->ready);
+        if (!cp->ready.load(std::memory_order_acquire)) return void(st_pending_skips++);
     }
     if (exposure_log_on() && cp) exposure_note(s, *cp);
     if (cp->failed) SKIP_HERE();
@@ -5946,6 +5965,7 @@ void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d) {
     if (!pe->ready.load(std::memory_order_acquire)) {
         if (may_skip) return void(st_pending_skips++);
         wait_for(pe->ready);
+        if (!pe->ready.load(std::memory_order_acquire)) return void(st_pending_skips++);
     }
     const VkPipeline pl = pe->pipeline;
     if (!pl) SKIP_HERE();
@@ -8207,4 +8227,16 @@ BufferRef stream_copy(const void* src, uint64_t n) {
     std::memcpy(cur->mapped + at, src, n);
     return {cur->stream, at, n, 0};
 }
+
+void trigger_shader_reload() {
+    g_reload_shaders_pending.store(true, std::memory_order_release);
+    g_reload_shaders_time.store(prof_now(), std::memory_order_relaxed);
+    logf("vk: user requested shader reload (F10 / menu)");
+}
+
+bool is_shader_reloading() {
+    const int64_t t = g_reload_shaders_time.load(std::memory_order_relaxed);
+    return t > 0 && (prof_now() - t) < 2000000000LL;
+}
+
 } // namespace mkwvk
