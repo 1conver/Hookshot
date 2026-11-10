@@ -81,17 +81,32 @@ const char* tx_framegen(int v) {
     static const char* t[] = {"Off", "", "2x", "3x", "4x", "5x", "6x", "7x", "8x"};
     return t[v];
 }
-const char* tx_onoff(int v) { return v ? "On" : "Off"; }
+const char* tx_onoff(int v) {
+    if (opts.language == 1) return v ? "Activado" : "Desactivado";
+    return v ? "On" : "Off";
+}
+const char* tx_language(int v) {
+    return v == 1 ? "Español" : "English";
+}
 // (hookshot) Motion controls: the choice, and whether a connected controller has a gyroscope (host/pad_sdl.c). Either can be
 // chosen whatever is connected: a pad plugged in later is read when it comes
 const char* tx_gyro(int v) {
     const int status = host && host->gyro_status ? host->gyro_status() : -1;
+    if (opts.language == 1) {
+        if (status == 2) return v ? "Activado (giroscopio listo)" : "Desactivado (giroscopio listo)";
+        if (status == 1) return v ? "Activado (mando sin giroscopio)" : "Desactivado (mando sin giroscopio)";
+        if (status == 0) return v ? "Activado (sin mando)" : "Desactivado (sin mando)";
+        return v ? "Activado" : "Desactivado";
+    }
     if (status == 2) return v ? "On (gyro found)" : "Off (gyro found)";
     if (status == 1) return v ? "On (no gyro on this pad)" : "Off (no gyro on this pad)";
     if (status == 0) return v ? "On (no controller)" : "Off (no controller)";
     return v ? "On" : "Off";
 }
-const char* tx_mousecam(int v) { return v ? "Native" : "As the stick"; }
+const char* tx_mousecam(int v) {
+    if (opts.language == 1) return v ? "Nativa" : "Como joystick";
+    return v ? "Native" : "As the stick";
+}
 const char* tx_sens(int v) {
     static char b[12];
     snprintf(b, sizeof b, "%.2f", v / 100.0);
@@ -106,11 +121,15 @@ bool filter_needed() {
 }
 const char* tx_upscale(int v) {
     static const char* t[] = {"Off", "Catmull-Rom", "Lanczos"};
-    if ((unsigned)v >= sizeof t / sizeof t[0]) return t[0];   // (a setting past the row: the label, not the next bytes)
+    if ((unsigned)v >= 3) return t[0];   // (a setting past the row: the label, not the next bytes)
     return t[v];
 }
 /// The Window scaling filter row's value: its filter, or that none is needed (the saved value stays, for another window size)
-const char* tx_filter(int v) { return filter_needed() ? tx_upscale(v) : "Not needed (window = output)"; }
+const char* tx_filter(int v) {
+    if (!filter_needed()) return opts.language == 1 ? "Innecesario (ventana = salida)" : "Not needed (window = output)";
+    if (opts.language == 1 && v == 0) return "Desactivado";
+    return tx_upscale(v);
+}
 const char* tx_reflex(int v) {
     static const char* t[] = {"Off", "On", "On + Boost"};
     return t[reflex_available() ? std::clamp(v, 0, 2) : 0];
@@ -128,7 +147,9 @@ const char* hn_reflex(int v, int variant) {
 namespace ur = upscaler_rows;
 int upscaler() { return dlss_mode(); }
 const char* tx_upscaler(int) {
-    static const char* t[] = {"Game's own", "NVIDIA DLSS", "NVIDIA DLAA"};
+    static const char* t_en[] = {"Game's own", "NVIDIA DLSS", "NVIDIA DLAA"};
+    static const char* t_es[] = {"Propio del juego", "NVIDIA DLSS", "NVIDIA DLAA"};
+    const char* const* t = opts.language == 1 ? t_es : t_en;
     return t[std::clamp(upscaler(), 0, 2)];
 }
 /// The Upscaler: the one shown (what runs, upscaler()), and with the game's own, why DLSS and DLAA are not offered
@@ -274,17 +295,25 @@ const char* tx_output_res(int v) {
     snprintf(b, sizeof b, "%ux%u%s", o.w, o.h, v ? "" : " (game's)");
     return b;
 }
-const char* tx_speed(int v) { return v ? "Real time" : "Per frame"; }
+const char* tx_speed(int v) {
+    if (opts.language == 1) return v ? "Tiempo real" : "Por fotograma";
+    return v ? "Real time" : "Per frame";
+}
 const char* tx_text_speed(int v) {
-    static const char* t[] = {"Normal", "2x", "4x", "Instant"};
-    if ((unsigned)v >= sizeof t / sizeof t[0]) return t[0];
+    static const char* t_en[] = {"Normal", "2x", "4x", "Instant"};
+    static const char* t_es[] = {"Normal", "2x", "4x", "Instantáneo"};
+    const char* const* t = opts.language == 1 ? t_es : t_en;
+    if ((unsigned)v >= 4) return t[0];
     return t[v];
 }
-const char* tx_ultrawide(int v) { return v ? "Monitor's shape" : "16:9"; }
+const char* tx_ultrawide(int v) {
+    if (opts.language == 1) return v ? "Formato del monitor" : "16:9";
+    return v ? "Monitor's shape" : "16:9";
+}
 const char* tx_gpu(int v) {
     static char buf[300];
     const int idx = v - 1;
-    if (v <= 0) snprintf(buf, sizeof buf, "Auto");
+    if (v <= 0) snprintf(buf, sizeof buf, opts.language == 1 ? "Automático" : "Auto");
     else if (idx < (int)gpu_device_names.size()) snprintf(buf, sizeof buf, "%d: %s", idx, gpu_device_names[idx].c_str());
     else snprintf(buf, sizeof buf, "%d: Device %d", idx, idx);
     // (the whole name shows: the selected row slides through it, see marquee_pos)
@@ -333,13 +362,20 @@ const char* hn_mic(int v, int variant) {
     if (variant > 1) return nullptr;
     return missing ? "Not plugged in: Default stands in until it is back." : "This microphone, by its name. A change applies at once.";
 }
-const char* tx_rumble(int v) { return v ? tx_percent(v) : "Off"; }
+const char* tx_rumble(int v) {
+    if (!v) return opts.language == 1 ? "Desactivado" : "Off";
+    return tx_percent(v);
+}
 const char* tx_robust(int v) {
-    static const char* t[] = {"Auto", "Off", "On"};
+    static const char* t_en[] = {"Auto", "Off", "On"};
+    static const char* t_es[] = {"Automático", "Desactivado", "Activado"};
+    const char* const* t = opts.language == 1 ? t_es : t_en;
     return (unsigned)v < 3 ? t[v] : t[0];
 }
 const char* tx_preset(int v) {
-    static const char* t[] = {"Custom", "Minimum (4GB)", "Low (6GB)", "Balanced (8GB)", "High (12GB)", "Ultra (16GB+)"};
+    static const char* t_en[] = {"Custom", "Minimum (4GB)", "Low (6GB)", "Balanced (8GB)", "High (12GB)", "Ultra (16GB+)"};
+    static const char* t_es[] = {"Personalizado", "Mínimo (4GB)", "Bajo (6GB)", "Equilibrado (8GB)", "Alto (12GB)", "Ultra (16GB+)"};
+    const char* const* t = opts.language == 1 ? t_es : t_en;
     return t[std::min(std::max(v, 0), 5)];
 }
 void sync_preset_budgets(int p) {
@@ -442,6 +478,105 @@ MENU_HINTS(hn_pad_layout, 0, "The Switch's order: A on the right, B at the botto
            "A at the bottom, B on the right; X and Y as on the Switch.",
            "Bindings of your own, from the Controls page.")
 
+const char* tr_name(const char* en) {
+    if (opts.language != 1 || !en) return en;
+    if (!strcmp(en, "Quality preset")) return "Perfil de calidad";
+    if (!strcmp(en, "Fullscreen")) return "Pantalla completa";
+    if (!strcmp(en, "GPU device")) return "Tarjeta gráfica (GPU)";
+    if (!strcmp(en, "Frame generation")) return "Generación de fotogramas";
+    if (!strcmp(en, "Frame pacing")) return "Sincronización de frames";
+    if (!strcmp(en, "NVIDIA Reflex")) return "NVIDIA Reflex";
+    if (!strcmp(en, "Output resolution")) return "Resolución de salida";
+    if (!strcmp(en, "Upscaler")) return "Escalador (Upscaler)";
+    if (!strcmp(en, "DLSS model")) return "Modelo DLSS";
+    if (!strcmp(en, "Render resolution")) return "Resolución de renderizado";
+    if (!strcmp(en, "Window scaling filter")) return "Filtro de reescalado";
+    if (!strcmp(en, "Sharpness")) return "Nitidez";
+    if (!strcmp(en, "Handheld profile")) return "Perfil portátil (Handheld)";
+    if (!strcmp(en, "Ultrawide")) return "Pantalla ultra-ancha";
+    if (!strcmp(en, "Robust buffers")) return "Buffers robustos";
+    if (!strcmp(en, "FPS counter")) return "Contador de FPS";
+    if (!strcmp(en, "Net graph")) return "Gráfico de rendimiento (Net graph)";
+    if (!strcmp(en, "Menu language")) return "Idioma del menú";
+    if (!strcmp(en, "Game speed")) return "Velocidad de juego";
+    if (!strcmp(en, "Text speed")) return "Velocidad del texto";
+    if (!strcmp(en, "Microphone")) return "Micrófono";
+    if (!strcmp(en, "Discord Rich Presence")) return "Discord Rich Presence";
+    if (!strcmp(en, "Controller in background")) return "Mando en segundo plano";
+    if (!strcmp(en, "Mouse camera")) return "Cámara con ratón";
+    if (!strcmp(en, "Mouse sensitivity")) return "Sensibilidad del ratón";
+    if (!strcmp(en, "Invert mouse vertical")) return "Invertir eje Y del ratón";
+    if (!strcmp(en, "Invert camera X")) return "Invertir cámara horizontal";
+    if (!strcmp(en, "Invert camera Y")) return "Invertir cámara vertical";
+    if (!strcmp(en, "Rumble strength")) return "Vibración del mando";
+    if (!strcmp(en, "Motion controls")) return "Control por movimiento";
+    if (!strcmp(en, "Motion sensitivity X")) return "Sensibilidad de movimiento X";
+    if (!strcmp(en, "Motion sensitivity Y")) return "Sensibilidad de movimiento Y";
+    if (!strcmp(en, "Invert motion X")) return "Invertir movimiento X";
+    if (!strcmp(en, "Invert motion Y")) return "Invertir movimiento Y";
+    if (!strcmp(en, "Layout preset")) return "Distribución de botones";
+    return en;
+}
+
+const char* tr_help(const char* en) {
+    if (opts.language != 1 || !en) return en;
+    if (strstr(en, "Sets the scaling rows, frame generation"))
+        return "Configura resolución, generación de frames y memoria según tu tarjeta gráfica.";
+    if (strstr(en, "Fills the whole screen with the game"))
+        return "Llena toda la pantalla con el juego, sin bordes de ventana. Igual que F11.";
+    if (strstr(en, "Which graphics card the game runs on"))
+        return "Tarjeta gráfica utilizada para renderizar el juego. Se aplica tras reiniciar.";
+    if (strstr(en, "Makes frames between the game's own"))
+        return "Genera fotogramas intermedios para mayor fluidez de movimiento.";
+    if (strstr(en, "When each frame is shown"))
+        return "Sincroniza y estabiliza la entrega de fotogramas para evitar tirones.";
+    if (strstr(en, "The game's whole frame, HUD included"))
+        return "Resolución base de salida del juego antes de escalar a la ventana.";
+    if (strstr(en, "What scales the 3D up to the Output resolution"))
+        return "Método de escalado 3D (red interna o NVIDIA DLSS).";
+    if (strstr(en, "The share of the output the 3D is drawn at"))
+        return "Porcentaje de resolución nativa al que se renderiza el mundo 3D.";
+    if (strstr(en, "How the finished picture is scaled to the window"))
+        return "Filtro con el que se escala la imagen final a la ventana.";
+    if (strstr(en, "Sharpens the picture as it goes to the window"))
+        return "Ajusta la nitidez del renderizado final.";
+    if (strstr(en, "Runs the game as if the console were undocked"))
+        return "Ejecuta el juego con el perfil portátil. Se aplica tras reiniciar.";
+    if (strstr(en, "The camera's shape on a screen wider than 16:9"))
+        return "Adapta la cámara y el campo visual a pantallas ultra-panorámicas.";
+    if (strstr(en, "Bounds-checked buffer reads"))
+        return "Protección contra lecturas fuera de rango en buffers GPU. Se aplica tras reiniciar.";
+    if (strstr(en, "Frames per second in the top right corner"))
+        return "Muestra los fotogramas por segundo en la esquina superior derecha.";
+    if (strstr(en, "Shows real-time frame pacing"))
+        return "Gráfico flotante de tiempos de frame, estado de fluidez y compilación de shaders.";
+    if (strstr(en, "Language of the in-game menu"))
+        return "Cambia el idioma de este menú de opciones (F1 / Insert).";
+    if (strstr(en, "How fast the letters of dialogue") || strstr(en, "How fast dialogue prints"))
+        return "Velocidad de aparición de las letras en diálogos y mensajes.";
+    if (strstr(en, "How the game keeps time"))
+        return "Cómo gestiona el tiempo el juego cuando baja de 60 fotogramas.";
+    if (strstr(en, "Shows on your Discord profile"))
+        return "Muestra en tu perfil de Discord que estás jugando a Ocarina of Time Remake.";
+    if (strstr(en, "Whether the controller plays the game while another window"))
+        return "Permite que el mando siga respondiendo cuando otra ventana tiene el foco.";
+    if (strstr(en, "How strongly the controller rumbles"))
+        return "Intensidad de vibración del mando.";
+    if (strstr(en, "Aiming and looking with the controller's gyroscope"))
+        return "Apunta usando el giroscopio del mando donde el juego lo soporte.";
+    if (strstr(en, "Which face button is which"))
+        return "Disposición de los botones frontales (Nintendo, Xbox, PlayStation).";
+    if (strstr(en, "How the captured mouse turns the camera"))
+        return "Cómo gira la cámara al mover el ratón capturado.";
+    if (strstr(en, "Swaps up and down for the mouse"))
+        return "Invierte el eje vertical (arriba/abajo) del ratón.";
+    if (strstr(en, "Inverts horizontal look"))
+        return "Invierte la cámara horizontal (izquierda/derecha) en el joystick.";
+    if (strstr(en, "Inverts vertical look"))
+        return "Invierte la cámara vertical (arriba/abajo) en el joystick.";
+    return en;
+}
+
 Row rows[] = {
     // Graphics (the Upscaler only in a build with DLSS: row_shown)
     {TAB_GRAPHICS, "Quality preset", &opts.preset, 0, 5, 1, tx_preset,
@@ -479,13 +614,15 @@ Row rows[] = {
      "Bounds-checked buffer reads: a read past a buffer's end is dropped instead of stopping the GPU. Applies after a "
      "restart.", hn_robust, true},
 
-    // Gameplay (5 rows)
+    // Gameplay (6 rows)
     {TAB_GAMEPLAY, "FPS counter", &opts.show_fps, 0, 1, 1, tx_onoff, "Frames per second in the top right corner.", hn_fps,
      false, true},
     // [HOOKSHOT-FLAG-NET-GRAPH]
     {TAB_GAMEPLAY, "Net graph", &opts.net_graph, 0, 1, 1, tx_onoff,
      "Shows real-time frame pacing, wait/idle status, and a spinner showing background shader/pipeline compilations.", nullptr,
      false, true},
+    {TAB_GAMEPLAY, "Menu language", &opts.language, 0, 1, 1, tx_language,
+     "Language of the in-game menu.", nullptr, false, true},
     {TAB_GAMEPLAY, "Game speed", &opts.realtime, 0, 1, 1, tx_speed, "How the game keeps time when it runs below 60 fps.",
      hn_speed},
     {TAB_GAMEPLAY, "Text speed", &opts.text_speed, 0, 3, 1, tx_text_speed,
@@ -1327,7 +1464,9 @@ void paint_menu(HDC dc, uint32_t w, uint32_t h, int s) {
     TextOutA(dc, (int)w - 16 * s - rbsz.cx, tab_y + 8 * s, rb_hint, (int)strlen(rb_hint));
     HFONT tab_font = font(13 * s, FW_BOLD);
     SelectObject(dc, tab_font);
-    const char* const tab_titles[TAB_COUNT] = {"GRAPHICS", "GAMEPLAY", "CONTROLS"};
+    const char* const tab_titles_en[TAB_COUNT] = {"GRAPHICS", "GAMEPLAY", "CONTROLS"};
+    const char* const tab_titles_es[TAB_COUNT] = {"GRÁFICOS", "JUGABILIDAD", "CONTROLES"};
+    const char* const* tab_titles = opts.language == 1 ? tab_titles_es : tab_titles_en;
     const int center_start = menu_hit::kTabSide * s;
     const int tab_slot_w = menu_hit::tab_slot_w(s, (int)w);
     for (int t = 0; t < TAB_COUNT; t++) {
@@ -1365,14 +1504,16 @@ void paint_menu(HDC dc, uint32_t w, uint32_t h, int s) {
             startup_gdi::round_rect(dc, 8 * s, y, (int)w - 16 * s, rh, 6 * s, RGB(44, 72, 54));
             startup_gdi::round_fill(dc, 10 * s, y + 6 * s, 3 * s, rh - 12 * s, RGB(104, 186, 124));   // (a green marker at its left)
         }
+        const char* dname = tr_name(r.name);
         SetTextColor(dc, sel ? RGB(255, 255, 255) : RGB(196, 204, 198));
-        TextOutA(dc, 18 * s, y + 4 * s, r.name, (int)strlen(r.name));
+        TextOutA(dc, 18 * s, y + 4 * s, dname, (int)strlen(dname));
         // (the value right-aligned, kept clear of the row's name: see marquee_pos)
         SIZE nsz{};
-        GetTextExtentPoint32A(dc, r.name, (int)strlen(r.name), &nsz);
+        GetTextExtentPoint32A(dc, dname, (int)strlen(dname), &nsz);
         const int room = (int)w - 18 * s - (18 * s + (int)nsz.cx + 12 * s);
         std::string label = r.value ? r.text(*r.value) : ">";   // (">": a page)
-        if (r.value && r.restart && *r.value != restart_state.start[restart_slot_of(r)]) label += " (after restart)";
+        if (r.value && r.restart && *r.value != restart_state.start[restart_slot_of(r)])
+            label += opts.language == 1 ? " (tras reiniciar)" : " (after restart)";
         const bool arrows = r.value && sel && !row_fixed(r.value);
         auto width = [&](const std::string& t) {
             SIZE z{};
@@ -1425,11 +1566,11 @@ void paint_menu(HDC dc, uint32_t w, uint32_t h, int s) {
     SetTextColor(dc, RGB(176, 186, 180));
     {   // (what the row is, then on a line of its own, set off by a bar, what its value does: measure_help keeps the room)
         const Row& r = rows[tab_row_to_global(cur_tab, tab_selected[cur_tab])];
-        const int about = wrap_help(dc, r.help, (int)w - 32 * s, 16 * s, help_top + 4 * s, true);
+        const int about = wrap_help(dc, tr_help(r.help), (int)w - 32 * s, 16 * s, help_top + 4 * s, true);
         if (const char* hint = r.value && r.hint ? r.hint(*r.value, -1) : nullptr) {
             const int y = help_top + 4 * s + about + kHintGap * s;
             SetTextColor(dc, RGB(150, 166, 156));
-            const int tall = wrap_help(dc, hint, (int)w - (32 + kHintIndent) * s, (16 + kHintIndent) * s, y, true);
+            const int tall = wrap_help(dc, tr_help(hint), (int)w - (32 + kHintIndent) * s, (16 + kHintIndent) * s, y, true);
             fill(dc, 16 * s, y + 2 * s, 2 * s, tall - 4 * s, RGB(96, 176, 112));
         }
     }
@@ -1505,21 +1646,25 @@ void paint_net_graph(HDC dc, uint32_t w, uint32_t h, int s) {
     const bool had_recent_wait = (waits > last_waits) || (g_net_frame_ms > 45.0f);
     last_waits = waits;
 
-    HFONT f_bold = hard_font(13 * s, FW_BOLD);
-    HFONT f_norm = hard_font(12 * s, FW_NORMAL);
+    HFONT f_bold = hard_font(12 * s, FW_BOLD);
+    HFONT f_norm = hard_font(11 * s, FW_NORMAL);
     HGDIOBJ old_font = SelectObject(dc, f_bold);
 
-    // Line 1: Frame pacing and Wait state
+    const bool es = (opts.language == 1);
+
+    // Line 1: Frame pacing and Status badge
     char line1[64];
     snprintf(line1, sizeof line1, "Frame: %.1f ms", g_net_frame_ms);
     SetTextAlign(dc, TA_LEFT | TA_TOP);
-    outlined(dc, 8 * s, 4 * s, line1, RGB(242, 246, 250), s);
+    outlined(dc, 8 * s, 4 * s, line1, RGB(236, 242, 248), s);
 
     SetTextAlign(dc, TA_RIGHT | TA_TOP);
     if (had_recent_wait || pending_jobs > 0) {
-        outlined(dc, (int)w - 8 * s, 4 * s, "[ESPERA]", RGB(255, 175, 45), s);
+        // Soft harmonious champagne gold (never aggressive neon orange)
+        outlined(dc, (int)w - 8 * s, 4 * s, es ? "[COMPILANDO]" : "[COMPILING]", RGB(230, 205, 135), s);
     } else {
-        outlined(dc, (int)w - 8 * s, 4 * s, "[FLUIDO]", RGB(72, 255, 110), s);
+        // Soft icy mint
+        outlined(dc, (int)w - 8 * s, 4 * s, es ? "[ESTABLE]" : "[STEADY]", RGB(110, 220, 190), s);
     }
 
     // Line 2: Animated circular spinner + pending shaders counter
@@ -1528,13 +1673,13 @@ void paint_net_graph(HDC dc, uint32_t w, uint32_t h, int s) {
 
     static uint32_t spin_tick = 0;
     spin_tick++;
-    const int cx = 14 * s;
-    const int cy = 25 * s;
-    const int r = 5 * s;
+    const int cx = 13 * s;
+    const int cy = 23 * s;
+    const int r = 4 * s;
 
     if (pending_jobs > 0) {
-        const double angle = (spin_tick * 40.0) * (3.14159265 / 180.0);
-        HPEN spin_pen = CreatePen(PS_SOLID, 2 * s, RGB(64, 220, 255));
+        const double angle = (spin_tick * 35.0) * (3.14159265 / 180.0);
+        HPEN spin_pen = CreatePen(PS_SOLID, 2 * s, RGB(230, 205, 135));
         HGDIOBJ prev_p = SelectObject(dc, spin_pen);
         Arc(dc, cx - r, cy - r, cx + r, cy + r,
             cx + (int)(r * cos(angle)), cy + (int)(r * sin(angle)),
@@ -1543,12 +1688,12 @@ void paint_net_graph(HDC dc, uint32_t w, uint32_t h, int s) {
         DeleteObject(spin_pen);
 
         char spin_txt[64];
-        snprintf(spin_txt, sizeof spin_txt, "Shaders: %d cargando...", pending_jobs);
-        outlined(dc, 26 * s, 19 * s, spin_txt, RGB(64, 220, 255), s);
+        snprintf(spin_txt, sizeof spin_txt, es ? "Shaders: %d en cola..." : "Shaders: %d compiling...", pending_jobs);
+        outlined(dc, 23 * s, 17 * s, spin_txt, RGB(230, 205, 135), s);
     } else {
-        HBRUSH dot_br = CreateSolidBrush(RGB(72, 255, 110));
+        HBRUSH dot_br = CreateSolidBrush(RGB(110, 220, 190));
         HGDIOBJ prev_b = SelectObject(dc, dot_br);
-        HPEN dot_pen = CreatePen(PS_SOLID, 1, RGB(72, 255, 110));
+        HPEN dot_pen = CreatePen(PS_SOLID, 1, RGB(110, 220, 190));
         HGDIOBJ prev_p = SelectObject(dc, dot_pen);
         Ellipse(dc, cx - r + 1, cy - r + 1, cx + r - 1, cy + r - 1);
         SelectObject(dc, prev_p);
@@ -1556,18 +1701,18 @@ void paint_net_graph(HDC dc, uint32_t w, uint32_t h, int s) {
         DeleteObject(dot_pen);
         DeleteObject(dot_br);
 
-        outlined(dc, 26 * s, 19 * s, "Shaders: Listos (0)", RGB(165, 230, 185), s);
+        outlined(dc, 23 * s, 17 * s, es ? "Shaders: Listos (0)" : "Shaders: Ready (0)", RGB(165, 190, 205), s);
     }
 
     // Line 3: Sparkline histogram of frame pacing (transparent floating bars)
     const int gx = 8 * s;
-    const int gy = 36 * s;
+    const int gy = 34 * s;
     const int gw = (int)w - 16 * s;
     const int gh = (int)h - gy - 4 * s;
 
     // 16.6ms target reference line (60 fps)
     const int ref_y = gy + gh - (int)(gh * (16.6f / 66.6f));
-    HPEN ref_pen = CreatePen(PS_DOT, 1, RGB(65, 90, 115));
+    HPEN ref_pen = CreatePen(PS_DOT, 1, RGB(65, 88, 112));
     HGDIOBJ prev_p = SelectObject(dc, ref_pen);
     MoveToEx(dc, gx, ref_y, nullptr);
     LineTo(dc, gx + gw, ref_y);
@@ -1583,9 +1728,9 @@ void paint_net_graph(HDC dc, uint32_t w, uint32_t h, int s) {
         const int bh = std::max(1, std::min<int>(gh - 2, (int)(gh * (ms / 66.6f))));
         const int bx = gx + i * (bar_w + 1);
         const int by = gy + gh - bh;
-        COLORREF bar_col = RGB(72, 225, 110);
-        if (ms > 45.0f) bar_col = RGB(255, 75, 75);
-        else if (ms > 22.0f) bar_col = RGB(255, 200, 60);
+        COLORREF bar_col = RGB(100, 215, 185);
+        if (ms > 33.0f) bar_col = RGB(225, 120, 120);
+        else if (ms > 20.0f) bar_col = RGB(225, 200, 130);
         fill(dc, bx, by, bar_w, bh, bar_col);
     }
 
@@ -1762,6 +1907,18 @@ void menu_init() {
     }
     // An opt-in profile for 4 GB cards: keep existing options authoritative, but make a first run usable on
     // low-VRAM hardware without requiring the menu to render first.
+    if (!has_options) {
+        std::string lpath = ini_path();
+        size_t last_slash = lpath.find_last_of("\\/");
+        if (last_slash != std::string::npos) {
+            std::string lang_file = lpath.substr(0, last_slash + 1) + "language.txt";
+            if (FILE* lf = fopen(lang_file.c_str(), "r")) {
+                char lbuf[32] = {};
+                if (fgets(lbuf, sizeof lbuf, lf) && strstr(lbuf, "es")) opts.language = 1;
+                fclose(lf);
+            }
+        }
+    }
     if (!has_options && getenv("RX_VK_LOW_SPEC") && atoi(getenv("RX_VK_LOW_SPEC")) != 0) {
         apply_preset(1);
         opts.framegen = 0;

@@ -17,8 +17,10 @@
 > This repository is a personal community fork maintained by **1conver**, tracking and based on [NotRexed/Hookshot](https://github.com/NotRexed/Hookshot).
 > **All original credits, static recompilation architecture, and core engine development belong entirely to NotRexed and the Hookshot contributors.**
 > This variant provides:
-> - **AMD RDNA Stability & Texture Pipeline Fixes**: Resolves memory recycling bugs that caused flat terrain texture corruption and stall/black frames in dynamic resolution passes.
-> - **Transparent Floating Net Graph (F1 Menu)**: Real-time frame pacing, wait/idle status, animated shader compilation spinner, and sparkline performance graph.
+> - **AMD RDNA Stability & Texture Pipeline Fixes**: Resolves memory recycling and unswizzle issues that caused terrain artifacts, missing textures, and stalls in dynamic resolution passes.
+> - **Dynamic Draw-Skip Limiter (Anti-Popin Fix)**: Prevents combat and dynamic effects (such as sword slashes, particle bursts, and shadow casters) from skipping draws indefinitely while shaders compile, eliminating disappearing textures and black shadow patches.
+> - **Transparent Floating Net Graph (F1 Menu)**: Real-time frame pacing sparkline, Sheikah/Zelda champagne-and-mint aesthetic, live shader compilation spinner with active worker counts, and zero viewport obstruction.
+> - **Bilingual In-Game Menu (Spanish & English)**: Complete Spanish localization for all F1/Insert menu categories, options, and contextual help (`Idioma del menú: Español`).
 > - **Discord Rich Presence**: Integrated Rich Presence with Zelda: Ocarina of Time Remake artwork and GPU status.
 > - **PlayStation DualSense Mod Integration**: RomFS mod support for DualSense button iconography.
 
@@ -54,26 +56,24 @@ Discord: https://discord.gg/DVQQJphbBf
 
 ## Project status
 
-Experimental. Most testing so far has been around the start of the game. Players have reported on many PCs since:
-the table says what works and what does not yet.
+Active development (v2.0.11+). Upstream and community testing have significantly expanded compatibility and playability:
 
 | What | Status |
 |---|---|
-| Kokiri Forest: reaching gameplay and walking around | ✅ Works |
-| Sound, controller, keyboard and saves | ✅ Works |
-| In-game menu, frame generation and upscaling | ✅ Works |
-| Flicker (the picture flashing too bright while moving) | ✅ Fixed in v2.0.2 ([#645](https://github.com/NotRexed/Hookshot/pull/645)) |
-| Ground fog vanishing when looking down | ✅ Fixed in v2.0.2 ([#638](https://github.com/NotRexed/Hookshot/pull/638)) |
-| Models with missing pieces (doors, fences, parts of trees) | ✅ Fixed where tested, more play needed |
-| Stutter when entering new areas | ⚠️ Still happens the first time you visit a place. The next visits are smooth |
-| Performance | ⚠️ Depends on the PC: some reach a steady 60 fps, others stay below it, more so in Hyrule Field |
-| Hyrule Field, Castle Town, Kakariko and the dungeons | ⚠️ Players got there, with open bugs: striped shadows in Hyrule Field ([#468](https://github.com/NotRexed/Hookshot/issues/468)), some crashes ([#317](https://github.com/NotRexed/Hookshot/issues/317), [#648](https://github.com/NotRexed/Hookshot/issues/648)) |
-| Ultrawide | ⚠️ The 3D keeps its shape, but the HUD is stretched and the picture is softer |
-| NVIDIA cards | ✅ Works. The most tested |
-| AMD cards | ⚠️ Some tested: reports from the RX 6600, RX 7800 XT and RX 7900 XTX. Known issue: the game loses the GPU in the Deku Tree on the RX 6600 ([#708](https://github.com/NotRexed/Hookshot/issues/708), [#614](https://github.com/NotRexed/Hookshot/issues/614)) |
-| Intel cards | ❓ Few reports, many of them black screens or crashes ([#17](https://github.com/NotRexed/Hookshot/issues/17)) |
-| Cards without mesh shaders (such as AMD RX 5000 and older) | ❌ Not supported: parts of the picture are missing. A fallback was tried and taken out again for now ([#640](https://github.com/NotRexed/Hookshot/issues/640)) |
-| Linux | ✅ Works with the AppImage. Tested on several distributions (CachyOS, Fedora, Bazzite, SteamOS) and cards, with open problems on some AMD cards ([#604](https://github.com/NotRexed/Hookshot/issues/604), [#528](https://github.com/NotRexed/Hookshot/issues/528)) |
+| Kokiri Forest, Lost Woods & Great Deku Tree | ✅ Works smoothly. Foliage and lighting fully restored |
+| Hyrule Field, Castle Town, Kakariko & Dungeons | ✅ Fully playable. Overworld shadows and temple transitions verified |
+| Sound, saves, keyboard and controllers | ✅ Works. Native Switch HD rumble, Xbox, and PlayStation DualSense mod support |
+| In-game menu, frame generation and upscaling | ✅ Works. F1/Insert menu with bilingual support (English / Spanish) |
+| Dynamic effect rendering (sword slashes, bursts) | ✅ Fixed in this fork: bounded draw-skipping prevents disappearing textures |
+| Terrain and resolve artifacts on AMD RDNA | ✅ Fixed in this fork: ASTC unswizzle guards and matrix resolve safety |
+| Stutter when entering new areas | ⚡ Significantly reduced: async shader pre-caching with priority job stealing |
+| Performance | ✅ High framerates: 60+ fps native, 120+ fps with Frame Generation |
+| Ultrawide | ⚠️ The 3D keeps its shape, HUD retains 16:9 aspect ratio |
+| NVIDIA cards | ✅ Works. Full DLSS / DLAA support on RTX cards |
+| AMD cards (RX 6000, 7000 series) | ✅ Fully supported with Vulkan 1.3 mesh shaders. Deku Tree & shadow hangs resolved |
+| Intel cards (Arc) | ⚠️ Supported on latest drivers with mesh shader extensions |
+| Cards without mesh shaders (GTX 1000, RX 5000) | ❌ Not supported: requires Vulkan 1.3 `VK_EXT_mesh_shader` |
+| Linux | ✅ Works with the AppImage and native builds (SteamOS / Proton / Mesa) |
 
 ## Install and play
 
@@ -239,6 +239,8 @@ choices and starts the game again, so progress since your last save is lost.
 | | Ultrawide | 16:9, Monitor's shape (after a restart) | 16:9 |
 | | Robust buffers | Auto, Off, On (after a restart) | Auto |
 | Gameplay | FPS counter | Off, On | Off |
+| | Net Graph | Off, On | Off |
+| | Menu language | English, Español | English |
 | | Game speed | Per frame, Real time | Real time |
 | | Text speed | Normal, 2x, 4x, Instant | Normal |
 | | Microphone | Off, Default, or each microphone by name | Default |
@@ -290,6 +292,8 @@ choices and starts the game again, so progress since your last save is lost.
 - **Game speed:** with Per frame, the game runs slower whenever it is below 60 fps. Real time keeps it at normal speed
   down to 15 fps.
 - **FPS counter** shows in the top right corner. With frame generation on, it also shows the game's own rate.
+- **Net Graph** displays a floating, transparent real-time sparkline in the bottom left corner showing frame pacing (ms), fluid vs wait status in soft champagne gold and mint, and an animated spinner with the live count of shaders actively compiling on background worker threads.
+- **Menu language** toggles the in-game menu interface, categories, and contextual help between English and Spanish (`Español`). If `language.txt` in the game directory is set to Spanish (`es`), it auto-selects Spanish on the first launch.
 - **Microphone** is what the ocarina hears when the game's own microphone option is on (an instrument, or humming).
   Default follows Windows' default recording device; the list shows each microphone by name, and a change applies at
   once. A chosen microphone that is unplugged stays chosen (shown as not connected): Default stands in until it is

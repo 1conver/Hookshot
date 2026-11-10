@@ -25,6 +25,7 @@ struct Options {
     int show_fps = 0;
     // [HOOKSHOT-FLAG-NET-GRAPH]
     int net_graph = 0;    // 0 off, 1 on: real-time frame pacing graph, wait states, and shader compilation spinner
+    int language = 0;     // in-game menu language: 0 English (default), 1 Español
     int discord = 1;      // Discord Rich Presence: 1 on (default), 0 off (gpu/vk/vk_discord.cpp)
     int fullscreen = 0;   // borderless, at the monitor's size: F11 is the same setting
     int gpu_device = 0;   // graphics card index: 0 Auto, 1..N device 0..N-1 (gpu/vk/vk_main.cpp; RX_VK_DEVICE)

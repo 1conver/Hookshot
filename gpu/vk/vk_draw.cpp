@@ -724,6 +724,7 @@ struct Targets {
 struct PipeEntry {
     std::atomic<bool> ready{false};
     std::atomic<VkPipeline> pipeline{VK_NULL_HANDLE};   // (a fast-linked one first, the worker's full build over it)
+    std::atomic<int> skip_count{0};                     // frames skipped while waiting for background build
 };
 std::unordered_map<uint64_t, std::unique_ptr<PipeEntry>> pipelines;   // (the replay thread's)
 int64_t st_draws, st_skipped, st_dispatches, st_passes, st_mesh, st_pending_skips, st_waits;
@@ -5163,7 +5164,7 @@ void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d) {
         st_wait_ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     };
     if (!cp->ready.load(std::memory_order_acquire)) {
-        if (may_skip) return void(st_pending_skips++);
+        if (may_skip && const_cast<Program*>(cp)->skip_count.fetch_add(1, std::memory_order_relaxed) < 3) return void(st_pending_skips++);
         wait_for(cp->ready);
     }
     if (exposure_log_on() && cp) exposure_note(s, *cp);
@@ -5181,7 +5182,7 @@ void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d) {
         pe = graphics_pipeline(p, s, at, topo, types);
     }
     if (!pe->ready.load(std::memory_order_acquire)) {
-        if (may_skip) return void(st_pending_skips++);
+        if (may_skip && pe->skip_count.fetch_add(1, std::memory_order_relaxed) < 3) return void(st_pending_skips++);
         wait_for(pe->ready);
     }
     const VkPipeline pl = pe->pipeline;
@@ -6594,8 +6595,18 @@ void dispatch(VkCommandBuffer cmd, NvnState& s, uint32_t x, uint32_t y, uint32_t
         if (p.compute_state.load(std::memory_order_acquire) != 2) {
             static std::atomic<int> told{0};
             if (told++ < 40) logf("vk: dispatch of %016llx left out: its compute pipeline is still compiling", (unsigned long long)p.key);
-            st_pending_skips++;
-            return;
+            if (p.skip_count.fetch_add(1, std::memory_order_relaxed) < 3) {
+                st_pending_skips++;
+                return;
+            }
+            const auto t1 = std::chrono::steady_clock::now();
+            while (p.compute_state.load(std::memory_order_acquire) != 2 &&
+                   std::chrono::steady_clock::now() - t1 < std::chrono::milliseconds(50))
+                std::this_thread::sleep_for(std::chrono::microseconds(200));
+            if (p.compute_state.load(std::memory_order_acquire) != 2) {
+                st_pending_skips++;
+                return;
+            }
         }
         if (p.failed || !p.compute_pipeline) SKIP_HERE();
     }

@@ -31,6 +31,7 @@ def main():
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <initializer_list>
 #include <mutex>
 #define CHECK(x) do { if (!(x)) { std::fprintf(stderr, "FAIL:%d %s\n", __LINE__, #x); std::exit(1); } } while (0)
 using VkCommandBuffer = int;
@@ -45,9 +46,9 @@ struct VkMemoryBarrier2 {
 struct VkDependencyInfo {
     int sType; unsigned memoryBarrierCount = 0; const VkMemoryBarrier2* pMemoryBarriers = nullptr;
 };
-struct { bool show_fps = false; } opts;
-struct Bitmap { uint32_t w, h; } fps_bmp{120, 54}, menu_bmp{360, 500}, startup_bmp{600, 150};
-struct Upload {} ups[3][3];
+struct { bool show_fps = false; bool net_graph = false; } opts;
+struct Bitmap { uint32_t w, h; } fps_bmp{120, 54}, menu_bmp{360, 500}, startup_bmp{600, 150}, net_graph_bmp{360, 120};
+struct Upload {} ups[4][3];
 std::mutex bmp_mu;
 std::atomic<bool> open_now{false}, startup_on{false};
 int cur_scale = 1, copies = 0, barriers = 0;

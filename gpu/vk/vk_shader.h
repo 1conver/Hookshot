@@ -35,6 +35,7 @@ struct Program {
     uint64_t key = 0;
     bool compute = false, failed = false;
     std::atomic<bool> ready{false};   // translated (graphics programs are translated on a worker: vk_jobs.h)
+    std::atomic<int> skip_count{0};   // frames skipped while waiting for background translation
     std::vector<Stage> stages;
     std::array<uint32_t, 3> workgroup{1, 1, 1};
     uint32_t shared_memory = 0;
