@@ -24,6 +24,8 @@
 #include <vector>
 
 #include "vk_paths.h"
+#include "vk_discord.h"
+#include "vk_jobs.h"
 #include "vk_menu.h"
 #include "vk_menu_hit.h"
 #include "vk_draw.h"   // (pipeline_cache_save: Restart now keeps what was built)
@@ -477,8 +479,12 @@ Row rows[] = {
      "Bounds-checked buffer reads: a read past a buffer's end is dropped instead of stopping the GPU. Applies after a "
      "restart.", hn_robust, true},
 
-    // Gameplay (3 rows)
+    // Gameplay (5 rows)
     {TAB_GAMEPLAY, "FPS counter", &opts.show_fps, 0, 1, 1, tx_onoff, "Frames per second in the top right corner.", hn_fps,
+     false, true},
+    // [HOOKSHOT-FLAG-NET-GRAPH]
+    {TAB_GAMEPLAY, "Net graph", &opts.net_graph, 0, 1, 1, tx_onoff,
+     "Shows real-time frame pacing, wait/idle status, and a spinner showing background shader/pipeline compilations.", nullptr,
      false, true},
     {TAB_GAMEPLAY, "Game speed", &opts.realtime, 0, 1, 1, tx_speed, "How the game keeps time when it runs below 60 fps.",
      hn_speed},
@@ -487,6 +493,9 @@ Row rows[] = {
     {TAB_GAMEPLAY, "Microphone", &opts.mic, 0, 2 + kMaxMics, 1, tx_mic,
      "What the ocarina hears when the game's microphone option is on (playing an instrument, or humming).", hn_mic, false,
      true},
+    {TAB_GAMEPLAY, "Discord Rich Presence", &opts.discord, 0, 1, 1, tx_onoff,
+     "Shows on your Discord profile that you are playing Ocarina of Time, with its cover, the time played and your GPU. Off clears it at once.",
+     nullptr, false, true},
 
     // Controls (14 rows)
     {TAB_CONTROLS, "Controller in background", &opts.pad_background, 0, 1, 1, tx_onoff,
@@ -865,9 +874,13 @@ void set_row(Row& r, int v, int dir, bool keep = true) {
         if (v < 0) v = 2;
         *r.value = v;
         apply_pad_layout(*r.value);
+    } else if (r.value == &opts.discord) {
+        *r.value = v > r.hi ? r.lo : v < r.lo ? r.hi : v;
+        discord_set_enabled(*r.value != 0);
     } else if (r.value == &opts.preset) {
         *r.value = v > r.hi ? r.lo : v < r.lo ? r.hi : v;
         apply_preset(*r.value);
+        discord_set_preset(opts.preset);
     } else {
         *r.value = v > r.hi ? r.lo : v < r.lo ? r.hi : v;
         // (another Upscaler: the Render resolution moves to the nearest of its steps, DLSS's modes or the game's)
@@ -875,6 +888,7 @@ void set_row(Row& r, int v, int dir, bool keep = true) {
         if (!r.preset_exempt) {   // (the controls, the window and the counter are not the preset's)
             opts.preset = 0; // Custom
             sync_preset_budgets(0);
+            discord_set_preset(opts.preset);
         }
     }
     if (r.value == &opts.mic && can_mic()) mic_chosen();   // (hookshot)
@@ -991,7 +1005,7 @@ struct Bitmap {
     bool keyed = false;                   // (black is see-through: copied as the runs of pixels in between)
     std::vector<VkBufferImageCopy> runs;
 };
-Bitmap menu_bmp, fps_bmp;
+Bitmap menu_bmp, fps_bmp, net_graph_bmp;
 std::mutex bmp_mu;
 int scale_of(uint32_t h) { return std::max(1u, h / 720); }
 
@@ -1469,6 +1483,116 @@ void paint_fps(HDC dc, uint32_t w, uint32_t h, int s) {
     DeleteObject(label);
     DeleteObject(big);
 }
+
+// [HOOKSHOT-FLAG-NET-GRAPH]
+float g_net_frame_ms = 16.6f;
+float g_net_frame_hist[48] = {};
+int g_net_hist_pos = 0;
+
+void paint_net_graph(HDC dc, uint32_t w, uint32_t h, int s) {
+    // Transparent background (keyed = true makes RGB(0,0,0) completely see-through)
+    fill(dc, 0, 0, (int)w, (int)h, RGB(0, 0, 0));
+
+    SetBkMode(dc, TRANSPARENT);
+
+    // Read current state
+    const int pending_jobs = jobs_pending();
+    int64_t pending_skips = 0, waits = 0;
+    double wait_ms = 0;
+    draw_stats3(&pending_skips, &waits, &wait_ms);
+
+    static int64_t last_waits = 0;
+    const bool had_recent_wait = (waits > last_waits) || (g_net_frame_ms > 45.0f);
+    last_waits = waits;
+
+    HFONT f_bold = hard_font(13 * s, FW_BOLD);
+    HFONT f_norm = hard_font(12 * s, FW_NORMAL);
+    HGDIOBJ old_font = SelectObject(dc, f_bold);
+
+    // Line 1: Frame pacing and Wait state
+    char line1[64];
+    snprintf(line1, sizeof line1, "Frame: %.1f ms", g_net_frame_ms);
+    SetTextAlign(dc, TA_LEFT | TA_TOP);
+    outlined(dc, 8 * s, 4 * s, line1, RGB(242, 246, 250), s);
+
+    SetTextAlign(dc, TA_RIGHT | TA_TOP);
+    if (had_recent_wait || pending_jobs > 0) {
+        outlined(dc, (int)w - 8 * s, 4 * s, "[ESPERA]", RGB(255, 175, 45), s);
+    } else {
+        outlined(dc, (int)w - 8 * s, 4 * s, "[FLUIDO]", RGB(72, 255, 110), s);
+    }
+
+    // Line 2: Animated circular spinner + pending shaders counter
+    SelectObject(dc, f_norm);
+    SetTextAlign(dc, TA_LEFT | TA_TOP);
+
+    static uint32_t spin_tick = 0;
+    spin_tick++;
+    const int cx = 14 * s;
+    const int cy = 25 * s;
+    const int r = 5 * s;
+
+    if (pending_jobs > 0) {
+        const double angle = (spin_tick * 40.0) * (3.14159265 / 180.0);
+        HPEN spin_pen = CreatePen(PS_SOLID, 2 * s, RGB(64, 220, 255));
+        HGDIOBJ prev_p = SelectObject(dc, spin_pen);
+        Arc(dc, cx - r, cy - r, cx + r, cy + r,
+            cx + (int)(r * cos(angle)), cy + (int)(r * sin(angle)),
+            cx - (int)(r * cos(angle)), cy - (int)(r * sin(angle)));
+        SelectObject(dc, prev_p);
+        DeleteObject(spin_pen);
+
+        char spin_txt[64];
+        snprintf(spin_txt, sizeof spin_txt, "Shaders: %d cargando...", pending_jobs);
+        outlined(dc, 26 * s, 19 * s, spin_txt, RGB(64, 220, 255), s);
+    } else {
+        HBRUSH dot_br = CreateSolidBrush(RGB(72, 255, 110));
+        HGDIOBJ prev_b = SelectObject(dc, dot_br);
+        HPEN dot_pen = CreatePen(PS_SOLID, 1, RGB(72, 255, 110));
+        HGDIOBJ prev_p = SelectObject(dc, dot_pen);
+        Ellipse(dc, cx - r + 1, cy - r + 1, cx + r - 1, cy + r - 1);
+        SelectObject(dc, prev_p);
+        SelectObject(dc, prev_b);
+        DeleteObject(dot_pen);
+        DeleteObject(dot_br);
+
+        outlined(dc, 26 * s, 19 * s, "Shaders: Listos (0)", RGB(165, 230, 185), s);
+    }
+
+    // Line 3: Sparkline histogram of frame pacing (transparent floating bars)
+    const int gx = 8 * s;
+    const int gy = 36 * s;
+    const int gw = (int)w - 16 * s;
+    const int gh = (int)h - gy - 4 * s;
+
+    // 16.6ms target reference line (60 fps)
+    const int ref_y = gy + gh - (int)(gh * (16.6f / 66.6f));
+    HPEN ref_pen = CreatePen(PS_DOT, 1, RGB(65, 90, 115));
+    HGDIOBJ prev_p = SelectObject(dc, ref_pen);
+    MoveToEx(dc, gx, ref_y, nullptr);
+    LineTo(dc, gx + gw, ref_y);
+    SelectObject(dc, prev_p);
+    DeleteObject(ref_pen);
+
+    const int n_bars = std::min<int>(gw / (3 * s), 48);
+    const int bar_w = std::max(1, (gw / n_bars) - 1);
+    for (int i = 0; i < n_bars; i++) {
+        const int hist_idx = (g_net_hist_pos + i) % 48;
+        const float ms = g_net_frame_hist[hist_idx];
+        if (ms <= 0.0f) continue;
+        const int bh = std::max(1, std::min<int>(gh - 2, (int)(gh * (ms / 66.6f))));
+        const int bx = gx + i * (bar_w + 1);
+        const int by = gy + gh - bh;
+        COLORREF bar_col = RGB(72, 225, 110);
+        if (ms > 45.0f) bar_col = RGB(255, 75, 75);
+        else if (ms > 22.0f) bar_col = RGB(255, 200, 60);
+        fill(dc, bx, by, bar_w, bh, bar_col);
+    }
+
+    SelectObject(dc, old_font);
+    DeleteObject(f_bold);
+    DeleteObject(f_norm);
+}
 /// The tallest help text at scale s, a row's help and its value's line, in pixels: the menu keeps that height whichever
 /// row is selected and whatever its value
 int measure_help(int s) {
@@ -1534,7 +1658,7 @@ struct Upload {
     void* map = nullptr;
     uint64_t size = 0, version = 0;
 };
-Upload ups[3][3];   // (the menu's, the counter's, the start-up screen's; a frame in flight's each)
+Upload ups[4][3];   // (the menu's, the counter's, the start-up screen's, the net graph's; a frame in flight's each)
 
 void copy_over(VkCommandBuffer cmd, VkImage dst, Bitmap& b, Upload& u, int x, int y, uint32_t w, uint32_t h) {
     std::lock_guard lk(bmp_mu);
@@ -1654,6 +1778,8 @@ void menu_init() {
     if (const char* e = getenv("HOS_REALTIME_STEP")) opts.realtime = atoi(e) != 0;
     if (const char* e = getenv("HOS_DYNRES")) opts.resolution = atoi(e) != 0 ? 0 : 1;
     if (const char* e = getenv("HOS_OUTPUT_RES")) opts.output_res = output_choice(atoi(e));
+    discord_set_preset(opts.preset);
+    discord_set_enabled(opts.discord != 0);
     restart_init();   // (what this run started with: the rows that take a restart differ from it once changed)
 }
 
@@ -2219,6 +2345,22 @@ void menu_tick() {
             gdi_draw(fps_bmp, 120u * scale, 54u * scale, paint_fps, scale);
         }
     }
+    // [HOOKSHOT-FLAG-NET-GRAPH]
+    if (opts.net_graph) {
+        static int64_t last_tick_time = 0;
+        const int64_t now = prof_now();
+        if (last_tick_time != 0) {
+            const double delta_ms = (now - last_tick_time) / 1000000.0;
+            if (delta_ms > 0.1 && delta_ms < 1000.0) {
+                g_net_frame_ms = (float)delta_ms;
+                g_net_frame_hist[g_net_hist_pos] = g_net_frame_ms;
+                g_net_hist_pos = (g_net_hist_pos + 1) % 48;
+            }
+        }
+        last_tick_time = now;
+        net_graph_bmp.keyed = true;
+        gdi_draw(net_graph_bmp, 220u * scale, 64u * scale, paint_net_graph, scale);
+    }
 }
 
 void menu_record(VkCommandBuffer cmd, VkImage dst, int slot, uint32_t w, uint32_t h) {
@@ -2248,6 +2390,22 @@ void menu_record(VkCommandBuffer cmd, VkImage dst, int slot, uint32_t w, uint32_
         const uint32_t fw = fps_bmp.w;
         lk.unlock();
         if (fw) copy_over(cmd, dst, fps_bmp, ups[1][slot], (int)w - (int)fw - (int)(12 * cur_scale), (int)(10 * cur_scale), w, h);
+    }
+    // [HOOKSHOT-FLAG-NET-GRAPH]
+    if (opts.net_graph && !startup_on.load(std::memory_order_relaxed)) {
+        VkMemoryBarrier2 mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+        mb.srcStageMask = mb.dstStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+        mb.srcAccessMask = mb.dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+        VkDependencyInfo di{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+        di.memoryBarrierCount = 1, di.pMemoryBarriers = &mb;
+        vkCmdPipelineBarrier2(cmd, &di);
+        std::unique_lock lk(bmp_mu);
+        const uint32_t nw = net_graph_bmp.w, nh = net_graph_bmp.h;
+        lk.unlock();
+        if (nw && nh) {
+            copy_over(cmd, dst, net_graph_bmp, ups[3][slot],
+                      (int)(14 * cur_scale), (int)h - (int)nh - (int)(14 * cur_scale), w, h);
+        }
     }
     if (open_now.load(std::memory_order_relaxed)) {
         std::unique_lock lk(bmp_mu);

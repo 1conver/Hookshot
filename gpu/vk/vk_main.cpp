@@ -23,6 +23,7 @@
 #include "vk_dlss.h"
 #include "vk_reflex.h"
 #include "vk_progress.h"
+#include "vk_discord.h"
 
 namespace vkx {
 #define VKX_DEFINE(f) PFN_##f f;
@@ -390,6 +391,9 @@ bool create_device() {
         vkGetPhysicalDeviceProperties2(dev.physical, &p2);
         const bool pin = f13.subgroupSizeControl && sc.minSubgroupSize <= 32 && sc.maxSubgroupSize >= 32 && !getenv("RX_VK_NO_SUBGROUP_PIN");
         dev.sg32_stages = pin ? sc.requiredSubgroupSizeStages : 0;
+        dev.min_subgroup_size = sc.minSubgroupSize;
+        dev.max_subgroup_size = sc.maxSubgroupSize;
+        dev.subgroup_ops = sg.supportedOperations;
         logf("vk: subgroups: default %u lanes, %u-%u, pinned to 32 on stages %#x", sg.subgroupSize, sc.minSubgroupSize, sc.maxSubgroupSize,
              (unsigned)dev.sg32_stages);
     }
@@ -599,6 +603,7 @@ const MkwVkWindow* prep_window = nullptr;   // (its size)
 void prep_progress(size_t done, size_t total) {
     prep_done.store(done, std::memory_order_relaxed);
     prep_total.store(total, std::memory_order_relaxed);
+    discord_set_shader_progress(done, total);
 }
 bool screen_wanted() {
     const char* e = getenv("RX_VK_STARTUP_SCREEN");
@@ -738,6 +743,7 @@ bool started_up() {
     if (precompile_wanted()) {   // (a release build, before the game: nothing to build during play)
         if (!dev.offscreen && screen_wanted()) {
             prepare_with_screen();
+            discord_set_in_game();
             return true;
         }
         // (a console while it lasts: there is no window yet, and a long wait with nothing on screen looks like a hang)
@@ -786,6 +792,7 @@ bool started_up() {
         if (update) prepare_background();
         if (console) CloseHandle(console), console = nullptr, FreeConsole();
     }
+    discord_set_in_game();
     return true;
 }
 // (the window's surface made: the presents' own queue kept where its family can present to it, create_device)
@@ -900,7 +907,7 @@ __attribute__((visibility("default")))
 #endif
 const MkwVkRenderer* mkwvk_init(const MkwVkHost* h) {
     using namespace mkwvk;
-    if (!h || h->version != MKWVK_API_VERSION) return nullptr;
+    if (!h || h->version < 4 || h->version > MKWVK_API_VERSION) return nullptr;
     host = h;
     if (!load_global()) {
         logf("vk: vulkan-1.dll not found");
@@ -911,6 +918,7 @@ const MkwVkRenderer* mkwvk_init(const MkwVkHost* h) {
          dev.props.deviceName, VK_VERSION_MAJOR(dev.props.apiVersion), VK_VERSION_MINOR(dev.props.apiVersion),
          dev.props.driverVersion, dev.mesh_shader ? "yes" : "no", dev.external_memory_host ? "yes" : "no",
          dev.graphics_pipeline_library ? "yes" : "no");
+    discord_start(dev.props.deviceName, dev.props.vendorID, dev.props.deviceID, dev.max_subgroup_size, dev.mesh_shader);
     if (!dev.mesh_shader && !dev.mesh_fallback && !getenv("RX_VK_NO_MESH_WARNING")) {
         // (the game draws its foliage, grass and many effects with mesh shaders: without them those draws are left out and the
         // picture is broken (an RX 580's "static"-like scenes, 2026-11-08). Said once, on its own thread, and the game goes on.)
@@ -926,7 +934,7 @@ const MkwVkRenderer* mkwvk_init(const MkwVkHost* h) {
         }).detach();
 #endif
     }
-    table.version = MKWVK_API_VERSION;
+    table.version = h->version;
     table.start = start;
     table.resize = resize;
     table.describe = describe;

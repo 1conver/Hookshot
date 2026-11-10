@@ -7,11 +7,14 @@ with the compiler, sysroot and libraries it brings in the environment.
     hookshot_builder.py --launch <folder>   that folder's launcher: Play, and Update when a newer release is out
     hookshot_builder.py --update <folder>   download the new release (only parts that changed) and build the folder again
 """
+import json
 import os
 import queue
 import re
 import shutil
 import signal
+import socket
+import struct
 import subprocess
 import sys
 import threading
@@ -61,6 +64,229 @@ def save_config(cfg):
         f.writelines("%s=%s\n" % kv for kv in cfg.items())
 
 
+DISCORD_DEFAULT_CLIENT_ID = "1442727160535056384"
+DISCORD_HOOKSHOT_ICON = "https://raw.githubusercontent.com/NotRexed/Hookshot/main/assets/hookshot.png"
+DISCORD_OOT_ICON = "https://upload.wikimedia.org/wikipedia/en/5/57/The_Legend_of_Zelda_Ocarina_of_Time.jpg"
+
+
+class DiscordPresence:
+    """Asynchronous Discord Rich Presence over local IPC (discord-ipc-0..9) for Hookshot Builder & Ocarina of Time."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._event = threading.Event()
+        self._started = False
+        self._stopping = False
+        self._dirty = False
+        self._is_oot = False
+        self._pid = os.getpid()
+        self._epoch = int(time.time())
+        self._details = "Configuring Game Files"
+        self._state = "The Legend of Zelda: Ocarina of Time"
+        self._nonce = 1
+        self._last_progress = 0.0
+
+    def _disabled(self):
+        off = os.environ.get("HOOKSHOT_NO_DISCORD", "")
+        return bool(off and off != "0")
+
+    def _ensure_started(self):
+        if self._started or self._disabled():
+            return
+        self._started = True
+        threading.Thread(target=self._worker, name="HookshotDiscordRpc", daemon=True).start()
+
+    def set_builder(self, details, state="The Legend of Zelda: Ocarina of Time"):
+        if self._disabled():
+            return
+        with self._lock:
+            self._ensure_started()
+            if not self._is_oot and self._details == details and self._state == state:
+                return
+            self._is_oot = False
+            self._pid = os.getpid()
+            self._details = details
+            self._state = state
+            self._dirty = True
+            self._event.set()
+
+    def set_progress(self, stage_label, fraction):
+        if self._disabled():
+            return
+        now = time.time()
+        pct = int(round(max(0.0, min(1.0, fraction)) * 100))
+        with self._lock:
+            self._ensure_started()
+            if pct < 100 and now - self._last_progress < 2.0 and self._state == stage_label:
+                return
+            self._last_progress = now
+            self._is_oot = False
+            self._pid = os.getpid()
+            self._details = "Building Ocarina of Time (%d%%)" % pct
+            self._state = stage_label
+            self._dirty = True
+            self._event.set()
+
+    def set_playing_oot(self, pid=None, version=None):
+        if self._disabled():
+            return
+        with self._lock:
+            self._ensure_started()
+            self._is_oot = True
+            self._pid = pid or os.getpid()
+            self._epoch = int(time.time())
+            self._details = "Playing The Legend of Zelda: Ocarina of Time"
+            self._state = ("Hookshot %s · Native PC" % version) if version else "Hookshot (Vulkan Native)"
+            self._dirty = True
+            self._event.set()
+
+    @staticmethod
+    def build_activity_payload(is_oot, pid, start_epoch, details, state, nonce=1):
+        hookshot_img = os.environ.get("HOOKSHOT_DISCORD_ICON_URL") or DISCORD_HOOKSHOT_ICON
+        oot_img = os.environ.get("HOOKSHOT_DISCORD_OOT_IMAGE") or DISCORD_OOT_ICON
+        return {
+            "cmd": "SET_ACTIVITY",
+            "args": {
+                "pid": pid,
+                "activity": {
+                    "name": "The Legend of Zelda: Ocarina of Time" if is_oot else "Hookshot Builder",
+                    "type": 0,
+                    "details": details,
+                    "state": state,
+                    "timestamps": {"start": start_epoch},
+                    "assets": {
+                        "large_image": oot_img if is_oot else hookshot_img,
+                        "large_text": "The Legend of Zelda: Ocarina of Time" if is_oot else "Hookshot Builder",
+                        "small_image": hookshot_img if is_oot else oot_img,
+                        "small_text": "Hookshot (Vulkan Native)" if is_oot else "The Legend of Zelda: Ocarina of Time",
+                    },
+                },
+            },
+            "nonce": str(nonce),
+        }
+
+    @staticmethod
+    def pack_frame(opcode, payload):
+        raw = json.dumps(payload).encode("utf-8")
+        return struct.pack("<II", opcode, len(raw)) + raw
+
+    def _connect(self):
+        cid = os.environ.get("HOOKSHOT_DISCORD_BUILDER_APP_ID") or os.environ.get("HOOKSHOT_DISCORD_APP_ID") or DISCORD_DEFAULT_CLIENT_ID
+        hs = self.pack_frame(0, {"v": 1, "client_id": cid})
+        if os.name == "nt":
+            for i in range(10):
+                try:
+                    f = open(r"\\.\pipe\discord-ipc-%d" % i, "r+b", buffering=0)
+                    f.write(hs)
+                    hdr = f.read(8)
+                    if len(hdr) == 8:
+                        op, length = struct.unpack("<II", hdr)
+                        body = f.read(length).decode("utf-8", errors="replace")
+                        if op == 1 and '"READY"' in body:
+                            return ("pipe", f)
+                    f.close()
+                except OSError:
+                    pass
+            return None
+        bases = [os.environ.get(k) for k in ("XDG_RUNTIME_DIR", "TMPDIR", "TMP", "TEMP")] + ["/tmp"]
+        subs = ("", "/app/com.discordapp.Discord", "/snap.discord")
+        for base in bases:
+            if not base:
+                continue
+            for sub in subs:
+                for i in range(10):
+                    path = "%s%s/discord-ipc-%d" % (base, sub, i)
+                    if not os.path.exists(path):
+                        continue
+                    s = None
+                    try:
+                        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                        s.settimeout(0.5)
+                        s.connect(path)
+                        s.sendall(hs)
+                        hdr = s.recv(8)
+                        if len(hdr) == 8:
+                            op, length = struct.unpack("<II", hdr)
+                            body = s.recv(length).decode("utf-8", errors="replace")
+                            if op == 1 and '"READY"' in body:
+                                return ("sock", s)
+                    except OSError:
+                        pass
+                    if s is not None:
+                        try:
+                            s.close()
+                        except OSError:
+                            pass
+        return None
+
+    def _close_conn(self, conn):
+        if conn is None:
+            return
+        try:
+            conn[1].close()
+        except OSError:
+            pass
+
+    def _send_and_read(self, conn, frame):
+        kind, h = conn
+        if kind == "pipe":
+            h.write(frame)
+            hdr = h.read(8)
+            if len(hdr) < 8:
+                return False
+            op, length = struct.unpack("<II", hdr)
+            if length > 0:
+                h.read(length)
+            return op != 2
+        h.sendall(frame)
+        hdr = h.recv(8)
+        if len(hdr) < 8:
+            return False
+        op, length = struct.unpack("<II", hdr)
+        if length > 0:
+            h.recv(length)
+        return op != 2
+
+    def _worker(self):
+        conn = None
+        while not self._stopping:
+            self._event.wait(5.0 if conn is None else 2.0)
+            self._event.clear()
+            with self._lock:
+                if self._stopping:
+                    break
+                should_send = self._dirty or conn is None
+                is_oot = self._is_oot
+                pid = self._pid
+                epoch = self._epoch
+                details = self._details
+                state = self._state
+                nonce = self._nonce
+                self._nonce += 1
+            if conn is None:
+                conn = self._connect()
+                if conn is None:
+                    continue
+                should_send = True
+            if should_send:
+                payload = self.build_activity_payload(is_oot, pid, epoch, details, state, nonce)
+                frame = self.pack_frame(1, payload)
+                try:
+                    if not self._send_and_read(conn, frame):
+                        self._close_conn(conn)
+                        conn = None
+                    else:
+                        with self._lock:
+                            self._dirty = False
+                except OSError:
+                    self._close_conn(conn)
+                    conn = None
+        self._close_conn(conn)
+
+
+DISCORD = DiscordPresence()
+
+
 def game_ready(folder):
     return linux_update.game_exe(folder) is not None
 
@@ -73,19 +299,16 @@ def play(folder):
     env = {k: v for k, v in os.environ.items() if not k.startswith(("HOOKSHOT_", "PYTHON", "APPDIR", "APPIMAGE", "ARGV0", "OWD"))}
     env.pop("LD_LIBRARY_PATH", None)
     env["HOOKSHOT_NO_UPDATE_CHECK"] = "1"
-    subprocess.Popen([exe], cwd=folder, env=env, start_new_session=True,
-                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    proc = subprocess.Popen([exe], cwd=folder, env=env, start_new_session=True,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    game_ver, _ = linux_update.game_version(folder)
+    DISCORD.set_playing_oot(proc.pid, game_ver)
 
 
 def desktop_exec(path):
-    """One Exec argument. A % in the path is a field code, so "100% Games" is rejected and the menu entry does not run.
-    Inside the quotes the Desktop Entry spec wants the characters double quote, backtick, dollar and backslash each
-    preceded by a backslash, and every backslash written twice because the file's string escaping is applied first
-    (so a literal backslash is four, and a dollar is two backslashes and the dollar)."""
-    escaped = path.replace("\\", "\\\\\\\\")
-    for char in ('"', "`", "$"):
-        escaped = escaped.replace(char, "\\\\" + char)
-    return '"%s"' % escaped.replace("%", "%%")
+    """One Exec argument. A % in the path is a field code, so "100% Games" is rejected and the menu entry does not run."""
+    escaped = path.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%")
+    return '"%s"' % escaped
 
 
 APP_ID = "io.github.NotRexed.Hookshot"   # (the game's window names itself so: host/posix/display_sdl.c's HOS_APP_ID)
@@ -106,40 +329,12 @@ def add_to_menu(folder):
 
 
 def free_gb(path):
-    path = os.path.expanduser(path or "")   # (the field takes ~/Games/Hookshot, as build() and apply_mode() read it)
     while path and not os.path.exists(path):
         path = os.path.dirname(path)
     try:
         return shutil.disk_usage(path or "/").free / 2 ** 30
     except OSError:
         return None
-
-
-def xft_dpi():
-    """the DPI KDE and GNOME hand X apps when the desktop is scaled. Tk on X11 and XWayland never reads it."""
-    env = {k: v for k, v in os.environ.items() if k != "LD_LIBRARY_PATH"}
-    try:
-        out = subprocess.run(["xrdb", "-query"], env=env, capture_output=True, text=True, timeout=2).stdout
-    except (OSError, subprocess.SubprocessError):
-        return None
-    found = re.search(r"^Xft\.dpi:\s*([0-9.]+)", out, re.M)
-    return float(found.group(1)) if found else None
-
-
-def ui_scale(screen_height, dpi=None, environ=os.environ):
-    """how much bigger than 96 DPI to draw the window. HOOKSHOT_UI_SCALE, then GDK_SCALE or QT_SCALE_FACTOR above 1
-    (Wayland sessions export GDK_SCALE=1 whatever the screen), then Xft.dpi; with none of them (gamescope, a bare X
-    session) a 1440p or 4K screen is still scaled by its height."""
-    for name, least in (("HOOKSHOT_UI_SCALE", 0), ("GDK_SCALE", 1), ("QT_SCALE_FACTOR", 1)):
-        try:
-            value = float(environ.get(name, ""))
-        except ValueError:
-            continue
-        if value > least:
-            return min(max(value, 0.5), 4.0)
-    if dpi:
-        return min(max(dpi / 96, 0.5), 4.0)
-    return min(screen_height / 1080, 4.0) if screen_height >= 1440 else 1.0
 
 
 def _arg(name):
@@ -155,8 +350,7 @@ class Builder(tk.Tk):
     def __init__(self, launch=None, update=None, fetched=False, tag=None):
         super().__init__()
         self.title("Hookshot Builder")
-        self.apply_scale()
-        self.minsize(self.px(620), self.px(420))
+        self.minsize(620, 420)
         self.cfg = load_config()
         self.proc = None
         self.lines = queue.Queue()
@@ -182,7 +376,7 @@ class Builder(tk.Tk):
         self.space_text = tk.StringVar()
         self.stage_text = tk.StringVar()
         self.time_text = tk.StringVar()
-        self.pad = {"padx": self.px(12), "pady": self.px(4)}
+        self.pad = {"padx": 12, "pady": 4}
         self.page = None
         self.build_button = None
         if update is not None:
@@ -195,28 +389,13 @@ class Builder(tk.Tk):
         self.after(100, self.pump)
         self.protocol("WM_DELETE_WINDOW", self.close)
 
-    def apply_scale(self):
-        """Fonts sized in points follow tk scaling; a named font sized in pixels (Tk 8.6 on X11: -12) does not, so it is
-        multiplied."""
-        self.scale = ui_scale(self.winfo_screenheight(), xft_dpi())
-        if self.scale == 1.0:
-            return
-        self.tk.call("tk", "scaling", self.scale * 96 / 72)
-        for name in self.tk.splitlist(self.tk.call("font", "names")):
-            size = int(self.tk.call("font", "configure", name, "-size"))
-            if size < 0:
-                self.tk.call("font", "configure", name, "-size", -max(1, round(-size * self.scale)))
-
-    def px(self, n):
-        return int(round(n * self.scale))
-
     # ---- the form ----
     def show_form(self):
         self.title("Hookshot Builder")
         if self.page:
             self.page.destroy()
         f = self.page = ttk.Frame(self)
-        f.pack(fill="both", expand=True, pady=self.px(8))
+        f.pack(fill="both", expand=True, pady=8)
         f.columnconfigure(1, weight=1)
         ttk.Label(f, text="Hookshot", font=("TkDefaultFont", 16, "bold")).grid(row=0, column=0, columnspan=3, sticky="w", **self.pad)
         ttk.Label(f, text="Turns your own copy of Ocarina of Time into a game folder you can start on PC.").grid(
@@ -228,7 +407,7 @@ class Builder(tk.Tk):
         kinds = ttk.Frame(f)
         kinds.grid(row=3, column=1, columnspan=2, sticky="w")
         ttk.Radiobutton(kinds, text=".nup file", value="nup", variable=self.kind, command=self.show_form).pack(side="left")
-        ttk.Radiobutton(kinds, text="romfs and exefs", value="folders", variable=self.kind, command=self.show_form).pack(side="left", padx=self.px(12))
+        ttk.Radiobutton(kinds, text="romfs and exefs", value="folders", variable=self.kind, command=self.show_form).pack(side="left", padx=12)
         row = 4
         if self.kind.get() == "nup":
             self.path_row(f, row, ".nup file", self.nup, lambda: self.pick_file(self.nup))
@@ -237,7 +416,7 @@ class Builder(tk.Tk):
             row += 1
             self.path_row(f, row, "exefs", self.exefs, lambda: self.pick_dir(self.exefs))
         row += 1
-        ttk.Label(f, textvariable=self.check_text, wraplength=self.px(560)).grid(row=row, column=0, columnspan=3, sticky="w", **self.pad)
+        ttk.Label(f, textvariable=self.check_text, wraplength=560).grid(row=row, column=0, columnspan=3, sticky="w", **self.pad)
         row += 1
         self.path_row(f, row, "Save the game to", self.out, lambda: self.pick_dir(self.out))
         row += 1
@@ -249,10 +428,10 @@ class Builder(tk.Tk):
         row += 1
         ttk.Label(f, textvariable=self.space_text).grid(row=row, column=0, columnspan=3, sticky="w", **self.pad)
         row += 1
-        ttk.Label(f, textvariable=self.status, wraplength=self.px(560)).grid(row=row, column=0, columnspan=3, sticky="w", **self.pad)
+        ttk.Label(f, textvariable=self.status, wraplength=560).grid(row=row, column=0, columnspan=3, sticky="w", **self.pad)
         row += 1
         self.build_button = ttk.Button(f, text="Build", command=self.build)
-        self.build_button.grid(row=row, column=0, columnspan=3, sticky="we", padx=self.px(12), pady=self.px(12))
+        self.build_button.grid(row=row, column=0, columnspan=3, sticky="we", padx=12, pady=12)
         self.out.trace_add("write", lambda *a: self.update_space())
         self.update_space()
         self.apply_mode()
@@ -325,24 +504,29 @@ class Builder(tk.Tk):
             return
         button.configure(text={"update-game": "Update", "up-to-date": "Play", "update-builder": "Update builder",
                                 "build": "Build"}[self.mode])
-        target = linux_update.update_target(self.latest, self.tools)
+        target = self.latest or self.tools
         if self.mode == "update-game":
             self.status.set("Hookshot %s is available. Your game is %s. Update downloads only what changed, then compiles what changed."
                             % (target, game))
+            DISCORD.set_builder("Update available (%s)" % target, "The Legend of Zelda: Ocarina of Time")
         elif self.mode == "up-to-date" and self.latest is None:
             self.status.set("Your game is %s, as this builder. GitHub did not answer, so newer versions could not be checked." % game)
+            DISCORD.set_builder("Ready to Play", "Hookshot %s · Ocarina of Time" % game)
         elif self.mode == "up-to-date":
             self.status.set("%s is the latest version." % game)
+            DISCORD.set_builder("Ready to Play", "Hookshot %s · Ocarina of Time" % game)
         elif self.mode == "update-builder":
             self.status.set("Hookshot Builder %s is available (this one is %s). Update it first, then build." % (self.latest, self.tools or "this one"))
+            DISCORD.set_builder("Builder update available (%s)" % self.latest, "Hookshot Builder")
         else:
             self.status.set("")
+            DISCORD.set_builder("Configuring Game Files", "The Legend of Zelda: Ocarina of Time")
 
     def apply_launch(self):
         if not self.launch_folder or not hasattr(self, "launch_status"):
             return
         game, kept = linux_update.game_version(self.launch_folder)
-        target = linux_update.update_target(self.latest, self.tools)
+        target = self.latest or self.tools
         show = False
         if target and game and game != target and kept:
             self.launch_status.set("Update available: %s" % target)
@@ -356,24 +540,25 @@ class Builder(tk.Tk):
         else:
             self.launch_status.set("Could not check for updates (GitHub did not answer)" if self.latest is None else "Hookshot")
         if hasattr(self, "launch_update"):
-            self.launch_update.pack(side="right", padx=self.px(4)) if show else self.launch_update.pack_forget()
+            self.launch_update.pack(side="right", padx=4) if show else self.launch_update.pack_forget()
 
     def show_launch(self, folder):
         if self.page:
             self.page.destroy()
         self.title("Hookshot")
         f = self.page = ttk.Frame(self)
-        f.pack(fill="both", expand=True, pady=self.px(8))
+        f.pack(fill="both", expand=True, pady=8)
         game, _kept = linux_update.game_version(folder)
         ttk.Label(f, text="Hookshot %s" % game if game else "Hookshot", font=("TkDefaultFont", 16, "bold")).pack(anchor="w", **self.pad)
-        ttk.Label(f, text=folder, wraplength=self.px(560)).pack(anchor="w", **self.pad)
+        ttk.Label(f, text=folder, wraplength=560).pack(anchor="w", **self.pad)
         self.launch_status = tk.StringVar(value="Checking for updates...")
-        ttk.Label(f, textvariable=self.launch_status, wraplength=self.px(560)).pack(anchor="w", **self.pad)
+        ttk.Label(f, textvariable=self.launch_status, wraplength=560).pack(anchor="w", **self.pad)
         buttons = ttk.Frame(f)
         buttons.pack(anchor="e", **self.pad)
         self.launch_update = ttk.Button(buttons, text="Update", command=lambda: self.begin_update(folder))
-        ttk.Button(buttons, text="Play", command=lambda: self.play_and_close(folder)).pack(side="right", padx=self.px(4))
-        ttk.Button(buttons, text="Open folder", command=lambda: subprocess.Popen(["xdg-open", folder])).pack(side="right", padx=self.px(4))
+        ttk.Button(buttons, text="Play", command=lambda: self.play_and_close(folder)).pack(side="right", padx=4)
+        ttk.Button(buttons, text="Open folder", command=lambda: subprocess.Popen(["xdg-open", folder])).pack(side="right", padx=4)
+        DISCORD.set_builder("Launcher · Ready to Play", ("Hookshot %s · Ocarina of Time" % game) if game else "The Legend of Zelda: Ocarina of Time")
         self.lookup_latest()
 
     def begin_update(self, folder=None):
@@ -381,10 +566,8 @@ class Builder(tk.Tk):
             self.update_folder = folder
         self.show_progress("Updating your game" if self.update_folder else "Updating Hookshot Builder")
         folder = self.update_folder
-        # (a game older than this builder is built again with it: nothing to download, and GitHub need not answer. So is one
-        # from a builder that is not an older release, e.g. from the Actions tab: issue 902)
-        target = self.update_tag or linux_update.update_target(self.latest, self.tools)
-        fetched = self.fetched or bool(folder and self.tools and target == self.tools)
+        # (a game older than this builder is built again with it: nothing to download, and GitHub need not answer)
+        fetched = self.fetched or bool(folder and self.tools and (self.update_tag or self.latest or self.tools) == self.tools)
 
         def run():
             try:
@@ -392,7 +575,7 @@ class Builder(tk.Tk):
                     root = linux_update.running_root()
                     if root is None:
                         raise RuntimeError("These tools are a source checkout, so they cannot download a release. Start the AppImage to update.")
-                    manifest = linux_update.startup_manifest(root)
+                    manifest = linux_update.fetch_manifest()
                     if manifest.tag != linux_update.tools_tag(root):
                         source = linux_update.read_manifest(root)
                         apprun = linux_update.install(manifest, root, source, note=lambda message: self.lines.put(("note", message)))
@@ -483,7 +666,7 @@ class Builder(tk.Tk):
         self.compile_started = None
         self.times = None
         f = self.page = ttk.Frame(self)
-        f.pack(fill="both", expand=True, pady=self.px(8))
+        f.pack(fill="both", expand=True, pady=8)
         f.columnconfigure(0, weight=1)
         f.rowconfigure(5, weight=1)
         self.heading = ttk.Label(f, text=title, font=("TkDefaultFont", 16, "bold"))
@@ -499,6 +682,7 @@ class Builder(tk.Tk):
         self.buttons.grid(row=6, column=0, sticky="e", **self.pad)
         ttk.Button(self.buttons, text="Cancel", command=self.cancel).pack(side="right")
         self.stage_text.set("Starting")
+        DISCORD.set_progress(title, 0.0)
         self.tick()
 
     def tick(self):
@@ -533,7 +717,7 @@ class Builder(tk.Tk):
                     if hasattr(self, "buttons"):
                         for widget in self.buttons.winfo_children():
                             widget.destroy()
-                        ttk.Button(self.buttons, text="Back", command=self.show_form).pack(side="right", padx=self.px(4))
+                        ttk.Button(self.buttons, text="Back", command=self.show_form).pack(side="right", padx=4)
                 elif kind == "line":
                     self.on_line(v)
                 elif kind == "exit":
@@ -551,7 +735,9 @@ class Builder(tk.Tk):
                 self.compile_started = time.time()
         elif line.startswith("@@progress "):
             try:
-                self.bar.configure(value=float(line.split()[1]))
+                val = float(line.split()[1])
+                self.bar.configure(value=val)
+                DISCORD.set_progress(self.stage_text.get() or "Building", val)
             except ValueError:
                 pass
         elif line.startswith("@@plan "):
@@ -610,15 +796,16 @@ class Builder(tk.Tk):
                     text += " · last time %d:%02d" % (int(previous) // 3600, int(previous) // 60 % 60)
             self.stage_text.set(text)
             self.bar.configure(value=1.0)
+            DISCORD.set_builder("Game Ready to Play", "The Legend of Zelda: Ocarina of Time")
             try:
                 add_to_menu(folder)
             except OSError:
                 pass
-            ttk.Button(self.buttons, text="Play", command=lambda: self.play_and_close(folder)).pack(side="right", padx=self.px(4))
-            ttk.Button(self.buttons, text="Open folder", command=lambda: subprocess.Popen(["xdg-open", folder])).pack(side="right", padx=self.px(4))
+            ttk.Button(self.buttons, text="Play", command=lambda: self.play_and_close(folder)).pack(side="right", padx=4)
+            ttk.Button(self.buttons, text="Open folder", command=lambda: subprocess.Popen(["xdg-open", folder])).pack(side="right", padx=4)
         else:
             self.stage_text.set("The build stopped: %s" % getattr(self, "error", "see the lines above"))
-            ttk.Button(self.buttons, text="Back", command=self.show_form).pack(side="right", padx=self.px(4))
+            ttk.Button(self.buttons, text="Back", command=self.show_form).pack(side="right", padx=4)
 
     def cancel(self):
         if self.proc and self.proc.poll() is None:

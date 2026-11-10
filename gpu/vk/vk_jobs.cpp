@@ -131,7 +131,7 @@ void jobs_wait(const std::atomic<bool>& flag) {
     done_cv.wait(lk, [&] { return flag.load(std::memory_order_acquire); });
 }
 int jobs_pending() {
-    return pending.load();
+    return std::max(0, pending.load());
 }
 
 } // namespace mkwvk

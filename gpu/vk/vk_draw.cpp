@@ -5749,7 +5749,11 @@ bool movie_upscale(VkCommandBuffer cmd, uint32_t in_handle, uint32_t out_handle,
 // of GPU time (vk_replay.cpp), they are left out from then on, as on AMD: the linear upscale below, the same picture a little
 // softer. The gameplay networks are never left out. RX_VK_NETWORK_KEEP=all: never
 std::atomic<bool> movie_networks_slow{false};
-bool gameplay_network(uint64_t key) { return key == 0xfd029a317a9a4b94ull || key == 0x9dc98871eb7fc101ull; }
+bool gameplay_network(uint64_t key) {
+    return key == 0xfd029a317a9a4b94ull || key == 0x9dc98871eb7fc101ull ||
+           key == 0x0775215f8da720e6ull || key == 0x19346f9c9299279eull ||
+           key == 0xf10782f9e58b6a7cull;
+}
 
 static movie_upscale_policy::Mode movie_upscale_mode() {
     // Read on first dispatch, after host/hos_main.c has loaded hookshot_env.txt.

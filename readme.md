@@ -12,6 +12,16 @@
 <h4 align="center">The Legend of Zelda: Ocarina of Time (Nintendo Switch 2) running natively on Windows & Linux, with no emulator.
 </h4>
 
+> [!NOTE]
+> **Custom Community Fork (Variant)**
+> This repository is a personal community fork maintained by **1conver**, tracking and based on [NotRexed/Hookshot](https://github.com/NotRexed/Hookshot).
+> **All original credits, static recompilation architecture, and core engine development belong entirely to NotRexed and the Hookshot contributors.**
+> This variant provides:
+> - **AMD RDNA Stability & Texture Pipeline Fixes**: Resolves memory recycling bugs that caused flat terrain texture corruption and stall/black frames in dynamic resolution passes.
+> - **Transparent Floating Net Graph (F1 Menu)**: Real-time frame pacing, wait/idle status, animated shader compilation spinner, and sparkline performance graph.
+> - **Discord Rich Presence**: Integrated Rich Presence with Zelda: Ocarina of Time Remake artwork and GPU status.
+> - **PlayStation DualSense Mod Integration**: RomFS mod support for DualSense button iconography.
+
 
 <p align="center">
   <a href="#project-status">Status</a> |

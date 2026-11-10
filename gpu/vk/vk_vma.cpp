@@ -84,6 +84,11 @@ bool create_image(const VkImageCreateInfo& ci, VkImage& image, VmaAllocation& al
         if (vmaCreateImage(vma, &ci, &pai, &image, &allocation, nullptr) == VK_SUCCESS) return true;
     }
     if (vmaCreateImage(vma, &ci, &ai, &image, &allocation, nullptr) == VK_SUCCESS) return true;
+    if (ai.flags & VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT) {
+        VmaAllocationCreateInfo vai = ai;
+        vai.flags &= ~VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT;
+        if (vmaCreateImage(vma, &ci, &vai, &image, &allocation, nullptr) == VK_SUCCESS) return true;
+    }
     // (hookshot) VRAM is full (a 4 GB card at a high resolution, #96): an image left unmade is a black screen, so it goes
     // to system memory instead, slow but drawn
     if (getenv("RX_VK_IMAGES_VRAM_ONLY")) return false;
@@ -153,7 +158,12 @@ bool create_device_buffer(uint64_t size, VkBufferUsageFlags usage, VkBuffer& buf
     ai.requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
     if (dev.memory_budget) ai.flags = VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT;
     if (dedicated) ai.flags |= VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
-    return vmaCreateBuffer(vma, &bi, &ai, &buffer, &allocation, nullptr) == VK_SUCCESS;
+    if (vmaCreateBuffer(vma, &bi, &ai, &buffer, &allocation, nullptr) == VK_SUCCESS) return true;
+    if (ai.flags & VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT) {
+        ai.flags &= ~VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT;
+        return vmaCreateBuffer(vma, &bi, &ai, &buffer, &allocation, nullptr) == VK_SUCCESS;
+    }
+    return false;
 }
 /// (every heap: what VMA has in blocks and allocations there, what the process uses of it, its budget; one line)
 void vma_log_heaps() {
