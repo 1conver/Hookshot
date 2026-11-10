@@ -1918,11 +1918,12 @@ Texture* create(const Key& key, const nvn_tex* t, VkFormat vf, bool astc, int bw
                 : VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT | (dev.view_2d_of_3d ? VK_IMAGE_CREATE_2D_VIEW_COMPATIBLE_BIT_EXT : 0u));
             const VkResult r = vkGetPhysicalDeviceImageFormatProperties(dev.physical, x.format, x.type, VK_IMAGE_TILING_OPTIMAL,
                 x.usage | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, asked, &limits);
-            if (r == VK_SUCCESS || x.type == VK_IMAGE_TYPE_3D) x.usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+            if (r == VK_SUCCESS || x.type == VK_IMAGE_TYPE_3D || (format_props(raw).optimalTilingFeatures & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT))
+                x.usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
             static int told;
             if (r != VK_SUCCESS && told++ < 4)
                 logf("vk: BC image %ux%ux%u (vk %d) as a raw colour attachment: the driver says %d%s", x.width, x.height, x.depth,
-                     (int)x.format, (int)r, x.type == VK_IMAGE_TYPE_3D ? " (3D: taken)" : "");
+                     (int)x.format, (int)r, x.type == VK_IMAGE_TYPE_3D ? " (3D: taken)" : " (raw format: taken)");
         }
     }
     if (x.type == VK_IMAGE_TYPE_2D && x.layers >= 6 && x.width == x.height && x.samples == VK_SAMPLE_COUNT_1_BIT)
@@ -3387,6 +3388,20 @@ uint64_t preset_texture_budget(uint64_t preset_mb, bool preset_applies, bool vra
     return integrated ? std::min(b, own) : b;
 }
 
+std::atomic<bool> g_reload_textures_pending{false};
+std::atomic<int64_t> g_reload_textures_time{0};
+
+void trigger_texture_reload() {
+    g_reload_textures_pending.store(true, std::memory_order_release);
+    g_reload_textures_time.store(prof_now(), std::memory_order_relaxed);
+    logf("vk: user requested texture reload (F9)");
+}
+
+bool is_texture_reloading() {
+    const int64_t t = g_reload_textures_time.load(std::memory_order_relaxed);
+    return t > 0 && (prof_now() - t) < 2000000000LL;
+}
+
 void texture_frame(uint64_t completed) {
     upload_frame_report();
     frame_upload_ns.store(0, std::memory_order_relaxed);
@@ -3484,6 +3499,35 @@ void texture_frame(uint64_t completed) {
         it = dead.erase(it);
     }
     pool_trim();
+    if (g_reload_textures_pending.exchange(false, std::memory_order_acq_rel)) {
+        logf("vk: reloading textures (F9)...");
+        {
+            std::lock_guard lk(pool_mu);
+            for (auto& [k, v] : target_pool) {
+                for (auto& p : v) pool_destroy(p);
+            }
+            target_pool.clear();
+            pool_bytes = pool_n = 0;
+        }
+        std::vector<Texture*> to_evict;
+        to_evict.reserve(textures.size());
+        for (auto& kv : textures) {
+            Texture* tex = kv.second.get();
+            tex->pool_key = 0;
+            to_evict.push_back(tex);
+        }
+        for (Texture* tex : to_evict) {
+            if (!tex->gpu_written && tex->uploaded && !remade_skip_old()) {
+                std::lock_guard lk(from_memory_mu);
+                if (evicted_from_memory.size() > 50000) evicted_from_memory.clear();
+                evicted_from_memory[evicted_key(tex->gpu, tex->width, tex->height, tex->nvn_format)] = tex->guest_size;
+            }
+            destroy_later(*tex);
+            forget_gpu(tex);
+        }
+        textures.clear();
+        logf("vk: %zu textures evicted for manual reload", to_evict.size());
+    }
     // A budget: RX_VK_VRAM_MB of textures (default 4096), and less when the driver says the process is near what it
     // may have (other programs use the GPU too). The least recently used go first, down to 7/8 of it; nothing the
     // last 8 presents used, nothing recorded work may still read.

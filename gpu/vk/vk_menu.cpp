@@ -30,6 +30,7 @@
 #include "vk_menu.h"
 #include "vk_menu_hit.h"
 #include "vk_draw.h"   // (pipeline_cache_save: Restart now keeps what was built)
+#include "vk_texture.h"
 #include "vk_jobs.h"
 #include "oot_cheat_items.h"
 #include "vk_progress.h"   // (StartupView, version_text: the start-up screen)
@@ -1599,6 +1600,7 @@ const char* tr_row_name(const char* name) {
     if (!strcmp(name, "Descriptor reuse")) return "Reutilizacion de descriptores";
     if (!strcmp(name, "Sampler cache")) return "Cache de muestreadores";
     if (!strcmp(name, "Reload scene shaders") || !strcmp(name, "Recargar shaders (F10)")) return "Recargar shaders (F10)";
+    if (!strcmp(name, "Reload textures") || !strcmp(name, "Recargar texturas (F9)")) return "Recargar texturas (F9)";
     if (!strcmp(name, "Restart")) return "Reiniciar";
     if (!strcmp(name, "Quit")) return "Salir";
     return name;
@@ -1614,6 +1616,8 @@ const char* tr_help(const char* name, const char* default_help) {
         return "Selecciona el idioma de la interfaz del menu de configuracion.";
     if (!strcmp(name, "Reload scene shaders") || strstr(name, "Recargar shaders"))
         return "Fuerza la recompilacion en caliente de todos los shaders y tuberias graficas de la escena actual sin reiniciar el juego. Tambien puedes presionar F10 en cualquier momento.";
+    if (!strcmp(name, "Reload textures") || strstr(name, "Recargar texturas"))
+        return "Fuerza la recarga de texturas y vaciado del pool de render targets en VRAM. Tambien puedes presionar F9 en cualquier momento.";
     if (!strcmp(name, "Layout preset") || strstr(name, "Distribucion de mando"))
         return "Configura la distribucion de los botones de accion. El modo PlayStation asigna Cruz abajo (A), Circulo a la derecha (B), Cuadrado a la izquierda (X) y Triangulo arriba (Y).";
     if (!strcmp(name, "Button prompts") || strstr(name, "Iconos de botones"))
@@ -1704,7 +1708,9 @@ void draw_net_graph(ui::Ctx& c) {
     c.d->AddRect(a, b, ui::rgba(45, 60, 75, 190), 4.0f * s, 0, std::max(1.0f, s));
     
     const int pending_jobs = jobs_pending();
-    const bool reloading = is_shader_reloading();
+    const bool reloading_shaders = is_shader_reloading();
+    const bool reloading_textures = is_texture_reloading();
+    const bool reloading = reloading_shaders || reloading_textures;
     
     // Line 1: Frame ms and status pill
     char line1[48];
@@ -1720,9 +1726,11 @@ void draw_net_graph(ui::Ctx& c) {
     const float stw = ui::size_of(c.f.strong, 12.0f * s, status_tag).x;
     ui::text_mid(c, c.f.strong, 12.0f * s, b.x - 8 * s - stw, a.y + 11 * s, status_color, status_tag);
     
-    // Line 2: Shaders queue status
+    // Line 2: Shaders / Textures queue status
     char line2[64];
-    if (reloading) {
+    if (reloading_textures) {
+        snprintf(line2, sizeof line2, es ? "Recargando texturas (F9)..." : "Reloading textures (F9)...");
+    } else if (reloading_shaders) {
         snprintf(line2, sizeof line2, es ? "Recargando shaders (F10)..." : "Reloading shaders (F10)...");
     } else if (pending_jobs > 0) {
         snprintf(line2, sizeof line2, es ? "Shaders: %d en cola..." : "Shaders: %d in queue...", pending_jobs);
@@ -3039,9 +3047,6 @@ void menu_tick() {
         held[i] = down;
         if (press[i]) pad_last = false;   // (the keys: their names in the prompts)
     }
-    if (mine && (GetAsyncKeyState(VK_F10) & 1)) {
-        trigger_shader_reload();
-    }
     // (hookshot) the gamepads, by position: Home, or Select and Start together, as Insert; the D-pad as the arrows; the
     // buttons the Switch's A and B are bound to as Enter and Esc, as in the game (vk_menu_keys.h; with the Nintendo layout A
     // is the right face button), not while a binding waits for its button
@@ -3050,6 +3055,10 @@ void menu_tick() {
     const uint32_t chord = 1u << HOS_PAD_BACK | 1u << HOS_PAD_START;
     const bool chord_now = (raw & chord) == chord && (pad_held & chord) != chord;
     pad_held = raw;
+#ifdef _WIN32
+    if (mine && (GetAsyncKeyState(VK_F10) & 1)) trigger_shader_reload();
+    if (mine && (GetAsyncKeyState(VK_F9) & 1)) trigger_texture_reload();
+#endif
     if (pad_press) pad_last = auto_pad = true;   // (a controller: its buttons in the prompts, and Menu size Auto's choice)
     {   // (RX_VK_UI_PROMPTS=pad or keys: the prompts for screenshots of test runs, which have no controller and no focus)
         static const char* force = getenv("RX_VK_UI_PROMPTS");
