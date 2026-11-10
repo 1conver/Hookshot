@@ -23,7 +23,7 @@ inline constexpr const char* kHookshotIconUrl =
     "https://raw.githubusercontent.com/NotRexed/Hookshot/main/assets/hookshot.png";
 // [HOOKSHOT-FLAG-DISCORD-OOT-REMAKE-LOGO]
 inline constexpr const char* kOcarinaIconUrl =
-    "https://raw.githubusercontent.com/1conver/Hookshot/fix/amd-rdna-stability-and-pacing/assets/oot_remake.png";
+    "https://files.catbox.moe/1n9n75.png";
 
 enum class Mode : uint8_t {
     Builder = 0,
