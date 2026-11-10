@@ -88,6 +88,10 @@ const char* tx_onoff(int v) {
 const char* tx_language(int v) {
     return v == 1 ? "Espanol" : "English";
 }
+const char* tx_reload_shaders(int) {
+    if (is_shader_reloading()) return opts.language == 1 ? "Recargando..." : "Reloading...";
+    return opts.language == 1 ? "Enter o F10" : "Enter or F10";
+}
 // (hookshot) Motion controls: the choice, and whether a connected controller has a gyroscope (host/pad_sdl.c). Either can be
 // chosen whatever is connected: a pad plugged in later is read when it comes
 const char* tx_gyro(int v) {
@@ -517,11 +521,14 @@ const char* tr_name(const char* en) {
     if (!strcmp(en, "Layout preset")) return "Distribucion de botones";
     if (!strcmp(en, "Controls")) return "Controles";
     if (!strcmp(en, "Cheats")) return "Trucos";
+    if (!strcmp(en, "Reload scene shaders")) return "Recargar shaders de escena";
     return en;
 }
 
 const char* tr_help(const char* en) {
     if (opts.language != 1 || !en) return en;
+    if (strstr(en, "Purge and reload all shaders in the current scene"))
+        return "Purga y recarga todos los shaders de la escena actual al instante. Tecla rapida: F10.";
     if (strstr(en, "Sets the scaling rows, frame generation"))
         return "Configura resolucion, generacion de frames y limites de memoria segun tu tarjeta grafica.";
     if (strstr(en, "Fills the whole screen with the game"))
@@ -682,6 +689,8 @@ Row rows[] = {
     {TAB_GAMEPLAY, "Discord Rich Presence", &opts.discord, 0, 1, 1, tx_onoff,
      "Shows on your Discord profile that you are playing Ocarina of Time, with its cover, the time played and your GPU. Off clears it at once.",
      nullptr, false, true},
+    {TAB_GAMEPLAY, "Reload scene shaders", nullptr, 0, 0, 0, tx_reload_shaders,
+     "Purge and reload all shaders in the current scene instantly. Hotkey: F10.", nullptr, false, true},
 
     // Controls (14 rows)
     {TAB_CONTROLS, "Controller in background", &opts.pad_background, 0, 1, 1, tx_onoff,
@@ -1812,7 +1821,9 @@ void paint_net_graph(HDC dc, uint32_t w, uint32_t h, int s) {
     outlined(dc, 8 * s, 4 * s, line1, RGB(236, 242, 248), s);
 
     SetTextAlign(dc, TA_RIGHT | TA_TOP);
-    if (had_recent_wait || pending_jobs > 0) {
+    if (is_shader_reloading()) {
+        outlined(dc, (int)w - 8 * s, 4 * s, es ? "[RECARGANDO]" : "[RELOADING]", RGB(100, 220, 240), s);
+    } else if (had_recent_wait || pending_jobs > 0) {
         // Soft harmonious champagne gold (never aggressive neon orange)
         outlined(dc, (int)w - 8 * s, 4 * s, es ? "[COMPILANDO]" : "[COMPILING]", RGB(230, 205, 135), s);
     } else {
@@ -1830,7 +1841,18 @@ void paint_net_graph(HDC dc, uint32_t w, uint32_t h, int s) {
     const int cy = 23 * s;
     const int r = 4 * s;
 
-    if (pending_jobs > 0) {
+    if (is_shader_reloading()) {
+        const double angle = (spin_tick * 45.0) * (3.14159265 / 180.0);
+        HPEN spin_pen = CreatePen(PS_SOLID, 2 * s, RGB(100, 220, 240));
+        HGDIOBJ prev_p = SelectObject(dc, spin_pen);
+        Arc(dc, cx - r, cy - r, cx + r, cy + r,
+            cx + (int)(r * cos(angle)), cy + (int)(r * sin(angle)),
+            cx - (int)(r * cos(angle)), cy - (int)(r * sin(angle)));
+        SelectObject(dc, prev_p);
+        DeleteObject(spin_pen);
+
+        outlined(dc, 23 * s, 17 * s, es ? "Refrescando shaders..." : "Refreshing shaders...", RGB(100, 220, 240), s);
+    } else if (pending_jobs > 0) {
         const double angle = (spin_tick * 35.0) * (3.14159265 / 180.0);
         HPEN spin_pen = CreatePen(PS_SOLID, 2 * s, RGB(230, 205, 135));
         HGDIOBJ prev_p = SelectObject(dc, spin_pen);
@@ -2244,6 +2266,12 @@ void menu_tick() {
         press[i] = host && host->version >= 6 && host->take_key_press ? mine && queued : down && !held[i];
         held[i] = down;
     }
+    static bool f10_held = false;
+    const bool f10_down = mine && (GetAsyncKeyState(VK_F10) & 0x8000) != 0;
+    if (f10_down && !f10_held) {
+        trigger_shader_reload();
+    }
+    f10_held = f10_down;
     // (hookshot) the gamepads, by position: Home, or Select and Start together, as Insert; the D-pad as the arrows,
     // the bottom face button as Enter, the right one as Esc (not while a binding waits for its button)
     static uint32_t pad_held = 0;
@@ -2614,6 +2642,10 @@ void menu_tick() {
         if (press[2]) selected = (selected + 1) % tab_count, changed = true;
         Row& r = rows[tab_row_to_global(cur_tab, selected)];
         if (press[7] && &r == &rows[kCheatsRow]) page = 2, changed = true;
+        else if (press[7] && !strcmp(r.name, "Reload scene shaders")) {
+            trigger_shader_reload();
+            changed = true;
+        }
         else if (press[7] && !r.value && can_bind()) page = 1, csel = 0, ccol = 0, changed = true;
         if ((press[3] || press[4] || press[7]) && r.value) {   // (Enter, or the bottom face button, as Right)
             if (press[7]) press[4] = true;

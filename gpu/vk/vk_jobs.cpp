@@ -130,7 +130,11 @@ void jobs_wait(const std::atomic<bool>& flag) {
                 lk.lock();
                 break;
             }
-    done_cv.wait(lk, [&] { return flag.load(std::memory_order_acquire); });
+    if (!flag.load(std::memory_order_acquire)) {
+        done_cv.wait_for(lk, std::chrono::milliseconds(20), [&] {
+            return flag.load(std::memory_order_acquire);
+        });
+    }
 }
 int jobs_pending() {
     return std::max(0, pending.load());
