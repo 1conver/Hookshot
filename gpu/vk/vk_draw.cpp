@@ -1087,11 +1087,7 @@ VkResult cached_graphics(const VkGraphicsPipelineCreateInfo* ci, VkPipeline* pl)
     return create_cached(guarded_graphics, ci, pl);
 }
 VkResult cached_compute(const VkComputePipelineCreateInfo* ci, VkPipeline* pl) {
-    VkComputePipelineCreateInfo copy = *ci;
-    static const bool noopt = getenv("RX_VK_NOOPT") != nullptr;
-    static const bool amd = (dev.props.vendorID == 0x1002);
-    if (noopt || amd) copy.flags |= VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT;
-    return create_cached(guarded_compute, &copy, pl);
+    return create_cached(guarded_compute, ci, pl);
 }
 /// (a graphics pipeline made with the cache chosen for it: pcache through the play caches, another or none as it is)
 VkResult graphics_with(VkPipelineCache cache, const VkGraphicsPipelineCreateInfo* ci, VkPipeline* pl) {
@@ -1938,11 +1934,21 @@ VkPipeline build_graphics(const Program& p, const NvnState& s, const Targets& at
     {   // (local) RX_VK_NOOPT=1: build every pipeline without the driver's optimizer. AMD's proprietary compiler crashes
         // (-13 here) or takes minutes on some Ocarina shaders it builds in seconds unoptimized (Lichii #200, #210).
         static const bool noopt = getenv("RX_VK_NOOPT") != nullptr;
+        if (noopt) ci.flags |= VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT;
+        // (from PR 430, YunaraDebugs: on AMD the task and mesh programs (OoT's foliage culling, following pointers through its
+        // tables) hung the GPU when the driver's optimizer built them: a device lost one to four minutes into Kokiri, each time with
+        // another of them first (RX 6600, issues 461 and 484); never in runs where they were built without it. They are built
+        // without it on AMD. RX_VK_MESH_OPT=1: with it, as the others)
         static const bool amd = (dev.props.vendorID == 0x1002);
-        if (noopt || amd) {
-            ci.flags |= VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT;
-            static std::atomic<int> told{0};
-            if (told++ < 1) logf("vk: graphics pipelines built without driver optimizer (AMD stability & anti-hang)");
+        static const bool mesh_opt = getenv("RX_VK_MESH_OPT") != nullptr;
+        if (amd && !mesh_opt) {
+            bool mesh = false;
+            for (const Stage& st : p.stages) mesh |= (st.vk_stage & (VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT)) != 0;
+            if (mesh) {
+                ci.flags |= VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT;
+                static std::atomic<int> told{0};
+                if (told++ < 1) logf("vk: task and mesh programs built without the driver's optimizer (AMD; RX_VK_MESH_OPT=1: with it)");
+            }
         }
     }
 #ifdef _WIN32
