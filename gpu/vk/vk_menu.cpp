@@ -474,8 +474,8 @@ MENU_HINTS(hn_gyro, 0, "The sticks alone aim.",
            "Switch Pro controllers and pads in Switch mode, DualSense and DualShock 4. The value says whether the "
            "connected pad has a gyroscope.")
 MENU_HINTS(hn_pad_layout, 0, "The Switch's order: A on the right, B at the bottom, X at the top, Y on the left.",
-           "A at the bottom (action and talk), B on the right, X on the left, Y at the top.",
-           "A at the bottom, B on the right; X and Y as on the Switch.",
+           "Xbox layout: A at bottom, B on right, X on left, Y at top.",
+           "PlayStation layout: Cross at bottom, Circle on right, Square on left, Triangle at top.",
            "Bindings of your own, from the Controls page.")
 
 const char* tr_name(const char* en) {
@@ -605,6 +605,14 @@ const char* tr_help(const char* en) {
         return "Mover el raton hacia adelante inclina la camara hacia abajo.";
     if (strstr(en, "The sticks alone aim"))
         return "El apuntado se realiza exclusivamente con las palancas analogicas.";
+    if (strstr(en, "The Switch's order: A on the right"))
+        return "Disposicion Switch: A a la derecha, B abajo, X arriba, Y a la izquierda.";
+    if (strstr(en, "Xbox layout: A at bottom"))
+        return "Disposicion Xbox: A abajo (accion), B a la derecha, X a la izquierda, Y arriba.";
+    if (strstr(en, "PlayStation layout: Cross at bottom"))
+        return "Disposicion PlayStation: Cruz abajo (accion), Circulo derecha, Cuadrado izq., Triangulo arriba.";
+    if (strstr(en, "Bindings of your own, from the Controls page"))
+        return "Asignaciones personalizadas configuradas en la pagina de Controles.";
     if (strstr(en, "The game as without it"))
         return "El juego procesa los fotogramas de forma estandar.";
     if (strstr(en, "The driver paces the frames for less latency"))
@@ -931,8 +939,12 @@ const char* const bind_names[HOS_KEY_N] = {"a", "b", "x", "y", "ls", "rs", "l", 
                                            "move_right", "cam_up", "cam_down", "cam_left", "cam_right"};
 bool can_bind() { return host && host->version >= 5 && host->binding && host->bind && host->pad_raw; }
 const char* tx_pad_layout(int v) {
-    static const char* t[] = {"Nintendo (Def)", "Xbox / PC", "Swap Face", "Custom"};
-    return t[std::min(std::max(v, 0), 3)];
+    if (opts.language == 1) {
+        static const char* es[] = {"Nintendo (Switch)", "Xbox", "PlayStation", "Personalizado"};
+        return es[std::min(std::max(v, 0), 3)];
+    }
+    static const char* en[] = {"Nintendo (Switch)", "Xbox", "PlayStation", "Custom"};
+    return en[std::min(std::max(v, 0), 3)];
 }
 void apply_pad_layout(int layout) {
     if (!can_bind()) return;
@@ -941,16 +953,16 @@ void apply_pad_layout(int layout) {
         host->bind(HOS_BIND_PAD, HOS_SW_B, 0, HOS_PAD_SOUTH);
         host->bind(HOS_BIND_PAD, HOS_SW_X, 0, HOS_PAD_NORTH);
         host->bind(HOS_BIND_PAD, HOS_SW_Y, 0, HOS_PAD_WEST);
-    } else if (layout == 1) { // Xbox / PC Standard (Bottom=A, Right=B, Left=X, Top=Y)
+    } else if (layout == 1) { // Xbox Standard (Bottom=A, Right=B, Left=X, Top=Y)
         host->bind(HOS_BIND_PAD, HOS_SW_A, 0, HOS_PAD_SOUTH);
         host->bind(HOS_BIND_PAD, HOS_SW_B, 0, HOS_PAD_EAST);
         host->bind(HOS_BIND_PAD, HOS_SW_X, 0, HOS_PAD_WEST);
         host->bind(HOS_BIND_PAD, HOS_SW_Y, 0, HOS_PAD_NORTH);
-    } else if (layout == 2) { // Swap Face Buttons (Bottom=A, Right=B, Top=X, Left=Y)
+    } else if (layout == 2) { // PlayStation (Bottom=Cross->A, Right=Circle->B, Left=Square->X, Top=Triangle->Y)
         host->bind(HOS_BIND_PAD, HOS_SW_A, 0, HOS_PAD_SOUTH);
         host->bind(HOS_BIND_PAD, HOS_SW_B, 0, HOS_PAD_EAST);
-        host->bind(HOS_BIND_PAD, HOS_SW_X, 0, HOS_PAD_NORTH);
-        host->bind(HOS_BIND_PAD, HOS_SW_Y, 0, HOS_PAD_WEST);
+        host->bind(HOS_BIND_PAD, HOS_SW_X, 0, HOS_PAD_WEST);
+        host->bind(HOS_BIND_PAD, HOS_SW_Y, 0, HOS_PAD_NORTH);
     }
 }
 int detect_pad_layout() {
@@ -960,8 +972,9 @@ int detect_pad_layout() {
     const int x = host->binding(HOS_BIND_PAD, HOS_SW_X, 0);
     const int y = host->binding(HOS_BIND_PAD, HOS_SW_Y, 0);
     if (a == HOS_PAD_EAST && b == HOS_PAD_SOUTH && x == HOS_PAD_NORTH && y == HOS_PAD_WEST) return 0;
-    if (a == HOS_PAD_SOUTH && b == HOS_PAD_EAST && x == HOS_PAD_WEST && y == HOS_PAD_NORTH) return 1;
-    if (a == HOS_PAD_SOUTH && b == HOS_PAD_EAST && x == HOS_PAD_NORTH && y == HOS_PAD_WEST) return 2;
+    if (a == HOS_PAD_SOUTH && b == HOS_PAD_EAST && x == HOS_PAD_WEST && y == HOS_PAD_NORTH) {
+        return (opts.pad_layout == 2) ? 2 : 1;
+    }
     return 3;
 }
 // (hookshot) the row's choice to the host: off, the default, or a microphone by its name (and its place in the host's list,
@@ -1096,11 +1109,72 @@ const Control controls[] = {{HOS_SW_A, "A"}, {HOS_SW_B, "B"}, {HOS_SW_X, "X"}, {
                             {HOS_KEY_CAM_RIGHT, "Camera right"}};
 constexpr int kControls = sizeof controls / sizeof controls[0];   // (then "Reset to defaults")
 bool keys_only(int i) { return i < kControls && controls[i].button >= HOS_SW_N; }   // (no gamepad input for those)
+const char* tr_control_name(const char* en) {
+    if (opts.language != 1 || !en) return en;
+    if (!strcmp(en, "Left stick press")) return "Pulsar palanca izq. (L3)";
+    if (!strcmp(en, "Right stick press")) return "Pulsar palanca der. (R3)";
+    if (!strcmp(en, "D-pad up")) return "D-pad arriba";
+    if (!strcmp(en, "D-pad down")) return "D-pad abajo";
+    if (!strcmp(en, "D-pad left")) return "D-pad izq.";
+    if (!strcmp(en, "D-pad right")) return "D-pad der.";
+    if (!strcmp(en, "Move forward")) return "Moverse adelante";
+    if (!strcmp(en, "Move back")) return "Moverse atras";
+    if (!strcmp(en, "Move left")) return "Moverse izquierda";
+    if (!strcmp(en, "Move right")) return "Moverse derecha";
+    if (!strcmp(en, "Camera up")) return "Camara arriba";
+    if (!strcmp(en, "Camera down")) return "Camara abajo";
+    if (!strcmp(en, "Camera left")) return "Camara izquierda";
+    if (!strcmp(en, "Camera right")) return "Camara derecha";
+    return en;
+}
 const char* pad_name(int p) {
-    static const char* t[HOS_PAD_N] = {"Bottom button", "Right button", "Left button", "Top button", "Select / Back",
-                                       "Home", "Start", "Left stick press", "Right stick press", "L1 / LB", "R1 / RB",
-                                       "D-pad up", "D-pad down", "D-pad left", "D-pad right", "L2 / LT", "R2 / RT"};
-    return p >= 0 && p < HOS_PAD_N ? t[p] : "None";
+    if (p < 0 || p >= HOS_PAD_N) return opts.language == 1 ? "Ninguno" : "None";
+    if (opts.pad_layout == 2) { // PlayStation
+        if (opts.language == 1) {
+            static const char* ps_es[HOS_PAD_N] = {
+                "Cruz (X)", "Circulo (O)", "Cuadrado ([])", "Triangulo (/\\)", "Share / Select",
+                "Boton PS", "Options / Start", "L3", "R3", "L1", "R1",
+                "D-pad arriba", "D-pad abajo", "D-pad izq.", "D-pad der.", "L2", "R2"
+            };
+            return ps_es[p];
+        } else {
+            static const char* ps_en[HOS_PAD_N] = {
+                "Cross (X)", "Circle (O)", "Square ([])", "Triangle (/\\)", "Share / Select",
+                "PS button", "Options / Start", "L3", "R3", "L1", "R1",
+                "D-pad up", "D-pad down", "D-pad left", "D-pad right", "L2", "R2"
+            };
+            return ps_en[p];
+        }
+    } else if (opts.pad_layout == 1) { // Xbox
+        if (opts.language == 1) {
+            static const char* xb_es[HOS_PAD_N] = {
+                "Boton A", "Boton B", "Boton X", "Boton Y", "Back / View",
+                "Boton Xbox", "Start / Menu", "LSB (L3)", "RSB (R3)", "LB", "RB",
+                "D-pad arriba", "D-pad abajo", "D-pad izq.", "D-pad der.", "LT", "RT"
+            };
+            return xb_es[p];
+        } else {
+            static const char* xb_en[HOS_PAD_N] = {
+                "Button A", "Button B", "Button X", "Button Y", "Back / View",
+                "Xbox button", "Start / Menu", "LSB (L3)", "RSB (R3)", "LB", "RB",
+                "D-pad up", "D-pad down", "D-pad left", "D-pad right", "LT", "RT"
+            };
+            return xb_en[p];
+        }
+    } else { // Nintendo / Generic
+        if (opts.language == 1) {
+            static const char* t_es[HOS_PAD_N] = {
+                "Boton B (abajo)", "Boton A (der.)", "Boton Y (izq.)", "Boton X (arriba)", "Select / Back",
+                "Home", "Start", "Palanca izq.", "Palanca der.", "L1 / LB / L", "R1 / RB / R",
+                "D-pad arriba", "D-pad abajo", "D-pad izq.", "D-pad der.", "L2 / LT / ZL", "R2 / RT / ZR"
+            };
+            return t_es[p];
+        }
+        static const char* t[HOS_PAD_N] = {"Bottom button", "Right button", "Left button", "Top button", "Select / Back",
+                                           "Home", "Start", "Left stick press", "Right stick press", "L1 / LB", "R1 / RB",
+                                           "D-pad up", "D-pad down", "D-pad left", "D-pad right", "L2 / LT", "R2 / RT"};
+        return t[p];
+    }
 }
 const char* key_name(int vk) {
     static char b[16];
@@ -1297,8 +1371,10 @@ void paint_menu(HDC dc, uint32_t w, uint32_t h, int s) {
     HFONT title = font(20 * s, FW_SEMIBOLD), body = font(16 * s, FW_NORMAL);
     HGDIOBJ old = SelectObject(dc, title);
     SetTextColor(dc, RGB(236, 240, 236));
-    const char* heading = page == 5 ? "Restart needed" : page == 4 ? "Inventory" : page == 3 ? "Teleport"
-                        : page == 2 ? "Cheats" : "Hookshot";
+    const char* heading = page == 5 ? (opts.language == 1 ? "Reinicio necesario" : "Restart needed")
+                        : page == 4 ? (opts.language == 1 ? "Inventario" : "Inventory")
+                        : page == 3 ? (opts.language == 1 ? "Teletransporte" : "Teleport")
+                        : page == 2 ? (opts.language == 1 ? "Trucos" : "Cheats") : "Hookshot";
     TextOutA(dc, 16 * s, 12 * s, heading, (int)strlen(heading));
     {   // (which build, beside the title, so a report can say it without opening the log; the release alone when the whole
         // line would run into the title)
@@ -1322,15 +1398,18 @@ void paint_menu(HDC dc, uint32_t w, uint32_t h, int s) {
     SelectObject(dc, body);
     if (page == 5) {   // (hookshot) the restart question, as the menu closes with a setting that takes a restart
         SetTextColor(dc, RGB(236, 240, 236));
-        const std::string ask = "Restart to apply " + restart_list(" and ") + "?";
+        const std::string ask = (opts.language == 1 ? "Reiniciar para aplicar " : "Restart to apply ") +
+                                restart_list(opts.language == 1 ? " y " : " and ") + "?";
         const int asked = wrap_help(dc, ask.c_str(), (int)w - 32 * s, 16 * s, 46 * s, true);   // (one line or two)
         HFONT small = font(14 * s, FW_NORMAL);
         SelectObject(dc, small);
         SetTextColor(dc, RGB(176, 186, 180));
-        const char* lost = "Progress since your last save is lost.";
+        const char* lost = opts.language == 1 ? "Se perdera el progreso no guardado." : "Progress since your last save is lost.";
         TextOutA(dc, 16 * s, std::min(46 * s + asked + 4 * s, 94 * s), lost, (int)strlen(lost));
         SelectObject(dc, body);
-        const char* const labels[2] = {"Later", "Restart now"};
+        const char* const labels_en[2] = {"Later", "Restart now"};
+        const char* const labels_es[2] = {"Mas tarde", "Reiniciar ya"};
+        const char* const* labels = opts.language == 1 ? labels_es : labels_en;
         for (int i = 0; i < 2; i++) {
             const int x = menu_hit::ask_button_x(i, s), y = menu_hit::kAskButtonY * s;
             const int bw = menu_hit::kAskButtonW * s, bh = menu_hit::kAskButtonH * s;
@@ -1344,7 +1423,7 @@ void paint_menu(HDC dc, uint32_t w, uint32_t h, int s) {
         }
         SelectObject(dc, small);
         SetTextColor(dc, RGB(140, 150, 144));
-        const char* hint = "Left/Right choose   Enter confirms   Esc: Later";
+        const char* hint = opts.language == 1 ? "Izq/Der: elegir   Enter: confirmar   Esc: Mas tarde" : "Left/Right choose   Enter confirms   Esc: Later";
         TextOutA(dc, 16 * s, 168 * s, hint, (int)strlen(hint));
         SelectObject(dc, old);
         DeleteObject(small);
@@ -1353,29 +1432,36 @@ void paint_menu(HDC dc, uint32_t w, uint32_t h, int s) {
         return;
     }
     if (page == 1) {   // (hookshot) the Controls page
-        TextOutA(dc, 16 * s + 110 * s, 12 * s + 4 * s, "Controls", 8);
+        const char* ctl_title = opts.language == 1 ? "Controles" : "Controls";
+        TextOutA(dc, 16 * s + 110 * s, 12 * s + 4 * s, ctl_title, (int)strlen(ctl_title));
         const int rh = menu_hit::kCtlRowH * s, top = menu_hit::kCtlTop * s, xpad = menu_hit::kCtlPad * s,
                   xkey = menu_hit::kCtlKey * s;
         SetTextColor(dc, RGB(140, 150, 144));
-        TextOutA(dc, 16 * s, 44 * s, "Button", 6);
-        TextOutA(dc, xpad, 44 * s, "Gamepad", 7);
-        TextOutA(dc, xkey, 44 * s, "Keyboard", 8);
+        const char* col_btn = opts.language == 1 ? "Boton" : "Button";
+        const char* col_pad = opts.language == 1 ? "Mando" : "Gamepad";
+        const char* col_key = opts.language == 1 ? "Teclado" : "Keyboard";
+        TextOutA(dc, 16 * s, 44 * s, col_btn, (int)strlen(col_btn));
+        TextOutA(dc, xpad, 44 * s, col_pad, (int)strlen(col_pad));
+        TextOutA(dc, xkey, 44 * s, col_key, (int)strlen(col_key));
         for (int i = 0; i <= kControls; i++) {
             const int y = top + i * rh;
             const bool sel = i == csel;
             if (sel) startup_gdi::round_rect(dc, 8 * s, y, (int)w - 16 * s, rh, 6 * s, RGB(44, 72, 54));
             SetTextColor(dc, sel ? RGB(255, 255, 255) : RGB(196, 204, 198));
             if (i == kControls) {
-                const char* t = "Reset to defaults";
+                const char* t = opts.language == 1 ? "Restablecer por defecto" : "Reset to defaults";
                 TextOutA(dc, 16 * s, y + 3 * s, t, (int)strlen(t));
                 continue;
             }
             const Control& c = controls[i];
-            TextOutA(dc, 16 * s, y + 3 * s, c.name, (int)strlen(c.name));
+            const char* c_name = tr_control_name(c.name);
+            TextOutA(dc, 16 * s, y + 3 * s, c_name, (int)strlen(c_name));
             for (int col = 0; col < 2; col++) {
                 std::string v = col == 0 ? (keys_only(i) ? "-" : pad_name(host->binding(HOS_BIND_PAD, c.button, 0)))
                                          : keys_text(c.button);
-                if (sel && col == ccol && listening) v = col == 0 ? "Press a button..." : "Press a key...";
+                if (sel && col == ccol && listening)
+                    v = col == 0 ? (opts.language == 1 ? "Presiona un boton..." : "Press a button...")
+                                 : (opts.language == 1 ? "Presiona una tecla..." : "Press a key...");
                 if (sel && col == ccol) {
                     SIZE sz{};
                     GetTextExtentPoint32A(dc, v.c_str(), (int)v.size(), &sz);
@@ -1386,9 +1472,10 @@ void paint_menu(HDC dc, uint32_t w, uint32_t h, int s) {
             }
         }
         SetTextColor(dc, RGB(140, 150, 144));
-        const char* hint = listening ? "Press the new one   Esc cancels"
-                                     : "Enter binds   Delete clears   Esc goes back";
-        const char* hint2 = "Gamepad: D-pad moves, bottom button binds, right one goes back";
+        const char* hint = listening ? (opts.language == 1 ? "Presiona la nueva asignacion   Esc cancela" : "Press the new one   Esc cancels")
+                                     : (opts.language == 1 ? "Enter asigna   Supr borra   Esc vuelve atras" : "Enter binds   Delete clears   Esc goes back");
+        const char* hint2 = opts.language == 1 ? "Mando: D-pad mueve, boton inferior asigna, derecho vuelve atras"
+                                               : "Gamepad: D-pad moves, bottom button binds, right one goes back";
         TextOutA(dc, 16 * s, top + (kControls + 1) * rh + 6 * s, hint, (int)strlen(hint));
         TextOutA(dc, 16 * s, top + (kControls + 1) * rh + 26 * s, hint2, (int)strlen(hint2));
         SelectObject(dc, old);
@@ -1423,28 +1510,32 @@ void paint_menu(HDC dc, uint32_t w, uint32_t h, int s) {
                 const int have = item_counts[i].load(std::memory_order_relaxed);
                 if (have < 0) note = "?";
                 else if (item_kinds[i]) snprintf(value, sizeof value, "%d", have), note = value;
-                else note = have > 0 ? "Have" : "-";
+                else note = have > 0 ? (opts.language == 1 ? "Obtenido" : "Have") : "-";
             } else note = teleport_notes[i];
             if (note) {
                 SIZE size{};
                 GetTextExtentPoint32A(dc, note, (int)strlen(note), &size);
-                if (!inv || strcmp(note, "Have")) SetTextColor(dc, RGB(140, 150, 144));
+                if (!inv || (strcmp(note, "Have") && strcmp(note, "Obtenido"))) SetTextColor(dc, RGB(140, 150, 144));
                 list_value_l[line - scroll] = (int)w - menu_hit::kListValueRight * s - (int)size.cx;
                 TextOutA(dc, list_value_l[line - scroll], y + 3 * s, note, (int)strlen(note));
             }
         }
         SetTextColor(dc, RGB(140, 150, 144));
         char count[32];
-        snprintf(count, sizeof count, "%d of %d", choice + 1, n);
+        snprintf(count, sizeof count, opts.language == 1 ? "%d de %d" : "%d of %d", choice + 1, n);
         SIZE size{};
         GetTextExtentPoint32A(dc, count, (int)strlen(count), &size);
         TextOutA(dc, (int)w - 16 * s - size.cx, 22 * s, count, (int)strlen(count));
         const int bottom = top + kTeleportLines * rh + 8 * s;
-        const char* hint = inv ? "Up/Down choose   Enter unlocks or relocks   Left/Right amount"
-                               : "Up/Down choose   Left/Right next section   Enter travels   Esc back";
+        const char* hint = inv ? (opts.language == 1 ? "Arriba/Abajo: elegir   Enter: desbloquear/bloquear   Izq/Der: cantidad"
+                                                     : "Up/Down choose   Enter unlocks or relocks   Left/Right amount")
+                               : (opts.language == 1 ? "Arriba/Abajo: elegir   Izq/Der: seccion   Enter: viajar   Esc: volver"
+                                                     : "Up/Down choose   Left/Right next section   Enter travels   Esc back");
         TextOutA(dc, 16 * s, bottom, hint, (int)strlen(hint));
-        const char* hint2 = inv ? "Q/E or bumpers: next section   PgUp/PgDn/Home/End jump   Esc back"
-                                : "PgUp/PgDn/Home/End jump. Link arrives at the map's own entrance.";
+        const char* hint2 = inv ? (opts.language == 1 ? "Q/E o botones sup.: seccion   RePag/AvPag/Inicio/Fin: saltar   Esc: volver"
+                                                      : "Q/E or bumpers: next section   PgUp/PgDn/Home/End jump   Esc back")
+                                : (opts.language == 1 ? "RePag/AvPag/Inicio/Fin: saltar. Link aparece en la entrada del mapa."
+                                                      : "PgUp/PgDn/Home/End jump. Link arrives at the map's own entrance.");
         TextOutA(dc, 16 * s, bottom + 20 * s, hint2, (int)strlen(hint2));
         SelectObject(dc, old);
         DeleteObject(title);
@@ -1452,16 +1543,22 @@ void paint_menu(HDC dc, uint32_t w, uint32_t h, int s) {
         return;
     }
     if (page == 2) {
-        const char* labels[] = {"Heart protection", "No-clip flight", "Mark position",
-                                "Return to mark", "Set time", "Inventory item", "Change quantity", "Free camera",
-                                "Teleport", "Switch age", "Inventory"};
+        const char* labels_en[] = {"Heart protection", "No-clip flight", "Mark position",
+                                   "Return to mark", "Set time", "Inventory item", "Change quantity", "Free camera",
+                                   "Teleport", "Switch age", "Inventory"};
+        const char* labels_es[] = {"Proteccion de corazones", "Vuelo sin colisiones", "Marcar posicion",
+                                   "Volver a la marca", "Ajustar hora", "Objeto de alforja", "Modificar cantidad", "Camara libre",
+                                   "Teletransporte", "Cambiar edad de Link", "Inventario"};
+        const char* const* labels = opts.language == 1 ? labels_es : labels_en;
+        const char* pouch_items_es[] = {"Semillas Deku", "Nueces Deku", "Palos Deku", "Bombas", "Flechas"};
+        const char* pouch_str = opts.language == 1 ? pouch_items_es[pouch_item] : pouch_items[pouch_item];
         char clock_text[12], quantity[12];
         snprintf(clock_text, sizeof clock_text, "%02d:00", clock_hour);
         snprintf(quantity, sizeof quantity, "%+d", pouch_delta);
         const char* values[] = {tx_onoff(protect_hearts.load() == 1), tx_onoff(player_flight.load() >= 0),
-                                "", "", clock_text, pouch_items[pouch_item], quantity, tx_onoff(free_camera.load()),
+                                "", "", clock_text, pouch_str, quantity, tx_onoff(free_camera.load()),
                                 teleport_names[teleport_choice], "", ""};
-        const char* help[] = {"Protects Link's hearts. Hits can still knock him back.",
+        const char* help_en[] = {"Protects Link's hearts. Hits can still knock him back.",
             "Enable double-tap Jump for takeoff and landing. Hold Jump to climb or L to descend.",
             "Remember Link's position for this loaded scene.",
             "Teleport Link to the marked position in the current scene.",
@@ -1472,6 +1569,18 @@ void paint_menu(HDC dc, uint32_t w, uint32_t h, int s) {
             "Enter opens the map list (Left or Right also changes the map here). Link travels through the game's own map change, in his current age.",
             "Swaps Link between child and adult and reloads this map in the other age (the Market when this map has no match).",
             "Enter opens the inventory editor: unlock or relock equipment, items, upgrades and quest items, and change amounts."};
+        const char* help_es[] = {"Protege los corazones de Link. Los golpes aun pueden empujarlo.",
+            "Doble pulsacion de Salto para despegar y aterrizar. Mantener Salto para subir o L para descender.",
+            "Guarda la posicion actual de Link en la escena cargada.",
+            "Teletransporta a Link a la posicion guardada en la escena actual.",
+            "Elige una hora con Izq. o Der. Enter ajusta el reloj del mundo.",
+            "Elige un objeto consumible con Izquierda o Derecha.",
+            "Elige cuantos sumar o restar. Enter aplica el cambio.",
+            "Moverse y mirar con controles normales. RePag/AvPag o R/L cambian la altura.",
+            "Enter abre la lista de mapas (Izq./Der. tambien cambia mapa). Link viaja con la edad actual.",
+            "Alterna a Link entre nino y adulto y recarga este mapa en la otra edad.",
+            "Enter abre el editor de inventario: desbloquea equipamiento, objetos y cantidades."};
+        const char* const* help = opts.language == 1 ? help_es : help_en;
         for (int i = 0; i < kCheatRows; i++) {
             const int y = (menu_hit::kCheatTop + i * menu_hit::kCheatRowH) * s;
             if (i == cheat_selected) startup_gdi::round_rect(dc, 8 * s, y, (int)w - 16 * s, menu_hit::kCheatRowH * s, 6 * s, RGB(44, 72, 54));
@@ -1485,7 +1594,7 @@ void paint_menu(HDC dc, uint32_t w, uint32_t h, int s) {
         }
         SetTextColor(dc, RGB(176, 186, 180));
         wrap_help(dc, help[cheat_selected], (int)w - 32 * s, 16 * s, (54 + kCheatRows * 28) * s, true);
-        const char* hint = "Enter applies   Esc goes back";
+        const char* hint = opts.language == 1 ? "Enter aplica   Esc vuelve atras" : "Enter applies   Esc goes back";
         TextOutA(dc, 16 * s, (105 + kCheatRows * 28) * s, hint, (int)strlen(hint));
         SelectObject(dc, old);
         DeleteObject(title);
