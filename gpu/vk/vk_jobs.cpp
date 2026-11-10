@@ -41,7 +41,7 @@ void run_guarded(std::function<void()>& fn) {
 }
 
 void worker() {
-    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_NORMAL);
     SetThreadDescription(GetCurrentThread(), L"mkw_vk worker");
     ub_thread_off();
     for (;;) {
@@ -59,7 +59,8 @@ void worker() {
 }
 
 void start() {
-    const unsigned n = std::clamp(std::thread::hardware_concurrency() / 3, 2u, 4u);
+    const unsigned hw = std::thread::hardware_concurrency();
+    const unsigned n = std::clamp(hw > 4 ? hw / 2 : 2u, 2u, 8u);
     for (unsigned i = 0; i < n; i++) std::thread(worker).detach();
     started = true;
     logf("vk: %u background workers (shader translation, pipelines)", n);
@@ -73,7 +74,8 @@ void jobs_push(std::function<void()> fn, bool urgent, const std::atomic<bool>* f
     pending++;
     if (urgent) queue.push_front({std::move(fn), flag});
     else queue.push_back({std::move(fn), flag});
-    work_cv.notify_one();
+    if (urgent) work_cv.notify_all();
+    else work_cv.notify_one();
 }
 // (issue 496) Intel A750: four of the game's big compute pipelines built at once by Intel's compiler (up to 58 s each) froze
 // the whole PC. One thread builds them one at a time there, below normal priority, beside the shared workers
@@ -86,7 +88,7 @@ void jobs_push_serial(std::function<void()> fn) {
     if (!sstarted) {
         sstarted = true;
         std::thread([] {
-            SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+            SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_NORMAL);
             SetThreadDescription(GetCurrentThread(), L"mkw_vk serial builds");
             ub_thread_off();
             for (;;) {

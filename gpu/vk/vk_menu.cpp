@@ -86,7 +86,7 @@ const char* tx_onoff(int v) {
     return v ? "On" : "Off";
 }
 const char* tx_language(int v) {
-    return v == 1 ? "Español" : "English";
+    return v == 1 ? "Espanol" : "English";
 }
 // (hookshot) Motion controls: the choice, and whether a connected controller has a gyroscope (host/pad_sdl.c). Either can be
 // chosen whatever is connected: a pad plugged in later is read when it comes
@@ -301,7 +301,7 @@ const char* tx_speed(int v) {
 }
 const char* tx_text_speed(int v) {
     static const char* t_en[] = {"Normal", "2x", "4x", "Instant"};
-    static const char* t_es[] = {"Normal", "2x", "4x", "Instantáneo"};
+    static const char* t_es[] = {"Normal", "2x", "4x", "Instantaneo"};
     const char* const* t = opts.language == 1 ? t_es : t_en;
     if ((unsigned)v >= 4) return t[0];
     return t[v];
@@ -313,7 +313,7 @@ const char* tx_ultrawide(int v) {
 const char* tx_gpu(int v) {
     static char buf[300];
     const int idx = v - 1;
-    if (v <= 0) snprintf(buf, sizeof buf, opts.language == 1 ? "Automático" : "Auto");
+    if (v <= 0) snprintf(buf, sizeof buf, opts.language == 1 ? "Automatico" : "Auto");
     else if (idx < (int)gpu_device_names.size()) snprintf(buf, sizeof buf, "%d: %s", idx, gpu_device_names[idx].c_str());
     else snprintf(buf, sizeof buf, "%d: Device %d", idx, idx);
     // (the whole name shows: the selected row slides through it, see marquee_pos)
@@ -341,14 +341,14 @@ std::string mic_key(const char* name) {
 }
 const char* tx_mic(int v) {
     static char buf[160];
-    if (v <= 0) return "Off";
-    if (v == 1) return "Default";
+    if (v <= 0) return opts.language == 1 ? "Desactivado" : "Off";
+    if (v == 1) return opts.language == 1 ? "Por defecto" : "Default";
     if (mic_missing && v == 2 + mic_listed) {
-        snprintf(buf, sizeof buf, "%s (not connected)", mic_want.c_str());
+        snprintf(buf, sizeof buf, opts.language == 1 ? "%s (desconectado)" : "%s (not connected)", mic_want.c_str());
         return buf;
     }
     const char* n = can_mic() ? host->mic_name(v - 2) : "";
-    snprintf(buf, sizeof buf, "%s", n && *n ? n : "Microphone");
+    snprintf(buf, sizeof buf, "%s", n && *n ? n : (opts.language == 1 ? "Microfono" : "Microphone"));
     return buf;
 }
 /// The Microphone row: Off, the default, a microphone of the list, or the chosen one while it is unplugged (variant 1)
@@ -368,13 +368,13 @@ const char* tx_rumble(int v) {
 }
 const char* tx_robust(int v) {
     static const char* t_en[] = {"Auto", "Off", "On"};
-    static const char* t_es[] = {"Automático", "Desactivado", "Activado"};
+    static const char* t_es[] = {"Automatico", "Desactivado", "Activado"};
     const char* const* t = opts.language == 1 ? t_es : t_en;
     return (unsigned)v < 3 ? t[v] : t[0];
 }
 const char* tx_preset(int v) {
     static const char* t_en[] = {"Custom", "Minimum (4GB)", "Low (6GB)", "Balanced (8GB)", "High (12GB)", "Ultra (16GB+)"};
-    static const char* t_es[] = {"Personalizado", "Mínimo (4GB)", "Bajo (6GB)", "Equilibrado (8GB)", "Alto (12GB)", "Ultra (16GB+)"};
+    static const char* t_es[] = {"Personalizado", "Minimo (4GB)", "Bajo (6GB)", "Equilibrado (8GB)", "Alto (12GB)", "Ultra (16GB+)"};
     const char* const* t = opts.language == 1 ? t_es : t_en;
     return t[std::min(std::max(v, 0), 5)];
 }
@@ -482,98 +482,139 @@ const char* tr_name(const char* en) {
     if (opts.language != 1 || !en) return en;
     if (!strcmp(en, "Quality preset")) return "Perfil de calidad";
     if (!strcmp(en, "Fullscreen")) return "Pantalla completa";
-    if (!strcmp(en, "GPU device")) return "Tarjeta gráfica (GPU)";
-    if (!strcmp(en, "Frame generation")) return "Generación de fotogramas";
-    if (!strcmp(en, "Frame pacing")) return "Sincronización de frames";
+    if (!strcmp(en, "GPU device")) return "Tarjeta grafica (GPU)";
+    if (!strcmp(en, "Frame generation")) return "Generacion de fotogramas";
+    if (!strcmp(en, "Frame pacing")) return "Sincronizacion de frames";
     if (!strcmp(en, "NVIDIA Reflex")) return "NVIDIA Reflex";
-    if (!strcmp(en, "Output resolution")) return "Resolución de salida";
+    if (!strcmp(en, "Output resolution")) return "Resolucion de salida";
     if (!strcmp(en, "Upscaler")) return "Escalador (Upscaler)";
     if (!strcmp(en, "DLSS model")) return "Modelo DLSS";
-    if (!strcmp(en, "Render resolution")) return "Resolución de renderizado";
+    if (!strcmp(en, "Render resolution")) return "Resolucion de renderizado";
     if (!strcmp(en, "Window scaling filter")) return "Filtro de reescalado";
     if (!strcmp(en, "Sharpness")) return "Nitidez";
-    if (!strcmp(en, "Handheld profile")) return "Perfil portátil (Handheld)";
+    if (!strcmp(en, "Handheld profile")) return "Perfil portatil (Handheld)";
     if (!strcmp(en, "Ultrawide")) return "Pantalla ultra-ancha";
     if (!strcmp(en, "Robust buffers")) return "Buffers robustos";
     if (!strcmp(en, "FPS counter")) return "Contador de FPS";
-    if (!strcmp(en, "Net graph")) return "Gráfico de rendimiento (Net graph)";
-    if (!strcmp(en, "Menu language")) return "Idioma del menú";
+    if (!strcmp(en, "Net graph")) return "Grafico de rendimiento";
+    if (!strcmp(en, "Menu language")) return "Idioma del menu";
     if (!strcmp(en, "Game speed")) return "Velocidad de juego";
     if (!strcmp(en, "Text speed")) return "Velocidad del texto";
-    if (!strcmp(en, "Microphone")) return "Micrófono";
+    if (!strcmp(en, "Microphone")) return "Microfono";
     if (!strcmp(en, "Discord Rich Presence")) return "Discord Rich Presence";
     if (!strcmp(en, "Controller in background")) return "Mando en segundo plano";
-    if (!strcmp(en, "Mouse camera")) return "Cámara con ratón";
-    if (!strcmp(en, "Mouse sensitivity")) return "Sensibilidad del ratón";
-    if (!strcmp(en, "Invert mouse vertical")) return "Invertir eje Y del ratón";
-    if (!strcmp(en, "Invert camera X")) return "Invertir cámara horizontal";
-    if (!strcmp(en, "Invert camera Y")) return "Invertir cámara vertical";
-    if (!strcmp(en, "Rumble strength")) return "Vibración del mando";
+    if (!strcmp(en, "Mouse camera")) return "Camara con raton";
+    if (!strcmp(en, "Mouse sensitivity")) return "Sensibilidad del raton";
+    if (!strcmp(en, "Invert mouse vertical")) return "Invertir eje Y del raton";
+    if (!strcmp(en, "Invert camera X")) return "Invertir camara horizontal";
+    if (!strcmp(en, "Invert camera Y")) return "Invertir camara vertical";
+    if (!strcmp(en, "Rumble strength")) return "Vibracion del mando";
     if (!strcmp(en, "Motion controls")) return "Control por movimiento";
-    if (!strcmp(en, "Motion sensitivity X")) return "Sensibilidad de movimiento X";
-    if (!strcmp(en, "Motion sensitivity Y")) return "Sensibilidad de movimiento Y";
+    if (!strcmp(en, "Motion sensitivity X")) return "Sensibilidad movimiento X";
+    if (!strcmp(en, "Motion sensitivity Y")) return "Sensibilidad movimiento Y";
     if (!strcmp(en, "Invert motion X")) return "Invertir movimiento X";
     if (!strcmp(en, "Invert motion Y")) return "Invertir movimiento Y";
-    if (!strcmp(en, "Layout preset")) return "Distribución de botones";
+    if (!strcmp(en, "Layout preset")) return "Distribucion de botones";
+    if (!strcmp(en, "Controls")) return "Controles";
+    if (!strcmp(en, "Cheats")) return "Trucos";
     return en;
 }
 
 const char* tr_help(const char* en) {
     if (opts.language != 1 || !en) return en;
     if (strstr(en, "Sets the scaling rows, frame generation"))
-        return "Configura resolución, generación de frames y memoria según tu tarjeta gráfica.";
+        return "Configura resolucion, generacion de frames y limites de memoria segun tu tarjeta grafica.";
     if (strstr(en, "Fills the whole screen with the game"))
-        return "Llena toda la pantalla con el juego, sin bordes de ventana. Igual que F11.";
+        return "Llena toda la pantalla con el juego, sin bordes de ventana. Igual que presionar F11.";
     if (strstr(en, "Which graphics card the game runs on"))
-        return "Tarjeta gráfica utilizada para renderizar el juego. Se aplica tras reiniciar.";
+        return "Tarjeta grafica utilizada para renderizar el juego. Se aplica tras reiniciar.";
     if (strstr(en, "Makes frames between the game's own"))
-        return "Genera fotogramas intermedios para mayor fluidez de movimiento.";
+        return "Genera fotogramas intermedios para mayor fluidez visual con minima latencia.";
     if (strstr(en, "When each frame is shown"))
-        return "Sincroniza y estabiliza la entrega de fotogramas para evitar tirones.";
+        return "Sincroniza y estabiliza la entrega de fotogramas para eliminar tirones.";
+    if (strstr(en, "NVIDIA GPUs: each frame starts"))
+        return "Reduce la latencia de entrada sincronizando el juego con la GPU NVIDIA.";
     if (strstr(en, "The game's whole frame, HUD included"))
-        return "Resolución base de salida del juego antes de escalar a la ventana.";
+        return "Resolucion base de salida del juego antes de escalar a la ventana. Requiere reiniciar.";
     if (strstr(en, "What scales the 3D up to the Output resolution"))
-        return "Método de escalado 3D (red interna o NVIDIA DLSS).";
+        return "Metodo de escalado 3D (red interna del juego o NVIDIA DLSS/DLAA).";
+    if (strstr(en, "Which of NVIDIA's DLSS networks"))
+        return "Version del modelo de red neuronal de NVIDIA DLSS.";
     if (strstr(en, "The share of the output the 3D is drawn at"))
-        return "Porcentaje de resolución nativa al que se renderiza el mundo 3D.";
+        return "Porcentaje de resolucion interna al que se renderiza el mundo 3D.";
     if (strstr(en, "How the finished picture is scaled to the window"))
-        return "Filtro con el que se escala la imagen final a la ventana.";
+        return "Filtro de reescalado utilizado para adaptar la imagen a la ventana.";
     if (strstr(en, "Sharpens the picture as it goes to the window"))
-        return "Ajusta la nitidez del renderizado final.";
+        return "Ajusta la nitidez del renderizado final para resaltar texturas y bordes.";
     if (strstr(en, "Runs the game as if the console were undocked"))
-        return "Ejecuta el juego con el perfil portátil. Se aplica tras reiniciar.";
+        return "Ejecuta el juego con el perfil portatil. Se aplica tras reiniciar.";
     if (strstr(en, "The camera's shape on a screen wider than 16:9"))
-        return "Adapta la cámara y el campo visual a pantallas ultra-panorámicas.";
+        return "Adapta la camara y el campo de vision a monitores ultra-panoramicos.";
     if (strstr(en, "Bounds-checked buffer reads"))
-        return "Protección contra lecturas fuera de rango en buffers GPU. Se aplica tras reiniciar.";
+        return "Proteccion contra lecturas fuera de rango en buffers GPU. Requiere reiniciar.";
     if (strstr(en, "Frames per second in the top right corner"))
-        return "Muestra los fotogramas por segundo en la esquina superior derecha.";
+        return "Muestra el contador de fotogramas por segundo (FPS) en la esquina superior derecha.";
     if (strstr(en, "Shows real-time frame pacing"))
-        return "Gráfico flotante de tiempos de frame, estado de fluidez y compilación de shaders.";
+        return "Grafico flotante con tiempos de frame, estabilidad y compilacion de shaders en tiempo real.";
     if (strstr(en, "Language of the in-game menu"))
-        return "Cambia el idioma de este menú de opciones (F1 / Insert).";
+        return "Cambia el idioma de este menu de configuracion (F1 / Insert).";
     if (strstr(en, "How fast the letters of dialogue") || strstr(en, "How fast dialogue prints"))
-        return "Velocidad de aparición de las letras en diálogos y mensajes.";
+        return "Velocidad a la que aparecen las letras en dialogos y mensajes de texto.";
     if (strstr(en, "How the game keeps time"))
-        return "Cómo gestiona el tiempo el juego cuando baja de 60 fotogramas.";
+        return "Como gestiona el tiempo el juego si la tasa de cuadros cae por debajo de 60 FPS.";
+    if (strstr(en, "What the ocarina hears"))
+        return "Dispositivo de audio capturado al usar la mecanica de microfono en la ocarina.";
     if (strstr(en, "Shows on your Discord profile"))
-        return "Muestra en tu perfil de Discord que estás jugando a Ocarina of Time Remake.";
+        return "Muestra en tu perfil de Discord que estas jugando a Ocarina of Time Remake.";
     if (strstr(en, "Whether the controller plays the game while another window"))
         return "Permite que el mando siga respondiendo cuando otra ventana tiene el foco.";
     if (strstr(en, "How strongly the controller rumbles"))
-        return "Intensidad de vibración del mando.";
+        return "Intensidad de la vibracion del mando en porcentaje. 0 desactiva la vibracion.";
     if (strstr(en, "Aiming and looking with the controller's gyroscope"))
-        return "Apunta usando el giroscopio del mando donde el juego lo soporte.";
+        return "Permite apuntar con el giroscopio del mando donde el juego lo soporte.";
+    if (strstr(en, "How far the aim moves left and right"))
+        return "Sensibilidad horizontal del apuntado por giroscopio del mando.";
+    if (strstr(en, "How far the aim moves up and down"))
+        return "Sensibilidad vertical del apuntado por giroscopio del mando.";
+    if (strstr(en, "Turns the motion aim's left and right"))
+        return "Invierte el eje horizontal del control por movimiento.";
+    if (strstr(en, "Turns the motion aim's up and down"))
+        return "Invierte el eje vertical del control por movimiento.";
     if (strstr(en, "Which face button is which"))
-        return "Disposición de los botones frontales (Nintendo, Xbox, PlayStation).";
+        return "Disposicion de los botones frontales (Switch, Xbox, PlayStation o Personalizado).";
+    if (strstr(en, "Which gamepad button and which keys"))
+        return "Abre el menu para asignar teclas y botones del mando.";
+    if (strstr(en, "Open the private gameplay tools"))
+        return "Abre el menu de herramientas y trucos del juego.";
     if (strstr(en, "How the captured mouse turns the camera"))
-        return "Cómo gira la cámara al mover el ratón capturado.";
+        return "Modo de camara con raton: directo 1 a 1 como en PC, o emulando el joystick.";
+    if (strstr(en, "How far the camera turns for a mouse movement"))
+        return "Sensibilidad de rotacion de camara al mover el raton.";
     if (strstr(en, "Swaps up and down for the mouse"))
-        return "Invierte el eje vertical (arriba/abajo) del ratón.";
+        return "Invierte el eje vertical (arriba/abajo) al mirar con el raton.";
     if (strstr(en, "Inverts horizontal look"))
-        return "Invierte la cámara horizontal (izquierda/derecha) en el joystick.";
+        return "Invierte la camara horizontal (izquierda/derecha) en el joystick derecho.";
     if (strstr(en, "Inverts vertical look"))
-        return "Invierte la cámara vertical (arriba/abajo) en el joystick.";
+        return "Invierte la camara vertical (arriba/abajo) en el joystick derecho.";
+    // Hint sub-lines
+    if (strstr(en, "The mouse stands in for the right stick"))
+        return "El raton emula la palanca derecha con su zona muerta y velocidad maxima.";
+    if (strstr(en, "The mouse turns the camera itself"))
+        return "El raton gira la camara directamente 1 a 1 con precision nativa de PC.";
+    if (strstr(en, "Moving the mouse forward tilts the camera down"))
+        return "Mover el raton hacia adelante inclina la camara hacia abajo.";
+    if (strstr(en, "The sticks alone aim"))
+        return "El apuntado se realiza exclusivamente con las palancas analogicas.";
+    if (strstr(en, "The game as without it"))
+        return "El juego procesa los fotogramas de forma estandar.";
+    if (strstr(en, "The driver paces the frames for less latency"))
+        return "El controlador sincroniza los fotogramas para reducir la latencia de entrada.";
+    if (strstr(en, "As On, and the GPU's clocks are kept up as well"))
+        return "Reduce la latencia y mantiene elevadas las frecuencias de la GPU.";
+    if (strstr(en, "The game's own network"))
+        return "Escalador neuronal propio del juego.";
+    if (strstr(en, "Not available here: it needs an NVIDIA GPU"))
+        return "No disponible: requiere una tarjeta NVIDIA compatible con VK_NV_low_latency2.";
     return en;
 }
 
@@ -804,8 +845,10 @@ std::string restart_line(HDC dc, int width) {
         int named = 0, more = 0;
         for (int i = 0; i < restart_state.n; i++)
             if ((all >> i) & 1) (named < keep ? (shown |= 1u << i, named++) : more++);
-        line = "Restart needed: " + mr::names(restart_names, restart_state.n, shown);
-        if (more) line += (named ? " and " : "") + std::to_string(more) + (named ? " more" : more > 1 ? " settings" : " setting");
+        line = (opts.language == 1 ? "Reinicio necesario: " : "Restart needed: ") + mr::names(restart_names, restart_state.n, shown);
+        if (more) line += (named ? (opts.language == 1 ? " y " : " and ") : "") + std::to_string(more) +
+                          (opts.language == 1 ? (named ? " mas" : more > 1 ? " ajustes" : " ajuste")
+                                              : (named ? " more" : more > 1 ? " settings" : " setting"));
         SIZE sz{};
         GetTextExtentPoint32A(dc, line.c_str(), (int)line.size(), &sz);
         if (sz.cx <= width) break;
@@ -1465,7 +1508,7 @@ void paint_menu(HDC dc, uint32_t w, uint32_t h, int s) {
     HFONT tab_font = font(13 * s, FW_BOLD);
     SelectObject(dc, tab_font);
     const char* const tab_titles_en[TAB_COUNT] = {"GRAPHICS", "GAMEPLAY", "CONTROLS"};
-    const char* const tab_titles_es[TAB_COUNT] = {"GRÁFICOS", "JUGABILIDAD", "CONTROLES"};
+    const char* const tab_titles_es[TAB_COUNT] = {"GRAFICOS", "JUGABILIDAD", "CONTROLES"};
     const char* const* tab_titles = opts.language == 1 ? tab_titles_es : tab_titles_en;
     const int center_start = menu_hit::kTabSide * s;
     const int tab_slot_w = menu_hit::tab_slot_w(s, (int)w);
@@ -1576,7 +1619,8 @@ void paint_menu(HDC dc, uint32_t w, uint32_t h, int s) {
     }
     SelectObject(dc, body);
     SetTextColor(dc, RGB(140, 150, 144));
-    const char* hint = "Arrows change   Q/E or LB/RB: tabs   Insert, F1 or Home closes";   // (fits 448 px at 16 px)
+    const char* hint = opts.language == 1 ? "Flechas: cambiar   Q/E o LB/RB: pestanas   F1, Insert o Inicio: cerrar"
+                                         : "Arrows change   Q/E or LB/RB: tabs   Insert, F1 or Home closes";
     TextOutA(dc, 16 * s, help_top + 4 * s + help_px + 10 * s, hint, (int)strlen(hint));
     if (cur_tab == TAB_GRAPHICS && restart_pending()) {   // (the rows that take a restart, changed: measure_pending's room)
         SelectObject(dc, help);
