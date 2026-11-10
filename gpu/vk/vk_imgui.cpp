@@ -47,7 +47,7 @@ PFN_vkVoidFunction load(const char* name, void*) {
 // ---- the game's own menu font, from the player's game files, in memory (vk_game_font.h) ----
 /// The game's romfs folder: the one the game runs from (--romfs, or romfs beside the executable: host/hos_main.c)
 std::string romfs_dir() {
-    if (host && host->romfs_dir)
+    if (host && host->version >= 12 && host->romfs_dir)
         if (const char* d = host->romfs_dir(); d && *d) return d;
     return "";
 }

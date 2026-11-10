@@ -1345,7 +1345,7 @@ const char* pad_name(int p) {
          "D-pad left", "D-pad right", "L2", "R2"},
         {"A", "B", "X", "Y", "View", "Steam", "Menu", "L3", "R3", "L1", "R1", "D-pad up", "D-pad down", "D-pad left",
          "D-pad right", "L2", "R2"}};
-    const int face = opts.prompts ? opts.prompts - 1 : host && host->prompt_face ? host->prompt_face() : -1;
+    const int face = opts.prompts ? opts.prompts - 1 : host && host->version >= 11 && host->prompt_face ? host->prompt_face() : -1;
     return p >= 0 && p < HOS_PAD_N ? t[face >= 0 && face < HOS_PROMPT_N ? face + 1 : 0][p] : "None";
 }
 const char* key_name(int vk) {

@@ -519,7 +519,7 @@ struct WideSides { float x0 = 0.0f; int side = 0; };
 std::atomic<bool> wide_possible{false};   // (a margin and the setting on: vk_replay.cpp takes the scale pass's path for the sides)
 WideSides wide_sides() {
     WideSides w;
-    if (!host || !host->wide_menus) return w;
+    if (!host || host->version < 13 || !host->wide_menus) return w;
     // (KEEP_VTABLES 1 and 3: the pause and map menus. 0, the item wheel's background, and 2, the fades, keep covering the whole picture)
     constexpr uint32_t kMenus = 0xa;
     const float margin = host->wide_menus(opts.wide_menus ? 0xfu & ~kMenus : 0xfu);
