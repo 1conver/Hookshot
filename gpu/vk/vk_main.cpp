@@ -432,8 +432,10 @@ bool create_device() {
     if (dev.mesh_fallback) logf("vk: no mesh shaders: task and mesh programs run as compute shaders (issue 640 fallback)");
     bool task_mesh_fallback = false;
 #ifdef _WIN32
-    // Navi 22 can time out on task + mesh draws in the AMD Windows driver (issue 996).
-    task_mesh_fallback = dev.props.vendorID == 0x1002 && dev.props.deviceID == 0x73df;
+    // RDNA 2 cards (Navi 21-24) time out on task + mesh draws in the AMD Windows driver (issues 996, 1752, 1891).
+    task_mesh_fallback = dev.props.vendorID == 0x1002 &&
+                         ((dev.props.deviceID >= 0x73A0 && dev.props.deviceID <= 0x743F) ||
+                          (dev.props.deviceName && strstr(dev.props.deviceName, "RX 6") != nullptr));
 #endif
     if (const char* e = getenv("RX_VK_TASK_MESH_FALLBACK")) task_mesh_fallback = atoi(e) != 0;
     dev.task_mesh_fallback = task_mesh_fallback && dev.mesh_shader && f12.bufferDeviceAddress && !getenv("RX_VK_NO_MESH_FALLBACK");
