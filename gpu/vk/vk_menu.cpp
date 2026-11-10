@@ -678,7 +678,7 @@ MENU_HINTS(hn_gyro, 0, "The sticks alone aim.",
            "connected pad has a gyroscope.")
 MENU_HINTS(hn_pad_layout, 0, "The Switch's order: A on the right, B at the bottom, X at the top, Y on the left.",
            "Xbox / PC: A at the bottom, B on the right, X on the left, Y at the top.",
-           "PlayStation: X at the bottom, Circle on the right, Square on the left, Triangle at the top.",
+           "PlayStation: Cruz abajo (A), Circulo a la derecha (B), Cuadrado a la izquierda (X), Triangulo arriba (Y).",
            "Bindings of your own, from the Controls page.")
 MENU_HINTS(hn_prompts, 0,
            "Those of the first controller, from its name (SDL's). The Switch's when it has none, as with XInput alone.")
@@ -1162,11 +1162,11 @@ void apply_pad_layout(int layout) {
         host->bind(HOS_BIND_PAD, HOS_SW_B, 0, HOS_PAD_EAST);
         host->bind(HOS_BIND_PAD, HOS_SW_X, 0, HOS_PAD_WEST);
         host->bind(HOS_BIND_PAD, HOS_SW_Y, 0, HOS_PAD_NORTH);
-    } else if (layout == 2) { // PlayStation (Bottom=X/Cross->A, Right=O/Circle->B, Top=Triangle->X, Left=Square->Y)
+    } else if (layout == 2) { // PlayStation (Cruz->A, Circulo->B, Cuadrado->X, Triangulo->Y)
         host->bind(HOS_BIND_PAD, HOS_SW_A, 0, HOS_PAD_SOUTH);
         host->bind(HOS_BIND_PAD, HOS_SW_B, 0, HOS_PAD_EAST);
-        host->bind(HOS_BIND_PAD, HOS_SW_X, 0, HOS_PAD_NORTH);
-        host->bind(HOS_BIND_PAD, HOS_SW_Y, 0, HOS_PAD_WEST);
+        host->bind(HOS_BIND_PAD, HOS_SW_X, 0, HOS_PAD_WEST);
+        host->bind(HOS_BIND_PAD, HOS_SW_Y, 0, HOS_PAD_NORTH);
     }
 }
 int detect_pad_layout() {
@@ -1176,8 +1176,9 @@ int detect_pad_layout() {
     const int x = host->binding(HOS_BIND_PAD, HOS_SW_X, 0);
     const int y = host->binding(HOS_BIND_PAD, HOS_SW_Y, 0);
     if (a == HOS_PAD_EAST && b == HOS_PAD_SOUTH && x == HOS_PAD_NORTH && y == HOS_PAD_WEST) return 0;
-    if (a == HOS_PAD_SOUTH && b == HOS_PAD_EAST && x == HOS_PAD_WEST && y == HOS_PAD_NORTH) return 1;
-    if (a == HOS_PAD_SOUTH && b == HOS_PAD_EAST && x == HOS_PAD_NORTH && y == HOS_PAD_WEST) return 2;
+    if (a == HOS_PAD_SOUTH && b == HOS_PAD_EAST && x == HOS_PAD_WEST && y == HOS_PAD_NORTH) {
+        return (opts.pad_layout == 1) ? 1 : 2;
+    }
     return 3;
 }
 // (hookshot) the row's choice to the host: off, the default, or a microphone by its name (and its place in the host's list,
@@ -1616,7 +1617,7 @@ const char* tr_help(const char* name, const char* default_help) {
     if (!strcmp(name, "Reload scene shaders") || strstr(name, "Recargar shaders"))
         return "Fuerza la recompilacion en caliente de todos los shaders y tuberias graficas de la escena actual sin reiniciar el juego. Tambien puedes presionar F10 en cualquier momento.";
     if (!strcmp(name, "Layout preset") || strstr(name, "Distribucion de mando"))
-        return "Configura la distribucion de los botones de accion. El modo PlayStation ajusta X abajo, O a la derecha, Cuadrado a la izquierda e Y/Triangulo arriba.";
+        return "Configura la distribucion de los botones de accion. El modo PlayStation asigna Cruz abajo (A), Circulo a la derecha (B), Cuadrado a la izquierda (X) y Triangulo arriba (Y).";
     if (!strcmp(name, "Button prompts") || strstr(name, "Iconos de botones"))
         return "Iconos mostrados en los textos y tutoriales dentro del juego.";
     if (!strcmp(name, "Quality preset") || strstr(name, "Ajuste de calidad"))
