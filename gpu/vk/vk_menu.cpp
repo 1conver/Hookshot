@@ -91,7 +91,7 @@ const char* tx_language(int v) {
 // (hookshot) Motion controls: the choice, and whether a connected controller has a gyroscope (host/pad_sdl.c). Either can be
 // chosen whatever is connected: a pad plugged in later is read when it comes
 const char* tx_gyro(int v) {
-    const int status = host && host->gyro_status ? host->gyro_status() : -1;
+    const int status = host && host->version >= 9 && host->gyro_status ? host->gyro_status() : -1;
     if (opts.language == 1) {
         if (status == 2) return v ? "Activado (giroscopio listo)" : "Desactivado (giroscopio listo)";
         if (status == 1) return v ? "Activado (mando sin giroscopio)" : "Desactivado (mando sin giroscopio)";
@@ -331,7 +331,7 @@ constexpr size_t kMicNameKept = 60;
 std::string mic_want;      // (the chosen microphone's name, cut to kMicNameKept; empty: Off or the default chosen)
 bool mic_missing = false;  // (mic_want is not plugged in: the row's last entry, 2 + mic_listed, stands for it)
 int mic_listed = 0;        // (the microphones as the host last listed them)
-bool can_mic() { return host && host->mic_count && host->mic_name && host->mic_select; }
+bool can_mic() { return host && host->version >= 8 && host->mic_count && host->mic_name && host->mic_select; }
 std::string mic_key(const char* name) {
     std::string k(name ? name : "");
     if (k.size() <= kMicNameKept) return k;
@@ -886,7 +886,7 @@ const char* ini_key(const Row& r) {
 const char* const bind_names[HOS_KEY_N] = {"a", "b", "x", "y", "ls", "rs", "l", "r", "zl", "zr", "plus", "minus",
                                            "left", "up", "right", "down", "move_up", "move_down", "move_left",
                                            "move_right", "cam_up", "cam_down", "cam_left", "cam_right"};
-bool can_bind() { return host && host->binding && host->bind && host->pad_raw; }
+bool can_bind() { return host && host->version >= 5 && host->binding && host->bind && host->pad_raw; }
 const char* tx_pad_layout(int v) {
     static const char* t[] = {"Nintendo (Def)", "Xbox / PC", "Swap Face", "Custom"};
     return t[std::min(std::max(v, 0), 3)];
@@ -2087,14 +2087,14 @@ void menu_tick() {
     bool press[K_N] = {};
     for (int i = 0; i < K_N; i++) {
         const bool down = mine && (GetAsyncKeyState(keys[i]) & 0x8000) != 0;
-        const bool queued = host && host->take_key_press && host->take_key_press(keys[i]);
-        press[i] = host && host->take_key_press ? mine && queued : down && !held[i];
+        const bool queued = host && host->version >= 6 && host->take_key_press && host->take_key_press(keys[i]);
+        press[i] = host && host->version >= 6 && host->take_key_press ? mine && queued : down && !held[i];
         held[i] = down;
     }
     // (hookshot) the gamepads, by position: Home, or Select and Start together, as Insert; the D-pad as the arrows,
     // the bottom face button as Enter, the right one as Esc (not while a binding waits for its button)
     static uint32_t pad_held = 0;
-    const uint32_t raw = mine && host && host->pad_raw ? host->pad_raw() : 0, pad_press = raw & ~pad_held;
+    const uint32_t raw = mine && host && host->version >= 5 && host->pad_raw ? host->pad_raw() : 0, pad_press = raw & ~pad_held;
     const uint32_t chord = 1u << HOS_PAD_BACK | 1u << HOS_PAD_START;
     const bool chord_now = (raw & chord) == chord && (pad_held & chord) != chord;
     pad_held = raw;
@@ -2142,7 +2142,7 @@ void menu_tick() {
     MkwVkPointer ptr{};
     int mx = -1, my = -1, mw = 0, mh = 0;
     bool mouse = false, moved = false;
-    if (open_now.load() && host && host->pointer) {
+    if (open_now.load() && host && host->version >= 7 && host->pointer) {
         mouse = host->pointer(&ptr) != 0;
         {
             std::lock_guard lk(bmp_mu);
