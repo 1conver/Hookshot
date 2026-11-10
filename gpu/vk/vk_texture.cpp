@@ -2522,7 +2522,8 @@ VkImageView texture_view(Texture* tex, const nvn_tex* t, const nvn_view* v, VkIm
         f = f == VK_FORMAT_R8G8B8A8_SRGB ? VK_FORMAT_BC3_SRGB_BLOCK : VK_FORMAT_BC3_UNORM_BLOCK;
     }
     if (use == ViewUse::Storage) f = force_format != VK_FORMAT_UNDEFINED ? force_format : storage_view_format(f);
-    if (use == ViewUse::Attachment && (is_astc(f) || is_bc(f))) return VK_NULL_HANDLE;
+    if (use == ViewUse::Attachment && is_bc(f)) f = storage_view_format(f);
+    if (use == ViewUse::Attachment && is_astc(f)) return VK_NULL_HANDLE;
     const uint32_t vl = view_level(v);
     uint32_t level0 = image_level(tex, vl);
     uint32_t nlevels = v && v->set_levels && v->nlevels ? (vl + v->nlevels > tex->skip ? vl + v->nlevels - tex->skip - level0 : 1)
@@ -3509,24 +3510,27 @@ void texture_frame(uint64_t completed) {
             target_pool.clear();
             pool_bytes = pool_n = 0;
         }
-        std::vector<Texture*> to_evict;
-        to_evict.reserve(textures.size());
+        size_t count = 0;
         for (auto& kv : textures) {
             Texture* tex = kv.second.get();
-            tex->pool_key = 0;
-            to_evict.push_back(tex);
-        }
-        for (Texture* tex : to_evict) {
-            if (!tex->gpu_written && tex->uploaded && !remade_skip_old()) {
-                std::lock_guard lk(from_memory_mu);
-                if (evicted_from_memory.size() > 50000) evicted_from_memory.clear();
-                evicted_from_memory[evicted_key(tex->gpu, tex->width, tex->height, tex->nvn_format)] = tex->guest_size;
+            if (!tex) continue;
+            for (auto it = tex->views.begin(); it != tex->views.end(); ) {
+                if (it->second == VK_NULL_HANDLE) {
+                    it = tex->views.erase(it);
+                } else {
+                    ++it;
+                }
             }
-            destroy_later(*tex);
-            forget_gpu(tex);
+            tex->view_failed_frame = 0;
+            if (!tex->gpu_written) {
+                tex->uploaded = false;
+                tex->checked_epoch = 0;
+                tex->upload_gen = 0;
+                count++;
+            }
         }
-        textures.clear();
-        logf("vk: %zu textures evicted for manual reload", to_evict.size());
+        destroy_gen++;
+        logf("vk: %zu textures marked for re-upload, failed views reset, target pool cleared (F9)", count);
     }
     // A budget: RX_VK_VRAM_MB of textures (default 4096), and less when the driver says the process is near what it
     // may have (other programs use the GPU too). The least recently used go first, down to 7/8 of it; nothing the
