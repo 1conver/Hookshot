@@ -678,7 +678,7 @@ MENU_HINTS(hn_gyro, 0, "The sticks alone aim.",
            "connected pad has a gyroscope.")
 MENU_HINTS(hn_pad_layout, 0, "The Switch's order: A on the right, B at the bottom, X at the top, Y on the left.",
            "Xbox / PC: A at the bottom, B on the right, X on the left, Y at the top.",
-           "PlayStation: Cruz abajo (A), Circulo a la derecha (B), Cuadrado a la izquierda (X), Triangulo arriba (Y).",
+           "PlayStation: Cruz abajo (A), Circulo a la derecha (B), Triangulo arriba (X), Cuadrado a la izquierda (Y).",
            "Bindings of your own, from the Controls page.")
 MENU_HINTS(hn_prompts, 0,
            "Those of the first controller, from its name (SDL's). The Switch's when it has none, as with XInput alone.")
@@ -857,8 +857,6 @@ Row rows[] = {
     {TAB_DEBUG, "Sampler cache", &opts.sampler_cache, 0, 1, 1, tx_onoff,
      "What a sampler holds is kept beside it on the replay thread, so resolving a sampler that was not registered anew takes no "
      "lock. Helps while the game streams textures. Applies after restart.", nullptr, true},
-    {TAB_DEBUG, "Reload scene shaders", nullptr, 0, 0, 0, nullptr,
-     "Recarga y recompila en caliente todos los shaders de la escena actual (o presiona F10 en cualquier momento).", nullptr, false, true},
     // (Restart and Quit stay the table's last two: kRestartRow and kQuitRow count back from its end)
     {TAB_GAMEPLAY, "Restart", nullptr, 0, 0, 0, nullptr,
      "Starts the game again. Save your progress first. Press Enter or A twice to restart. Esc or B "
@@ -1162,11 +1160,11 @@ void apply_pad_layout(int layout) {
         host->bind(HOS_BIND_PAD, HOS_SW_B, 0, HOS_PAD_EAST);
         host->bind(HOS_BIND_PAD, HOS_SW_X, 0, HOS_PAD_WEST);
         host->bind(HOS_BIND_PAD, HOS_SW_Y, 0, HOS_PAD_NORTH);
-    } else if (layout == 2) { // PlayStation (Cruz->A, Circulo->B, Cuadrado->X, Triangulo->Y)
+    } else if (layout == 2) { // PlayStation (Cruz->A, Circulo->B, Triangulo->X, Cuadrado->Y)
         host->bind(HOS_BIND_PAD, HOS_SW_A, 0, HOS_PAD_SOUTH);
         host->bind(HOS_BIND_PAD, HOS_SW_B, 0, HOS_PAD_EAST);
-        host->bind(HOS_BIND_PAD, HOS_SW_X, 0, HOS_PAD_WEST);
-        host->bind(HOS_BIND_PAD, HOS_SW_Y, 0, HOS_PAD_NORTH);
+        host->bind(HOS_BIND_PAD, HOS_SW_X, 0, HOS_PAD_NORTH);
+        host->bind(HOS_BIND_PAD, HOS_SW_Y, 0, HOS_PAD_WEST);
     }
 }
 int detect_pad_layout() {
@@ -1176,9 +1174,8 @@ int detect_pad_layout() {
     const int x = host->binding(HOS_BIND_PAD, HOS_SW_X, 0);
     const int y = host->binding(HOS_BIND_PAD, HOS_SW_Y, 0);
     if (a == HOS_PAD_EAST && b == HOS_PAD_SOUTH && x == HOS_PAD_NORTH && y == HOS_PAD_WEST) return 0;
-    if (a == HOS_PAD_SOUTH && b == HOS_PAD_EAST && x == HOS_PAD_WEST && y == HOS_PAD_NORTH) {
-        return (opts.pad_layout == 1) ? 1 : 2;
-    }
+    if (a == HOS_PAD_SOUTH && b == HOS_PAD_EAST && x == HOS_PAD_WEST && y == HOS_PAD_NORTH) return 1;
+    if (a == HOS_PAD_SOUTH && b == HOS_PAD_EAST && x == HOS_PAD_NORTH && y == HOS_PAD_WEST) return 2;
     return 3;
 }
 // (hookshot) the row's choice to the host: off, the default, or a microphone by its name (and its place in the host's list,
@@ -1617,7 +1614,7 @@ const char* tr_help(const char* name, const char* default_help) {
     if (!strcmp(name, "Reload scene shaders") || strstr(name, "Recargar shaders"))
         return "Fuerza la recompilacion en caliente de todos los shaders y tuberias graficas de la escena actual sin reiniciar el juego. Tambien puedes presionar F10 en cualquier momento.";
     if (!strcmp(name, "Layout preset") || strstr(name, "Distribucion de mando"))
-        return "Configura la distribucion de los botones de accion. El modo PlayStation asigna Cruz abajo (A), Circulo a la derecha (B), Cuadrado a la izquierda (X) y Triangulo arriba (Y).";
+        return "Configura la distribucion de los botones de accion. El modo PlayStation asigna Cruz abajo (A), Circulo a la derecha (B), Triangulo arriba (X) y Cuadrado a la izquierda (Y).";
     if (!strcmp(name, "Button prompts") || strstr(name, "Iconos de botones"))
         return "Iconos mostrados en los textos y tutoriales dentro del juego.";
     if (!strcmp(name, "Quality preset") || strstr(name, "Ajuste de calidad"))
@@ -1963,9 +1960,10 @@ void draw_debug_rows(ui::Ctx& c, float cx0, float cx1, float top, float bottom, 
         if (r.cheat == 9 && age_shown(9))
             return 2 * std::max(ui::size_of(c.f.strong, px, "Kid").x, ui::size_of(c.f.strong, px, "Adult").x) + pad;
         if (r.cheat == 0 || r.cheat == 1 || r.cheat == 7 || r.value) return halves_w + pad;
-        const std::string v = cheat_value(r.cheat);
+        const std::string v = r.cheat >= 0 ? cheat_value(r.cheat) : "";
         const char* const says[kCheatRows] = {"", "", "Mark", "Return", "", "", "", "", "Choose map", "Switch", "Edit items"};
-        return ui::size_of(c.f.strong, px, v.empty() ? says[r.cheat] : v.c_str()).x + (cheat_chooses(r.cheat) ? 68 : tight ? 56 : 60) * s;   // (choice_cell keeps 48 for arrows either way)
+        const char* say = (r.cheat >= 0 && r.cheat < kCheatRows) ? says[r.cheat] : "";
+        return ui::size_of(c.f.strong, px, v.empty() ? say : v.c_str()).x + (cheat_chooses(r.cheat) ? 68 : tight ? 56 : 60) * s;   // (choice_cell keeps 48 for arrows either way)
     };
     float name_need[2] = {0, 0}, cell_full[2] = {halves_w + 64 * s, halves_w + 64 * s}, cell_tight[2] = {halves_w + 36 * s, halves_w + 36 * s};
     for (int i = 1; i < dev; ++i) {
@@ -2035,9 +2033,11 @@ void draw_debug_rows(ui::Ctx& c, float cx0, float cx1, float top, float bottom, 
             halves_cell(c, va, vb, "Off", "On", cheat_value(r.cheat) == "On", selected, false);
         } else if (age_shown(r.cheat)) {   // (Link's age now: the other half switches)
             halves_cell(c, va, vb, "Kid", "Adult", link_age.load(std::memory_order_relaxed) == 1, selected, false);
-        } else {
+        } else if (r.cheat >= 0 && r.cheat < kCheatRows) {
             const std::string v = cheat_value(r.cheat);
             choice_cell(c, va, vb, v.empty() ? buttons[r.cheat] : v, selected, cheat_chooses(r.cheat), cheat_chooses(r.cheat), r.cheat == 9);
+        } else {
+            choice_cell(c, va, vb, "", selected, false, false, false);
         }
         hits.add(x0, std::max(y, top), x1, std::min(y + rh, bottom), menu_hit::kRow, k, va.x, vb.x);
     }
@@ -3385,7 +3385,6 @@ void menu_tick() {
                 }
             }
         } else if (r.cheat >= 0) cheat_press(r.cheat, press, changed);   // (a debug tool: on the Debug tab itself)
-        else if (press[7] && !r.value && !strcmp(r.name, "Reload scene shaders")) trigger_shader_reload(), changed = true;
         else if (press[7] && is_motion_row(r)) cur_tab = TAB_MOTION, tab_selected[TAB_MOTION] = 0, press[7] = false, changed = true;
         else if (press[7] && !r.value && can_bind()) page = 1, csel = 0, ccol = 0, changed = true;
         if ((press[3] || press[4] || press[7]) && r.value) {   // (Enter, or A, as Right)
