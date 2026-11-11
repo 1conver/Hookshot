@@ -578,21 +578,58 @@ Shader::HostTranslateInfo host_info() {
     return h;
 }
 
+/// The pools a translation's IR lives in, with small block chunks (the default chunk of 8192 IR::Blocks of 8 KB each
+/// committed 68 MB a stage)
+struct Pools {
+    Shader::ObjectPool<Shader::IR::Inst> insts{8192};
+    Shader::ObjectPool<Shader::IR::Block> blocks{32};
+    Shader::ObjectPool<Shader::Maxwell::Flow::Block> flow_blocks{32};
+};
+/// (each thread's pools of its finished translations, emptied, for its next ones: fresh pages were 20-30% of a stage's
+/// translation time. Room for three, the most alive at once: task, mesh and fragment)
+std::vector<std::unique_ptr<Pools>>& spare_pools() {
+    static thread_local std::vector<std::unique_ptr<Pools>> spare = [] {
+        std::vector<std::unique_ptr<Pools>> v;
+        v.reserve(3);
+        return v;
+    }();
+    return spare;
+}
+/// (a released pool keeps the size of the largest stage it held for the thread's life: one bigger than this is freed)
+constexpr size_t kSparePoolBytes = 8u << 20;
+
 /// A translated stage: its IR program (kept for the next stage's inputs) and the pools its IR lives in
 struct Translation {
-    Shader::ObjectPool<Shader::IR::Inst> insts;
-    Shader::ObjectPool<Shader::IR::Block> blocks;
-    Shader::ObjectPool<Shader::Maxwell::Flow::Block> flow_blocks;
+    std::unique_ptr<Pools> pools;
     Shader::IR::Program program;
+    Translation() {
+        auto& spare = spare_pools();
+        if (spare.empty()) {
+            pools = std::make_unique<Pools>();
+        } else {
+            pools = std::move(spare.back());
+            spare.pop_back();
+        }
+    }
+    ~Translation() {
+        size_t bytes = program.blocks.size() * (sizeof(Shader::IR::Block) + sizeof(Shader::Maxwell::Flow::Block));
+        for (const auto* block : program.blocks) bytes += block->Instructions().size() * sizeof(Shader::IR::Inst);
+        program = {};
+        if (bytes > kSparePoolBytes) return;
+        pools->flow_blocks.ReleaseContents();
+        pools->blocks.ReleaseContents();
+        pools->insts.ReleaseContents();
+        spare_pools().push_back(std::move(pools));
+    }
 };
 
 std::unique_ptr<Translation> translate(Env& env, bool graphics, bool one_exit = false) {
     auto t = std::make_unique<Translation>();
     // (NVN2 task / mesh programs get one exit: their counts are set there, as Eden's pipeline cache does)
-    Shader::Maxwell::Flow::CFG cfg{env, t->flow_blocks,
+    Shader::Maxwell::Flow::CFG cfg{env, t->pools->flow_blocks,
                                    env.StartAddress() + (graphics ? static_cast<u32>(sizeof(Shader::ProgramHeader)) : 0u),
                                    one_exit};
-    t->program = Shader::Maxwell::TranslateProgram(t->insts, t->blocks, env, cfg, host_info());
+    t->program = Shader::Maxwell::TranslateProgram(t->pools->insts, t->pools->blocks, env, cfg, host_info());
     return t;
 }
 
