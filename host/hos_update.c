@@ -264,6 +264,13 @@ void hos_update_check(void) {
 /* (the same offer as Windows, when the player started bin/hookshot itself. The launcher sets HOOKSHOT_NO_UPDATE_CHECK
    and asks in its own window. curl and zenity do the network and the question; without either, the game just starts) */
 
+/* "Skip this version" is kept with the saves, where they are (hos_main.c sets it first: $XDG_DATA_HOME/hookshot, or
+   --user's folder). It was written to user/ beside the game, as on Windows, where Linux keeps no saves any more: the
+   start's move of an old user/ folder (saves_dir) took the file for one, moved it to the saves' place and wrote
+   saves-moved.txt, so the next start asked again. Skipped again, the file was in both places, which the move reads as
+   saves it cannot move: the game then ran on the empty user/ beside it and showed no saves. */
+extern const char *hos_user_dir;
+
 static int read_value(const char *path, const char *name, char *out, size_t cap) {
     FILE *f = fopen(path, "rb");
     if (!f) return 0;
@@ -356,8 +363,9 @@ void hos_update_check(void) {
     dir[n] = 0;
     snprintf(path, sizeof path, "%shookshot_version.txt", dir);
     if (!read_value(path, "version", have, sizeof have) || !safe_tag(have)) return;
-    snprintf(path, sizeof path, "%suser/hookshot_update_skip.txt", dir);
-    read_value(path, "skip", skipped, sizeof skipped);
+    char skip[MAX_PATH + 64];
+    snprintf(skip, sizeof skip, "%s/hookshot_update_skip.txt", hos_user_dir);
+    read_value(skip, "skip", skipped, sizeof skipped);
     if (!latest_tag(have, tag, sizeof tag)) {
         fprintf(stderr, "update: the latest release could not be asked for (offline?)\n");
         return;
@@ -381,10 +389,8 @@ void hos_update_check(void) {
     if (!fgets(answer, sizeof answer, pick)) answer[0] = 0;
     pclose(pick);
     if (!strncmp(answer, "Skip", 4)) {
-        snprintf(path, sizeof path, "%suser", dir);
-        mkdir(path, 0755);
-        snprintf(path, sizeof path, "%suser/hookshot_update_skip.txt", dir);
-        FILE *f = fopen(path, "wb");
+        mkdir(hos_user_dir, 0755);
+        FILE *f = fopen(skip, "wb");
         if (f) fprintf(f, "skip=%s\n", tag), fclose(f);
         return;
     }

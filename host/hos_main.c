@@ -1635,7 +1635,6 @@ static int game_main(int argc, char **argv) {
             snprintf(beside_romfs, MAX_PATH, "%s" SEP_S "romfs", dir);
             snprintf(beside_user, MAX_PATH, "%s" SEP_S "user", dir);
             if (GetFileAttributesA(beside_image) != INVALID_FILE_ATTRIBUTES) {
-                hos_update_check();   /* (a game folder from the builder: is a newer release out? host/hos_update.c) */
                 image = beside_image;
                 if (!hos_romfs_dir) hos_romfs_dir = beside_romfs;
 #ifndef _WIN32
@@ -1643,6 +1642,9 @@ static int game_main(int argc, char **argv) {
 #else
                 if (!hos_user_dir) hos_user_dir = beside_user;
 #endif
+                /* (a game folder from the builder: is a newer release out? host/hos_update.c. After the saves' place is known:
+                   on Linux the check keeps its "Skip this version" there) */
+                hos_update_check();
             }
         }
     }
