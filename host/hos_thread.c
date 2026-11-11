@@ -35,8 +35,9 @@ struct HosThread {
     /* the kernel side (hos_svc.c): this thread's Horizon handle and the event it blocks on */
     uint32_t kernel_handle;
     HANDLE wake;
-    /* virtual cores (HOS_VCORES): the core held + 1 (0: none), the last one, a better waiter's request, queued */
-    int vc_held, vc_last, vc_queued;
+    /* virtual cores (HOS_VCORES): the core held + 1 (0: none), the last one, a better waiter's request, queued, and
+       whether it has run without one since an escape (vc_acquire; until its next block: hos_vcore_away) */
+    int vc_held, vc_last, vc_queued, vc_escaped;
     volatile int vc_kick;
     int64_t vc_since;
     CONDITION_VARIABLE vc_cv;
@@ -1415,6 +1416,7 @@ static void vc_acquire(HosThread *t) {
         const int64_t waited = hos_now_ns() - t0;
         if (waited > (worst ? esc_better : esc_eq)) {
             vc_dequeue(t);
+            t->vc_escaped = 1;
             vc_st.escapes++;
             static int logged;
             if (logged < 40) {
@@ -1464,9 +1466,18 @@ static void vc_yield(HosThread *t, int strict) {
     vc_release(t);
     vc_acquire(t);
 }
+/* 1 when the caller is to take a core again after its block (hos_vcore_back): it gave its core up, or it has run without
+   one since an escape. An escape lasts until the thread's next block, as every other thread waits for a core after one;
+   it took none again before, so an escaped thread ran with no core, and the core number of a core another thread held,
+   for the rest of its life (issue 1929) */
 int hos_vcore_away(void) {
     HosThread *t = cur;
-    if (!hos_vcores_on() || !t || !t->vc_held) return 0;
+    if (!hos_vcores_on() || !t) return 0;
+    if (!t->vc_held) {
+        const int escaped = t->vc_escaped;   /* (only the outermost block of nested ones takes the core again) */
+        t->vc_escaped = 0;
+        return escaped;
+    }
     vc_release(t);
     return 1;
 }
