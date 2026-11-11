@@ -47,6 +47,11 @@ def main():
             check("another lift setting changes the key", make_game.lift_key(str(exefs), str(work), dict(env, A64_HOT_CHUNK="")) != key)
             with mock.patch.dict(os.environ, {"A64_KEEP_FLAGS": "1"}):
                 check("a lifter switch in the environment changes the key", make_game.lift_key(str(exefs), str(work), env) != key)
+            for name in make_game.COMPILE_ONLY_ENV:   # (the compile's switches: a build at another hot-code level keeps the lift)
+                check("%s for the compile does not change the key" % name,
+                      make_game.lift_key(str(exefs), str(work), dict(env, **{name: "O1"})) == key)
+                with mock.patch.dict(os.environ, {name: "O1"}):
+                    check("%s in the environment does not change the key" % name, make_game.lift_key(str(exefs), str(work), env) == key)
             real_open = open
             changed = str(ROOT / "nx2" / "lift.py")
 
@@ -102,6 +107,7 @@ def main():
         make_game.write_lift_key(str(work), key)
         check("a finished lift with another key is not", not make_game.lifted_before(str(work), "0" * 40))
     check_lift_sources()
+    check_compile_only()
     print("ok: the lift key follows the game, the tools (the modules the lift imports), the hot list, the chunks and the settings")
 
 
@@ -135,6 +141,16 @@ def check_lift_sources():
     dynamic = [f for f in sorted(sources) if f.endswith(".py") and re.search(r"\b__import__\(|\bimport_module\(|\bimportlib\b",
                                                                             open(f, encoding="utf-8", errors="replace").read())]
     check("no module of the lift imports by a name made at run time, which lift_sources' walk cannot see (%s)" % dynamic, not dynamic)
+
+
+
+def check_compile_only():
+    """The variables the key leaves out are the compile's alone: no file of the translator (lift_sources(), what the key hashes)
+    names them, so a translator that starts reading one fails here instead of reusing a lift made without it"""
+    for f in make_game.lift_sources():
+        text = open(f, encoding="utf-8", errors="replace").read()
+        for name in make_game.COMPILE_ONLY_ENV:
+            check("%s reads %s, which the lift key leaves out as the compile's alone" % (os.path.relpath(f, ROOT), name), name not in text)
 
 
 if __name__ == "__main__":

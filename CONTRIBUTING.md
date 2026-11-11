@@ -163,6 +163,9 @@ compilers that always run (up to 4 on Windows) still run under a smaller number.
 Use a separate `--work` folder or `OOT_WORK` if you keep more than one dump around. The lifted C and every build are
 local artifacts; they are never committed.
 
+Not measuring speed? [A faster build for development](docs/development.md#a-faster-build-for-development) compiles the
+hot code at `-O1`, about a quarter less compile time. Never use it for fps, timings or a release.
+
 ## Testing
 
 ### Game-free checks
