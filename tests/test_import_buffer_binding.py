@@ -40,7 +40,7 @@ def main():
     fixture = fixture.replace("/* ACTUAL */", actual)
     cases = [(route, case) for route in ["host", "dma"] for case in [
         "healthy", "create-error", "allocate-error", "host-oom", "device-oom", "unknown-bind"]]
-    cases += [("host", "hold-retry"), ("host", "properties-error"), ("dma", "sparse-delegation")]
+    cases += [("host", "hold-retry"), ("host", "properties-error"), ("dma", "sparse-delegation"), ("dma", "nvidia")]
     with tempfile.TemporaryDirectory(prefix="import-buffer-binding-") as temp:
         cpp = Path(temp) / "fixture.cpp"
         cpp.write_text(fixture, encoding="utf-8")
@@ -54,9 +54,9 @@ def main():
             for route, case in cases:
                 subprocess.run([str(exe), route, case], check=True, timeout=15)
             if platform:
-                for case in ["dma-bind-fallback", "dma-create-fallback", "dma-allocate-fallback", "both-bind-fail"]:
+                for case in ["dma-bind-fallback", "dma-create-fallback", "dma-allocate-fallback", "both-bind-fail", "nvidia"]:
                     subprocess.run([str(exe), "pool", case], check=True, timeout=15)
-    print(f"{len(cases) * 2 + 4} factory/rollback/fallback/hold cases passed")
+    print(f"{len(cases) * 2 + 5} factory/rollback/fallback/hold cases passed")
 
 
 if __name__ == "__main__":

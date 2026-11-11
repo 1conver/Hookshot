@@ -127,8 +127,11 @@ The same AppImage also builds and starts the game without opening the window, fo
 script: see [Linux, the AppImage from the command line](#build-from-source).
 
 For fast GPU memory imports on Linux, the game user needs read/write access to `/dev/udmabuf` (the kernel's
-`udmabuf` module). Without it, Hookshot falls back to host-pointer imports, which can be much slower on AMD/RADV;
-permission errors produce a warning on stderr and in `hookshot_log.txt`. Check `ls -l /dev/udmabuf` and `id`.
+`udmabuf` module). Without it, Hookshot falls back to host-pointer imports, which can be much slower on AMD/RADV
+(NVIDIA's driver refuses these dma-bufs, so on NVIDIA the game uses host-pointer imports, which are not slow there);
+permission errors produce a warning on stderr and in `hookshot_log.txt`. With an NVIDIA card on NVIDIA's own driver
+you do not need this access and can ignore that warning: the check runs at the start, before the game knows which
+GPU it has. Otherwise, check `ls -l /dev/udmabuf` and `id`.
 An administrator can add you to the device's owning group, then you must log out and back in. Only use that group
 if access to its other devices is intended: `kvm` also grants virtualization access. For an active local desktop
 session using systemd-logind, prefer a device-specific rule in `/etc/udev/rules.d/70-hookshot-udmabuf.rules`:

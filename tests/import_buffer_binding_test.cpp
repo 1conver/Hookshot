@@ -24,7 +24,7 @@ struct Pool {
     VkBuffer buffer{}; VkDeviceMemory memory{}; VkDeviceAddress address = 0;
     std::vector<VkDeviceMemory> pieces;
 };
-struct { VkDevice device{}; VkPhysicalDeviceMemoryProperties memory{}; bool dma_buf_import = true, sparse_buffers = true; } dev;
+struct { VkDevice device{}; VkPhysicalDeviceMemoryProperties memory{}; bool dma_buf_import = true, sparse_buffers = true; VkDriverId driver_id{}; } dev;
 struct Host { uint8_t* guest_base() { static uint8_t bytes[4096]{}; return bytes; } } host_value;
 Host* host = &host_value;
 uint64_t max_import_size = UINT64_MAX;
@@ -98,7 +98,8 @@ constexpr int O_RDWR = 1, O_CLOEXEC = 2;
 void* RTLD_DEFAULT = nullptr;
 int memfd_stub() { return 4; }
 void* dlsym(void*, const char*) { return reinterpret_cast<void*>(&memfd_stub); }
-int open(const char*, int) { return 5; }
+unsigned opens = 0;
+int open(const char*, int) { opens++; return 5; }
 FILE* fopen(const char*, const char*) { return nullptr; }
 int mock_fscanf(FILE*, const char*, ...) { return 0; }
 VkDeviceMemory dma_buf_memory(uint64_t, uint64_t) {
@@ -137,6 +138,14 @@ void run(const std::string& route, const std::string& test) {
     if (test == "properties-error") fault = Fault::Properties;
     if (route == "pool" && test != "both-bind-fail") fail_kind = DmaMemory;
     Pool p;
+    if (test == "nvidia") {   // (NVIDIA's driver refuses the window's dma-bufs: no udmabuf opened, no dma-buf tried, host pointers)
+        dev.driver_id = VK_DRIVER_ID_NVIDIA_PROPRIETARY;
+        if (route == "dma") {
+            assert(!call(route, p) && opens == 0 && creates == 0 && allocations == 0 && dmabuf_memfd == -1); empty(); return;
+        }
+        assert(call(route, p) && opens == 0 && creates == 1 && allocations == 1 && buffers.at(p.buffer) == HostMemory);
+        release(p); return;
+    }
     if (test == "sparse-delegation") {
         assert(call(route, p, 128ull << 20)); assert(sparse_calls == 1 && binds == 0 && address_queries == 1);
         release(p); return;

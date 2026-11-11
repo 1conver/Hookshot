@@ -275,7 +275,14 @@ bool import_dma_buf(uint64_t lo, uint64_t hi, Pool& p) {
         typedef int (*MemfdFn)(void);
         const MemfdFn fn = env_on("RX_VK_NO_DMABUF") ? nullptr : (MemfdFn)dlsym(RTLD_DEFAULT, "hos_posix_guest_memfd");
         const int fd = fn ? fn() : -1;
-        if (fd >= 0 && dev.dma_buf_import && vkGetMemoryFdPropertiesKHR) dmabuf_dev = open("/dev/udmabuf", O_RDWR | O_CLOEXEC);
+        // (NVIDIA's driver offers a dma-buf of the window two memory types, host visible and coherent (dma_buf_memory's choice)
+        // and one with no flags, and refuses the first: VK_ERROR_OUT_OF_DEVICE_MEMORY for every pool, the sparse ones unbound,
+        // and its kernel module logs "NVRM: memMap_IMPL: CPU mapping not supported for addressSpace: 0x1" at each start. Every
+        // pool was a host-pointer import after all, which on NVIDIA is not slow, so the attempt is not made there. RTX 4090,
+        // 615.78.08, Kokiri Forest uncapped, two runs each in turn: 81.3 and 80.4 fps with the attempt, 81.5 and 79.6 without
+        // it, no difference beyond the 1 to 2 % between identical runs)
+        const bool nvidia = dev.driver_id == VK_DRIVER_ID_NVIDIA_PROPRIETARY;
+        if (fd >= 0 && dev.dma_buf_import && vkGetMemoryFdPropertiesKHR && !nvidia) dmabuf_dev = open("/dev/udmabuf", O_RDWR | O_CLOEXEC);
         if (fd >= 0 && dmabuf_dev >= 0) {
             dmabuf_memfd = fd;
             dmabuf_limit = 64ull << 20;
@@ -290,7 +297,7 @@ bool import_dma_buf(uint64_t lo, uint64_t hi, Pool& p) {
         }
         logf("vk: guest memory as dma-bufs: %s", dmabuf_memfd >= 0 ? "yes" : !fn ? "no (no memfd window, or RX_VK_NO_DMABUF)"
                  : fd < 0 ? "no (the window is anonymous memory)" : !dev.dma_buf_import ? "no (VK_EXT_external_memory_dma_buf)"
-                 : "no (/dev/udmabuf cannot be opened)");
+                 : nvidia ? "no (NVIDIA's driver refuses them: host pointers)" : "no (/dev/udmabuf cannot be opened)");
         if (dmabuf_memfd >= 0)
             logf("vk: dma-bufs of at most %llu MB (udmabuf's limit %llu MB); larger pools %s", (unsigned long long)(piece >> 20),
                  (unsigned long long)(dmabuf_limit >> 20),
