@@ -210,6 +210,7 @@ bool pick_device() {
     dev.physical = all[best];
     vkGetPhysicalDeviceProperties(dev.physical, &dev.props);
     vkGetPhysicalDeviceMemoryProperties(dev.physical, &dev.memory);
+    menu_first_start_for_gpu(dev.props, dev.memory);   // (no options yet: the preset for this card's memory)
     return true;
 }
 
