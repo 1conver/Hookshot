@@ -55,6 +55,7 @@ void checkpoints_report() {
     std::fflush(stdout);
     std::_Exit(3);
 }
+[[noreturn]] void device_lost(const char* why = nullptr);
 @@DEVICE_LOST@@
 int main() {
     std::vector<std::thread> t;
@@ -85,7 +86,7 @@ def main():
         raise SystemExit("FAIL: host/rx_backend.c does not give the back end hos_log_flush (MkwVkHost.log_flush)")
     with tempfile.TemporaryDirectory(prefix="device-lost-") as tmp:
         src, exe = Path(tmp) / "fixture.cpp", Path(tmp) / "fixture.exe"
-        src.write_text(FIXTURE.replace("@@DEVICE_LOST@@", block(replay, "[[noreturn]] void device_lost() {")), encoding="utf-8")
+        src.write_text(FIXTURE.replace("@@DEVICE_LOST@@", block(replay, "[[noreturn]] void device_lost(const char* why) {")), encoding="utf-8")
         command = [args.cxx, "-std=c++17", "-O1", str(src), "-o", str(exe)] + ([] if os.name == "nt" else ["-pthread"])
         r = subprocess.run(command, capture_output=True, text=True, timeout=120)
         if r.returncode:
