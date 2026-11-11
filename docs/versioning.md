@@ -95,7 +95,9 @@ On every push to `main`:
    (`scripts/release_files.sh finish`), checks that all the files are there and that `SHA256SUMS` lists every file
    with its digest, and publishes the draft as a prerelease. It is never "latest". Players on the Release track do not
    see it; see *Update tracks* below. A release candidate's `HookshotBuilder.exe` installs that release candidate, and
-   its AppImage's update information names its own release, so AppImageUpdate never takes it back to an older release.
+   its AppImage's update information names the `rc` release (*The rc prerelease* below), so AppImageUpdate moves it on
+   to the next release candidate and to its version's release, and never takes it back to an older release.
+5. The rc job copies the newest release candidate's or release's AppImage and `.zsync` to the `rc` prerelease.
 
 The next release pull request proposes the next release candidate of the same version, `2.0.8-rc.2`, with the changes
 since `rc.1`. There is no step to start a series: the first fix after a release proposes the next version's `rc.1`.
@@ -120,7 +122,8 @@ stops with "v2.0.8 is already published". A third one replaces the second while 
    release's tag, so a `2.0.8-rc.2` file on the `v2.0.8` release would be offered as an update forever. The source is
    the same commit, the dependencies are the same checked downloads, and the update parts that did not change are the
    same files on `builder-parts` and `linux-parts`, so a player who tried the release candidate downloads only the
-   parts that name the version.
+   parts that name the version. Then the rc job puts the version's AppImage on the `rc` prerelease, unless a newer
+   release candidate (the next version's) is out already.
 3. The record job sets `.release-please-manifest.json` to `2.0.8` (`scripts/release_promote.sh record`) and adds the
    version's entry to `CHANGELOG.md`, then has release-please make the release pull request again. It runs whenever
    `v2.0.8` ends up published: after the publish job, after a failed job when the release was published anyway, and
@@ -182,6 +185,28 @@ release's. Its AppImage's update information names the `nightly` release instead
 updates a nightly AppImage to the next nightly. (Gear Lever reads only `latest`, `latest-pre` and `latest-all`, and
 offers the latest release for any other name.)
 
+## The rc prerelease
+
+`rc`, titled "Latest release candidate", holds the Linux AppImage and its `.zsync` of the newest published release
+candidate or release, in semver order as on the Release candidate track below (`v2.1.0-rc.2` < `v2.1.0-rc.3` <
+`v2.1.0`). A release candidate's AppImage names it in its update information, so AppImageUpdate updates it to the next
+release candidate, and to its version's release once that is promoted; from there the AppImage names `latest` and
+follows the releases. Its own tag would leave it where it is, `latest` can be older than it (the newest release is
+before its release candidates), and `latest-pre` and `latest-all` would take the `nightly`, which is a prerelease too.
+(Gear Lever offers the latest release for `rc`, as it did for the release candidate's own tag; the builder's own update
+follows the track.)
+
+The Release workflow's rc job (`scripts/release_rc.sh`) updates it after the publish job, a release candidate's or a
+Promote's, and when a release is published by hand. It runs one at a time (its concurrency group `release-rc`), and each
+run makes `rc` hold the newest release there is, found by listing the releases, not the one of its own run: a run that
+waited behind another, or was replaced while it waited, leaves it right. It copies that release's two files, the same
+files, so the release's `SHA256SUMS` and their build provenance check them; uploads them before it removes the older
+ones; moves the `rc` tag to its commit; and keeps the notes short, a link to that release, where the other files and
+the notes are. A release without its AppImage and `.zsync` is passed over. It is a prerelease, never "latest", and not a
+version: the builders, the setup, the game's update check and the parts lookup read only `v<major>.<minor>.<patch>` and
+`-rc.<n>` tags, or skip prereleases, so they never take it for a release. `scripts/release_upload.sh rc` and
+`scripts/release_files.sh publish rc` are refused, and a tag named `rc` pushed by hand builds nothing.
+
 ## Update tracks
 
 The builders (Windows and Linux) have an **Update track** menu: Release, Release candidate or Nightly. By default it
@@ -212,13 +237,15 @@ The names never change: the builder's update check, the setup and the Linux upda
 | `hookshot-setup.txt` | the setup's and the Windows builder's update list (`builder/setup/setup.c`, `builder/HookshotBuilder/Updater.cs`) |
 | `hookshot-linux.txt` | the Linux updater's list (`builder/linux/linux_update.py`) |
 | `Hookshot-v<version>-x86_64.AppImage.zsync` | AppImageUpdate and Gear Lever, which update the AppImage itself |
+| `Hookshot-v<version>-Windows-x64.zip` | RecompLauncher: `HookshotBuilder.exe` and its `recomplauncher.json` (`.github/workflows/windows-builder.yml`). Windows players download `HookshotBuilder.exe` |
 | `SHA256SUMS` | the SHA-256 of every other file, in `sha256sum`'s format |
 
-The release notes end with a short table of which file to download (`scripts/release_files.sh table`).
+The release notes end with a short table of which file to download, and what the other files are for
+(`scripts/release_files.sh table`).
 
 The AppImage carries update information (`scripts/linux/appimage.sh`):
-`gh-releases-zsync|NotRexed|Hookshot|latest|Hookshot-*-x86_64.AppImage.zsync`, the repository being the one CI runs
-in. appimagetool writes it into the image and makes the `.zsync`, whose file URL is the AppImage's name beside it on the
+`gh-releases-zsync|NotRexed|Hookshot|latest|Hookshot-*-x86_64.AppImage.zsync` for a release, `rc` in place of `latest`
+for a release candidate and `nightly` for the nightly, the repository being the one CI runs in. appimagetool writes it into the image and makes the `.zsync`, whose file URL is the AppImage's name beside it on the
 same release. `./Hookshot-v<version>-x86_64.AppImage --appimage-updateinformation` prints it.
 
 To check a download, put it beside `SHA256SUMS` and run `sha256sum -c --ignore-missing SHA256SUMS`. Every file,

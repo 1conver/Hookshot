@@ -36,8 +36,10 @@ concurrency:
 jobs:
   appimage:
     # (builder-parts holds the installer's parts: no AppImage there, and it must never be made "latest")
-    # (nightly is moved by the release job of a push to main, never built as a tag)
-    if: github.ref_name != 'builder-parts' && github.ref_name != 'linux-parts' && github.ref_name != 'nightly'
+    # (nightly is moved by the release job of a push to main, and rc by the Release workflow: never built as a tag)
+    if: >-
+      github.ref_name != 'builder-parts' && github.ref_name != 'linux-parts' && github.ref_name != 'nightly'
+      && github.ref_name != 'rc'
     runs-on: ubuntu-latest
     container: ubuntu:22.04
     # (about 4 minutes with the dependencies cached; building them all, as a release does, takes longer)
@@ -149,8 +151,9 @@ jobs:
           ls -la work work/image
 
       # (with its update information and .zsync, for AppImageUpdate and Gear Lever: this repository's latest release, for
-      # the nightly the next nightly, and for a release candidate its own release, so that they never take it back to an
-      # older release; the builder's own update moves it on, Update track in builder/linux/hookshot_builder.py)
+      # the nightly the next nightly, and for a release candidate the rc release, which holds the newest release candidate
+      # or release (scripts/release_rc.sh): it moves on to the next release candidate and its version's release, never
+      # back to an older release, as the builder's Release candidate Update track does, builder/linux/hookshot_builder.py)
       - name: AppImage
         env:
           # (a release is named by its tag: a promoted version's commit also has its release candidate's tag, which git
@@ -158,7 +161,7 @@ jobs:
           HOOKSHOT_VERSION: ${{ env.RELEASE_TAG }}
           HOOKSHOT_UPDATE_RELEASE: >-
             ${{ env.RELEASE_TAG == '' && github.event_name == 'push' && github.ref == 'refs/heads/main' && 'nightly'
-            || contains(env.RELEASE_TAG, '-') && env.RELEASE_TAG || 'latest' }}
+            || contains(env.RELEASE_TAG, '-') && 'rc' || 'latest' }}
         run: scripts/linux/appimage.sh
 
       # (the object cache down to the objects this build used, as nx2/make_game.py prune_object_cache does: each object in
@@ -237,7 +240,8 @@ jobs:
     name: Release asset
     if: >-
       inputs.tag != '' || (startsWith(github.ref, 'refs/tags/') && github.ref_name != 'builder-parts'
-      && github.ref_name != 'linux-parts' && github.ref_name != 'nightly') || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+      && github.ref_name != 'linux-parts' && github.ref_name != 'nightly' && github.ref_name != 'rc')
+      || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     needs: appimage
     runs-on: ubuntu-24.04
     timeout-minutes: 15

@@ -87,6 +87,8 @@ upload() {   # tag file ... -> the files on its release, each replacing a file o
 
 publish() {   # tag -> its release published
     local tag=$1 id
+    # (a version's release only: nightly and rc are rolling prereleases, never "latest", and are not published here)
+    [[ $tag =~ ^v[0-9] ]] || fail "$tag is not a version's tag: only a version's release is published here"
     id=$(id_of "$tag")
     if [[ $tag == *-* ]]; then
         jq -n '{draft: false, prerelease: true, make_latest: "false"}'
@@ -96,8 +98,11 @@ publish() {   # tag -> its release published
 }
 
 table() {
-    local appimage="the \`.AppImage\`"
-    [[ $1 =~ ^v[0-9] ]] && appimage="\`Hookshot-$1-x86_64.AppImage\`"
+    local appimage="the \`.AppImage\`" zip="the \`-Windows-x64.zip\`"
+    if [[ $1 =~ ^v[0-9] ]]; then
+        appimage="\`Hookshot-$1-x86_64.AppImage\`"
+        zip="\`Hookshot-$1-Windows-x64.zip\`"
+    fi
     cat <<EOF
 $MARK
 ### Which file do I download?
@@ -107,7 +112,7 @@ $MARK
 | Windows | \`HookshotBuilder.exe\`, the setup |
 | Linux, Steam Deck | $appimage |
 
-You need your own copy of the game. \`hookshot-setup.txt\`, \`hookshot-linux.txt\` and the \`.zsync\` are for the updaters. To check a download: \`sha256sum -c --ignore-missing SHA256SUMS\`, or \`gh attestation verify <file> -R $GH_REPO\`.
+You need your own copy of the game. \`hookshot-setup.txt\`, \`hookshot-linux.txt\` and the \`.zsync\` are for the updaters, and $zip (the setup and its \`recomplauncher.json\`) for RecompLauncher: on Windows, download \`HookshotBuilder.exe\` instead. To check a download: \`sha256sum -c --ignore-missing SHA256SUMS\`, or \`gh attestation verify <file> -R $GH_REPO\`.
 EOF
 }
 

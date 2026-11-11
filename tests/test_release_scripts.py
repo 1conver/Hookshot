@@ -1,10 +1,13 @@
-"""Run the release scripts (scripts/release_files.sh, release_upload.sh, release_promote.sh) against a stand-in gh.
+"""Run the release scripts (scripts/release_files.sh, release_upload.sh, release_promote.sh, release_rc.sh) against a
+stand-in gh.
 
 No network: the stand-in keeps the repository's releases, tags and runs in a JSON file and answers the REST calls the
 scripts make, a listing of releases with the drafts in it, as GitHub does for a token that can push. It checks what
 v2.1.0's promotion got wrong: a release found by listing, drafts too, so a failed lookup is never "no release" and a
 draft never gets a published release made beside it; the files go to the release by its id; Promote refuses a
-version already published, a tag with two releases and a second run in progress; and the record is made once.
+version already published, a tag with two releases and a second run in progress; and the record is made once. Also
+that the table names every file (the RecompLauncher zip too), and that the rc prerelease, which release candidates'
+AppImages update from, holds the newest release candidate or release and is never "latest".
 """
 import argparse
 import hashlib
@@ -142,6 +145,16 @@ elif len(p) == 3 and p[0] == "releases" and p[2] == "assets" and method == "POST
                         "digest": "sha256:" + hashlib.sha256(data).hexdigest()})
 elif len(p) == 3 and p[0] == "releases" and p[2] == "assets":
     out([asset(a) for a in release(p[1])["assets"]], jq)
+elif p == ["releases"] and method == "POST":
+    change = json.loads(data)
+    if any(r["tag_name"] == change["tag_name"] for r in s["releases"]):
+        fail(422, "Validation Failed: already_exists")
+    s["next_id"] += 1
+    r = {"id": s["next_id"], "html_url": "https://example/" + change["tag_name"], "assets": [], "body": "",
+         "published_at": None if change.get("draft") else "now"}
+    r.update(change)
+    s["releases"].append(r)
+    out(public(r), jq)
 elif len(p) == 2 and p[0] == "releases" and method == "PATCH":
     r = release(p[1])
     change = json.loads(data)
@@ -156,6 +169,10 @@ elif p[:3] == ["git", "ref", "tags"]:
     if not sha:
         fail(404, "Not Found")
     out({"object": {"type": "commit", "sha": sha}}, jq)
+elif p[:3] == ["git", "refs", "tags"] and method == "PATCH":
+    if p[3] not in s["tags"]:
+        fail(422, "Reference does not exist")
+    s["tags"][p[3]] = fields["sha"]
 elif p == ["git", "refs"] and method == "POST":
     s["tags"][fields["ref"].removeprefix("refs/tags/")] = fields["sha"]
 elif p == ["commits", "main"]:
@@ -369,6 +386,138 @@ class ReleaseScripts(unittest.TestCase):
         self.assertEqual(again.returncode, 0, again.stderr)
         self.assertEqual((work / "CHANGELOG.md").read_text(encoding="utf-8"), changelog)
 
+    # release_files.sh table
+
+    def test_table_names_every_file(self):
+        # (the RecompLauncher zip is on every release: the table says what it is for, and what Windows players want)
+        for tag, zip_name in (("v2.1.0-rc.3", "`Hookshot-v2.1.0-rc.3-Windows-x64.zip`"), ("nightly", "the `-Windows-x64.zip`")):
+            with self.subTest(tag=tag):
+                r = self.run_script("release_files.sh", "table", tag)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                for name in ("`HookshotBuilder.exe`", "`hookshot-setup.txt`", "`hookshot-linux.txt`", "`.zsync`",
+                             zip_name, "RecompLauncher", "SHA256SUMS"):
+                    self.assertIn(name, r.stdout)
+                self.assertIn("for RecompLauncher: on Windows, download `HookshotBuilder.exe` instead", r.stdout)
+
+    def test_finish_puts_the_table_with_the_zip_under_the_notes_once(self):
+        zip_name = "Hookshot-v2.1.0-Windows-x64.zip"
+        self.given([rel(5, "v2.1.0", True, False, "notes", assets=["HookshotBuilder.exe", zip_name])])
+        for _ in range(2):
+            r = self.run_script("release_files.sh", "finish", "v2.1.0")
+            self.assertEqual(r.returncode, 0, r.stderr)
+        body = self.state()["releases"][0]["body"]
+        self.assertEqual(body.count("Which file do I download?"), 1)
+        self.assertIn("`%s` (the setup and its `recomplauncher.json`) for RecompLauncher" % zip_name, body)
+        self.assertLess(body.index("notes"), body.index("Which file do I download?"))
+
+    def test_publish_refuses_a_rolling_release(self):
+        for tag in ("rc", "nightly"):
+            with self.subTest(tag=tag):
+                self.given([rel(9, tag, True, True)])
+                r = self.run_script("release_files.sh", "publish", tag)
+                self.assertNotEqual(r.returncode, 0)
+                self.assertIn("not a version's tag", r.stderr)
+                self.assertTrue(self.state()["releases"][0]["draft"])
+
+    # release_rc.sh
+
+    def linux(self, tag):
+        return ["Hookshot-%s-x86_64.AppImage" % tag, "Hookshot-%s-x86_64.AppImage.zsync" % tag]
+
+    def released(self, rid, tag, prerelease=None, files=None):
+        prerelease = "-" in tag if prerelease is None else prerelease
+        names = self.linux(tag) + ["HookshotBuilder.exe", "SHA256SUMS"] if files is None else files
+        return rel(rid, tag, False, prerelease, tag + " notes", assets=names)
+
+    def rc_release(self):
+        (r,) = [x for x in self.state()["releases"] if x["tag_name"] == "rc"]
+        return r
+
+    def sync(self, **env):
+        r = self.run_script("release_rc.sh", **env)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        return r
+
+    def uploads(self):
+        return [a for c in self.state()["calls"] for a in c if "uploads.github.com" in a]
+
+    def test_rc_holds_the_newest_release_candidate(self):
+        self.given([rel(90, "nightly", False, True, assets=self.linux("v2.1.0-rc.3-4-gabcdef0")),
+                    rel(91, "linux-parts", False, True, assets=["HookshotLinux-a.zip"]),
+                    self.released(2, "v2.1.0-rc.2"), self.released(3, "v2.1.0-rc.3"), self.released(1, "v2.0.14"),
+                    rel(4, "v2.1.0", True, False, assets=self.linux("v2.1.0"))],
+                   tags={"nightly": "e" * 40, "v2.1.0-rc.2": "a" * 40, "v2.1.0-rc.3": "b" * 40, "v2.0.14": "d" * 40,
+                         "v2.1.0": "b" * 40})
+        self.sync()
+        rc = self.rc_release()
+        # (a prerelease, never "latest", with only the AppImage and its .zsync, the same files as on the release)
+        self.assertEqual((rc["draft"], rc["prerelease"], rc["make_latest"]), (False, True, "false"))
+        self.assertEqual(rc["name"], "Latest release candidate")
+        self.assertEqual(sorted(a["name"] for a in rc["assets"]), self.linux("v2.1.0-rc.3"))
+        self.assertEqual(sorted(a["content"] for a in rc["assets"]), self.linux("v2.1.0-rc.3"))
+        self.assertEqual(self.state()["tags"]["rc"], "b" * 40)
+        self.assertIn("[v2.1.0-rc.3](https://github.com/%s/releases/tag/v2.1.0-rc.3)" % REPO, rc["body"])
+        self.assertLess(len(rc["body"]), 800)
+        self.assertNotIn("Which file do I download?", rc["body"])
+        # (the others are as they were)
+        for x in self.state()["releases"]:
+            if x["tag_name"] != "rc":
+                self.assertNotIn("make_latest", x, x["tag_name"])
+        # (run again: nothing is uploaded again, and there is still one rc release)
+        before = len(self.uploads())
+        self.sync()
+        self.assertEqual(len(self.uploads()), before)
+        self.assertEqual(sorted(a["name"] for a in self.rc_release()["assets"]), self.linux("v2.1.0-rc.3"))
+
+    def test_rc_moves_on_to_the_next_release_candidate_and_the_release(self):
+        tags = {"v2.1.0-rc.3": "b" * 40, "v2.1.0-rc.4": "c" * 40, "v2.1.0": "c" * 40, "rc": "b" * 40}
+        rc = rel(50, "rc", False, True, "old", assets=self.linux("v2.1.0-rc.3"))
+        rc["make_latest"] = "false"
+        self.given([rc, self.released(3, "v2.1.0-rc.3"), self.released(4, "v2.1.0-rc.4")], tags=dict(tags))
+        self.sync()
+        self.assertEqual(sorted(a["name"] for a in self.rc_release()["assets"]), self.linux("v2.1.0-rc.4"))
+        self.assertEqual(self.rc_release()["id"], 50)
+        self.assertEqual(self.state()["tags"]["rc"], "c" * 40)
+        # (promoted: v2.1.0 is newer than its release candidates)
+        state = self.state()
+        state["releases"].append(self.released(5, "v2.1.0"))
+        self.state_file.write_text(json.dumps(state), encoding="utf-8")
+        self.sync()
+        rc = self.rc_release()
+        self.assertEqual(sorted(a["name"] for a in rc["assets"]), self.linux("v2.1.0"))
+        self.assertIn("[v2.1.0]", rc["body"])
+        self.assertEqual((rc["prerelease"], rc["make_latest"]), (True, "false"))
+        self.assertEqual([x["tag_name"] for x in self.state()["releases"]].count("rc"), 1)
+
+    def test_rc_never_goes_back_to_an_older_version(self):
+        # (v2.1.0 promoted while v2.2.0-rc.1 is out: rc stays with the newer release candidate)
+        self.given([self.released(6, "v2.2.0-rc.1"), self.released(5, "v2.1.0"), self.released(4, "v2.1.0-rc.10"),
+                    self.released(3, "v2.1.0-rc.9")],
+                   tags={"v2.2.0-rc.1": "f" * 40, "v2.1.0": "c" * 40, "v2.1.0-rc.10": "c" * 40, "v2.1.0-rc.9": "b" * 40})
+        self.sync()
+        self.assertEqual(sorted(a["name"] for a in self.rc_release()["assets"]), self.linux("v2.2.0-rc.1"))
+
+    def test_rc_passes_over_a_release_without_its_appimage(self):
+        self.given([self.released(4, "v2.1.0-rc.4", files=["HookshotBuilder.exe"]), self.released(3, "v2.1.0-rc.3")],
+                   tags={"v2.1.0-rc.4": "c" * 40, "v2.1.0-rc.3": "b" * 40})
+        r = self.sync()
+        self.assertIn("v2.1.0-rc.4 has no", r.stdout)
+        self.assertEqual(sorted(a["name"] for a in self.rc_release()["assets"]), self.linux("v2.1.0-rc.3"))
+
+    def test_rc_listing_that_fails_changes_nothing(self):
+        self.given([self.released(3, "v2.1.0-rc.3")], tags={"v2.1.0-rc.3": "b" * 40})
+        r = self.run_script("release_rc.sh", FAKE_GH_FAIL="releases-list")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual([x["tag_name"] for x in self.state()["releases"]], ["v2.1.0-rc.3"])
+        self.assertNotIn("rc", self.state()["tags"])
+
+    def test_rc_takes_no_upload(self):
+        self.given([rel(50, "rc", False, True)])
+        r = self.upload("rc")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("scripts/release_rc.sh", r.stderr)
+        self.assertFalse(self.uploads())
+
     # the workflow
 
     def test_whole_promote_run_is_one_at_a_time(self):
@@ -382,6 +531,20 @@ class ReleaseScripts(unittest.TestCase):
         for name in ("linux-appimage.yml", "windows-builder.yml"):
             text = (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
             self.assertIn("RELEASE_FROM_WORKFLOW: ${{ inputs.tag && 'true' || 'false' }}", text, name)
+
+    def test_release_candidates_update_from_rc(self):
+        flow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+        job = flow[flow.index("\n  rc:\n"):flow.index("\n  record:\n")]
+        self.assertIn("needs: [publish]", job)
+        self.assertIn("group: release-rc\n", job)
+        self.assertIn("run: scripts/release_rc.sh", job)
+        self.assertIn("startsWith(github.event.release.tag_name, 'v')", job)
+        linux = (ROOT / ".github/workflows/linux-appimage.yml").read_text(encoding="utf-8")
+        self.assertIn("|| contains(env.RELEASE_TAG, '-') && 'rc' || 'latest' }}", linux)
+        # (a tag named rc is never built: the Release workflow moves it)
+        for name in ("linux-appimage.yml", "windows-builder.yml"):
+            text = (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
+            self.assertEqual(text.count("github.ref_name != 'nightly'"), text.count("github.ref_name != 'rc'"), name)
 
 
 if __name__ == "__main__":

@@ -14,6 +14,8 @@
 #   and CHANGELOG.md get it (the record job). In a Promote run it runs after publish, or after a failure once the release
 #   is published anyway; a release published by hand starts this workflow (release: published) for it. A release
 #   published with GITHUB_TOKEN starts no workflow, so the Promote run's own record job is the one for those.
+# - rc: after either publish, and for a release published by hand, the rc prerelease gets the newest release candidate's
+#   or release's AppImage and .zsync (the rc job), for the update information of release candidates' AppImages.
 # No game data is involved.
 name: Release
 
@@ -166,6 +168,35 @@ jobs:
       - name: Publish the release
         if: env.WINDOWS_BY_HAND != 'true'
         run: scripts/release_files.sh publish "$TAG"
+
+  # rc, the latest release candidate (scripts/release_rc.sh): a rolling prerelease, never "latest", holding the Linux
+  # AppImage and .zsync of the newest published release candidate or release, which a release candidate's AppImage names
+  # in its update information so that AppImageUpdate moves it on. After publish (a release candidate's files, or a
+  # promoted version's), and when a release is published by hand (release: published). It makes rc hold the newest
+  # release there is, not this run's, so a run of this job replaced while it waits loses nothing.
+  rc:
+    needs: [publish]
+    if: >-
+      !cancelled() && (needs.publish.result == 'success'
+      || (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'v') && !github.event.release.draft))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    # (one at a time, across runs: a release candidate's run and a Promote run never change rc at once)
+    concurrency:
+      group: release-rc
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: The latest release candidate
+        run: scripts/release_rc.sh
 
   # Once a version's release is published: .release-please-manifest.json gets the version (scripts/release_promote.sh
   # record), so the next release pull request proposes the next version's first release candidate, and CHANGELOG.md the

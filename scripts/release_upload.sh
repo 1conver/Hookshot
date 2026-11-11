@@ -15,7 +15,8 @@
 # nightly is the latest development build: a prerelease, never "latest", whose tag is moved to the commit of each push
 # to main (GITHUB_SHA). A run whose commit is no longer main's newest leaves it to the newer run. Its files are replaced,
 # an AppImage and .zsync named by an older commit are removed once the new ones are there, and SHA256SUMS and the
-# table are made again (the table is in its notes).
+# table are made again (the table is in its notes). rc, the latest release candidate, is refused: it gets its files from
+# a published release (scripts/release_rc.sh).
 #
 #   scripts/release_upload.sh <tag> <file> ...
 set -euo pipefail
@@ -33,6 +34,10 @@ for f in "$@"; do
     esac
     shopt -u nocasematch
 done
+if [[ $tag == rc ]]; then
+    echo "release_upload.sh: rc holds a release's own files and is made by scripts/release_rc.sh, not uploaded to" >&2
+    exit 1
+fi
 if [[ $tag == nightly ]]; then
     sha=${GITHUB_SHA:?}
     head=$(gh api "repos/$GH_REPO/commits/main" --jq .sha)

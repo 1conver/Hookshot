@@ -29,7 +29,9 @@ ORDER = [
     ("v2.0.10", "v2.0.9"), ("v3.0.0-rc.1", "v2.9.9"),
 ]
 
-LIST = """[{"tag_name":"nightly","draft":false},{"tag_name":"v2.1.0-rc.2","draft":false},{"tag_name":"linux-parts"},
+# (the rolling releases, nightly and rc, and the parts releases are not versions: every track's list leaves them out)
+LIST = """[{"tag_name":"nightly","draft":false},{"tag_name":"rc","draft":false,"prerelease":true},
+{"tag_name":"v2.1.0-rc.2","draft":false},{"tag_name":"linux-parts"},
 {"tag_name":"v2.1.0-rc.10","draft":false},{"tag_name":"v2.0.14","draft":false},{"tag_name":"v2.1.0-rc.9"}]"""
 
 FIXTURE = r"""
@@ -85,7 +87,7 @@ class Tracks(unittest.TestCase):
         return subprocess.run([self.exe, *args], capture_output=True, text=True, check=True).stdout.split()
 
     def test_the_track_of_a_version(self):
-        for version, track in TRACKS + [("nightly", "release"), ("dev", "release")]:
+        for version, track in TRACKS + [("nightly", "release"), ("rc", "release"), ("dev", "release")]:
             self.assertEqual(linux_update.track_of(version), track, version)
             nightly = "1" if track == "nightly" else "0"
             self.assertEqual(self.c("n", version), [nightly, nightly], version)
@@ -101,6 +103,8 @@ class Tracks(unittest.TestCase):
         path = Path(self.tmp.name) / "list.json"
         path.write_text(LIST, encoding="utf-8")
         self.assertEqual(self.c("l", str(path)), ["v2.1.0-rc.10"])
+        self.assertIsNone(linux_update.release_key("rc"))
+        self.assertEqual(linux_update.newest_release(["rc", "nightly"]), None)
         get = lambda url: LIST.encode() if url == linux_update.RELEASES_API else b"{}"   # noqa: E731
         self.assertEqual(linux_update.latest_tag(get, "rc"), "v2.1.0-rc.10")
         # (its version's release ships: the release is the newest)
