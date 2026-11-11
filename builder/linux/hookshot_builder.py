@@ -1088,6 +1088,7 @@ class Builder(tk.Tk):
         self.compile_started = None
         self.times = None
         self.shaders_later = False
+        self.built = self.error = None   # (this run's own: what make_game.py says, or Cancel)
         px = self.px
         page = self.page = ttk.Frame(self)
         page.pack(fill="both", expand=True)
@@ -1256,7 +1257,7 @@ class Builder(tk.Tk):
             self.stage_label.configure(style="Go.Stage.TLabel")
             self.set_step(2)
         else:
-            self.stage_text.set("The build stopped: %s" % getattr(self, "error", "see the lines above"))
+            self.stage_text.set("The build stopped: %s" % (getattr(self, "error", None) or "see the lines above"))
             ttk.Button(self.buttons, text="Back", command=self.show_form, cursor="hand2").pack(side="right", padx=self.px(4))
             self.heading.configure(text="The build stopped")
             self.stage_label.configure(style="Bad.Stage.TLabel")
