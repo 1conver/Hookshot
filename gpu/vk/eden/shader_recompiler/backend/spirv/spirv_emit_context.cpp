@@ -2254,7 +2254,11 @@ void EmitContext::DefineMesh(const IR::Program& program) {
     mesh_attribute_words = (std::max)(
         mesh_primitive_base + Common::DivCeil(mesh_info.max_primitives, 32U) * primitive_lines * 32,
         1U);
-    mesh_map_bytes = 4 + mesh_info.Corners() * mesh_info.max_primitives;
+    // Whole blocks of 32 primitives, as the attributes: the program writes the index bytes of every primitive block, lanes past
+    // max_primitives too (a count of 0 wraps its min(count - 1, lane) to every lane). Sized to max_primitives, those writes were
+    // clamped onto the last byte, the last primitive's last corner: with 126 primitives (most of OoT's) a stray vertex, flashing
+    // triangles over Kokiri's foliage and ground (as nxnative found: "primitive index bytes for every primitive block")
+    mesh_map_bytes = 4 + mesh_info.Corners() * Common::DivCeil(mesh_info.max_primitives, 32U) * 32;
     mesh_shared_u32 = TypePointer(spv::StorageClass::Workgroup, U32[1]);
     mesh_attributes = DefineVariable(*this, TypeArray(U32[1], Const(mesh_attribute_words)),
                                      std::nullopt, spv::StorageClass::Workgroup);
