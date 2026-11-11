@@ -569,7 +569,7 @@ Shader::Profile make_profile() {
     // (RX_VK_FRAG_SHUFFLE_FALLBACK=0 or 1, a test: the fragment stages' shuffles native or through broadcasts, whatever the
     // driver; in the cache's stamp)
     if (const char* e = getenv("RX_VK_FRAG_SHUFFLE_FALLBACK")) p.has_broken_spirv_fragment_shuffle = e[0] == '1';
-    p.min_ssbo_alignment = dev.props.limits.minStorageBufferOffsetAlignment;
+    p.min_ssbo_alignment = storage_binding_align();   // (at least 16: vk_internal.h)
     return p;
 }
 
@@ -585,7 +585,7 @@ Shader::HostTranslateInfo host_info() {
     h.needs_demote_reorder = false;
     h.support_snorm_render_buffer = true;
     h.support_viewport_index_layer = true;
-    h.min_ssbo_alignment = dev.props.limits.minStorageBufferOffsetAlignment;
+    h.min_ssbo_alignment = storage_binding_align();
     h.support_geometry_shader_passthrough = false;
     h.support_conditional_barrier = true;   // (barriers in loops kept: see the WebGPU renderer's 4f5e3e6)
     return h;
@@ -1125,7 +1125,10 @@ uint64_t translator_stamp() {
     // the pinned graphics profile even if the base profile already has the requested width)
     const uint32_t lanes[] = {profile().warp_size_potentially_larger_than_guest ? 1u : 0u, profile().max_subgroup_size,
                               profile().has_broken_spirv_fragment_shuffle ? 1u : 0u, (uint32_t)dev.sg32_stages,
-                              getenv("RX_VK_WARP64") ? 1u : 0u};
+                              getenv("RX_VK_WARP64") ? 1u : 0u,
+                              // (and where the translation starts a storage binding: offsets are counted from there, so a cache
+                              // made on a 16-aligned GPU is no use on a 64-aligned one in the same folder, a laptop's two GPUs)
+                              (uint32_t)storage_binding_align()};
     add(lanes, sizeof lanes);
     // (k10) f16 lowered to f32 on a GPU without f16 shaders (host_info): only then, so other GPUs keep their caches
     if (!dev.vk12.shaderFloat16) {

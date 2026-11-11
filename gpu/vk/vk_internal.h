@@ -100,6 +100,16 @@ struct Device {
 };
 extern Device dev;
 
+/// (hookshot) Where a storage buffer binding starts: the address rounded down to this, the shaders' offsets counted from there
+/// (vk_shader.cpp make_profile / host_info, the translator's ssbo_align_mask; vk_draw.cpp's descriptor writer). At least 16
+/// bytes, whatever the device allows: the translator reads 8- and 16-byte accesses through vector views (offset >> 3, >> 4),
+/// exact only while a binding starts on a 16-byte boundary. At AMD's 4 bytes an aligned access could start at any word of the
+/// binding and the view read the vector before it: OoT's light colours shifted (green lighting, cyan sky). Found for Lichii
+/// (zortos293/Lichii#295, Fritchii 57ed438cd, from Matt Artist and sharkiix); NVIDIA's own alignment is 16 already
+inline uint64_t storage_binding_align() {
+    return dev.props.limits.minStorageBufferOffsetAlignment > 16 ? dev.props.limits.minStorageBufferOffsetAlignment : 16;
+}
+
 /// A range of guest memory as the GPU sees it: a buffer (an imported pool), the offset in it, and its device address
 struct BufferRef {
     VkBuffer buffer = VK_NULL_HANDLE;

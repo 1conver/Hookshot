@@ -3025,7 +3025,7 @@ void build_descriptors(const NvnState& s, const Program& p) {
         w.descriptorType = type;
         return w;
     };
-    const uint64_t salign = std::max<uint64_t>(dev.props.limits.minStorageBufferOffsetAlignment, 4);
+    const uint64_t salign = storage_binding_align();   // (the translator's: vk_internal.h)
     for (const Stage& st : p.stages) {
         const Shader::Info& info = st.info;
         const int ns = st.nvn_stage;
