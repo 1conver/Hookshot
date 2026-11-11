@@ -266,9 +266,17 @@ static const MkwVkRenderer *load_vulkan(const char *dll) {
     }
     vk_module = m;
     mkwvk_init_fn init = (mkwvk_init_fn)(void *)GetProcAddress(m, "mkwvk_init");
-    const MkwVkRenderer *r = init ? init(&vk_host) : NULL;
-    if (!r || r->version != MKWVK_API_VERSION) {
-        hos_log("rx: the Vulkan back end did not start: WebGPU");
+    if (!init) {
+        hos_log("rx: %s has no mkwvk_init: WebGPU", path);
+        return NULL;
+    }
+    const MkwVkRenderer *r = init(&vk_host);
+    if (!r) {
+        hos_log("rx: mkwvk_init returned NULL: WebGPU");
+        return NULL;
+    }
+    if (r->version != MKWVK_API_VERSION) {
+        hos_log("rx: mkwvk_init version mismatch (%u vs %u): WebGPU", r->version, MKWVK_API_VERSION);
         return NULL;
     }
     return r;

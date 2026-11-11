@@ -1318,13 +1318,28 @@ __attribute__((visibility("default")))
 #endif
 const MkwVkRenderer* mkwvk_init(const MkwVkHost* h) {
     using namespace mkwvk;
-    if (!h || h->version != MKWVK_API_VERSION) return nullptr;
-    host = h;
-    if (!load_global()) {
-        logf("vk: vulkan-1.dll not found");
+    if (!h) return nullptr;
+    if (h->version != MKWVK_API_VERSION) {
+        std::fprintf(stderr, "vk: host version mismatch: host has %u, expected %u\n", h->version, MKWVK_API_VERSION);
         return nullptr;
     }
-    if (!create_instance() || !pick_device() || !create_device()) return nullptr;
+    host = h;
+    if (!load_global()) {
+        logf("vk: load_global failed (Vulkan loader library or vkCreateInstance missing)");
+        return nullptr;
+    }
+    if (!create_instance()) {
+        logf("vk: create_instance failed");
+        return nullptr;
+    }
+    if (!pick_device()) {
+        logf("vk: pick_device failed");
+        return nullptr;
+    }
+    if (!create_device()) {
+        logf("vk: create_device failed");
+        return nullptr;
+    }
     logf("vk: %s, Vulkan %u.%u, driver %#x; mesh shaders %s, host memory import %s, pipeline libraries %s",
          dev.props.deviceName, VK_VERSION_MAJOR(dev.props.apiVersion), VK_VERSION_MINOR(dev.props.apiVersion),
          dev.props.driverVersion, dev.mesh_shader ? "yes" : "no", dev.external_memory_host ? "yes" : "no",
