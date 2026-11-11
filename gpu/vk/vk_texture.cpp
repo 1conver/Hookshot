@@ -3580,6 +3580,20 @@ uint64_t preset_texture_budget(uint64_t preset_mb, bool preset_applies, bool vra
     return integrated ? std::min(b, own) : b;
 }
 
+std::atomic<bool> g_reload_textures_pending{false};
+std::atomic<int64_t> g_reload_textures_time{0};
+
+void trigger_texture_reload() {
+    g_reload_textures_pending.store(true, std::memory_order_release);
+    g_reload_textures_time.store(prof_now(), std::memory_order_relaxed);
+    logf("vk: user requested texture reload (F9)");
+}
+
+bool is_texture_reloading() {
+    const int64_t t = g_reload_textures_time.load(std::memory_order_relaxed);
+    return t > 0 && (prof_now() - t) < 2000000000LL;
+}
+
 void texture_frame(uint64_t completed) {
     upload_frame_report();
     frame_upload_ns.store(0, std::memory_order_relaxed);
@@ -3679,6 +3693,35 @@ void texture_frame(uint64_t completed) {
         it = dead.erase(it);
     }
     pool_trim();
+    if (g_reload_textures_pending.exchange(false, std::memory_order_acq_rel)) {
+        logf("vk: reloading textures (F9)...");
+        {
+            std::lock_guard lk(pool_mu);
+            for (auto& [k, v] : target_pool) {
+                for (auto& p : v) pool_destroy(p);
+            }
+            target_pool.clear();
+            pool_bytes = pool_n = 0;
+        }
+        for (auto& kv : textures) {
+            Texture* tex = kv.second.get();
+            if (!tex) continue;
+            for (auto it = tex->views.begin(); it != tex->views.end(); ) {
+                if (it->second == VK_NULL_HANDLE) {
+                    it = tex->views.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+            tex->view_failed_frame = 0;
+            if (!tex->gpu_written) {
+                tex->uploaded = false;
+                tex->checked_epoch = 0;
+                tex->upload_gen = 0;
+            }
+        }
+        destroy_gen++;
+    }
     // A budget: RX_VK_VRAM_MB of textures (default 4096), and less when the driver says the process is near what it
     // may have (other programs use the GPU too). The least recently used go first, down to 7/8 of it; nothing the
     // last 8 presents used, nothing recorded work may still read.

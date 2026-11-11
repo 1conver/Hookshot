@@ -8429,4 +8429,18 @@ UniformUpload uniform_upload(uint64_t size) {
     return {{cur->stream, at, size, 0}, cur->mapped + at, cur->stream_alloc};
 }
 
+std::atomic<bool> g_reload_shaders_pending{false};
+std::atomic<int64_t> g_reload_shaders_time{0};
+
+void trigger_shader_reload() {
+    g_reload_shaders_pending.store(true, std::memory_order_release);
+    g_reload_shaders_time.store(prof_now(), std::memory_order_relaxed);
+    logf("vk: user requested shader reload (F10 / menu)");
+}
+
+bool is_shader_reloading() {
+    const int64_t t = g_reload_shaders_time.load(std::memory_order_relaxed);
+    return t > 0 && (prof_now() - t) < 2000000000LL;
+}
+
 } // namespace mkwvk

@@ -93,4 +93,7 @@ uint64_t ub_overlay(uint64_t addr, uint64_t n, uint8_t* base, const std::functio
 /// Guest memory as the stream's place sees it: as submitted, the stream's uniform updates before it over it
 bool ub_read(uint64_t addr, void* dst, uint64_t n);
 
+void trigger_shader_reload();
+bool is_shader_reloading();
+
 } // namespace mkwvk

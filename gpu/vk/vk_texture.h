@@ -212,4 +212,7 @@ bool texels_fit(const nvn_tex* t, const NVNcopyRegion* r, uint64_t row, uint64_t
 void texture_read_texels(const nvn_tex* t, unsigned level, unsigned layer0, const NVNcopyRegion* r, uint8_t* dst,
                          uint64_t row, uint64_t img, bool write);
 
+void trigger_texture_reload();
+bool is_texture_reloading();
+
 } // namespace mkwvk
