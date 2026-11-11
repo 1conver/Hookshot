@@ -112,6 +112,10 @@ const char* tx_menu_shortcut(int v) {
     static const char* const names[] = {"Insert or F1", "F1 only", "Insert, F1 or Esc"};
     return names[std::clamp(v, 0, 2)];
 }
+const char* tx_compact_menu_key(int v) {
+    static const char* const names[] = {"Right Shift", "Right Ctrl"};
+    return names[std::clamp(v, 0, 1)];
+}
 const char* tx_hdr(int v) { return v == 1 ? "Expanded" : v == 2 ? "Native (the game's)" : "Off"; }
 const char* tx_nits(int v) {
     static char b[24];
@@ -916,6 +920,10 @@ Row rows[] = {
      "Which keys open and close this menu. F1 always does; F1 only leaves Insert free for an overlay. With Esc, Esc opens it "
      "too, as a PC game's pause menu (open, Esc still goes back a page or closes it).",
      nullptr, false, true},
+    {TAB_CONTROLS, "Compact menu key", &opts.compact_menu_key, 0, 1, 1, tx_compact_menu_key,
+     "Which key switches between the full menu and the compact bar (or opens directly to the compact bar when held "
+     "with the menu shortcut).",
+     nullptr, false, true},
     // Debug: the tools' switch, the tools themselves below it while they are on (cheat: menu_tick does what they do), then the
     // developer's rows
     {TAB_DEBUG, "Debug tools", &opts.debug_tools, 0, 1, 1, tx_onoff,
@@ -1129,6 +1137,11 @@ const char* cheat_confirm(int i) {
                                                  "Switch", "Open", nullptr};
     return i >= 0 && i < kCheatRows ? says[i] : nullptr;
 }
+/// The button label on an action tool's row ("": not a button action)
+const char* cheat_button_text(int i) {
+    static const char* const buttons[kCheatRows] = {"", "", "Mark", "Return", "", "", "", "", "Choose map", "Switch", "Edit items", ""};
+    return i >= 0 && i < kCheatRows ? buttons[i] : "";
+}
 constexpr int kRows = sizeof rows / sizeof rows[0];
 
 int cur_tab = TAB_GRAPHICS;
@@ -1207,6 +1220,7 @@ int tab_row_to_global(int t, int local_idx) {
 }
 
 std::atomic<bool> open_now{false};
+bool tune_mode = false;
 bool menu_refresh = false;
 // (a value too long for its row, a GPU's name: the selected row's slides through it, a character a step, resting at
 // each end; the other rows end it with "...". The drawing (fit) says how far it can slide, menu_tick moves it)
@@ -1923,8 +1937,8 @@ void draw_debug_rows(ui::Ctx& c, float cx0, float cx1, float top, float bottom, 
         }
         if (r.cheat == 0 || r.cheat == 1 || r.cheat == 7 || r.value) return halves_w + pad;
         const std::string v = r.cheat == 11 ? "1.25x" : cheat_value(r.cheat);   // (Movement speed: its widest, the cell kept still)
-        const char* const says[kCheatRows] = {"", "", "Mark", "Return", "", "", "", "", "Choose map", "Switch", "Edit items", ""};
-        return ui::size_of(c.f.strong, px, v.empty() ? says[r.cheat] : v.c_str()).x + (cheat_chooses(r.cheat) ? 68 : tight ? 56 : 60) * s;   // (choice_cell keeps 48 for arrows either way)
+        const char* const says = cheat_button_text(r.cheat);
+        return ui::size_of(c.f.strong, px, v.empty() ? says : v.c_str()).x + (cheat_chooses(r.cheat) ? 68 : tight ? 56 : 60) * s;   // (choice_cell keeps 48 for arrows either way)
     };
     float name_need[2] = {0, 0}, cell_full[2] = {halves_w + 64 * s, halves_w + 64 * s}, cell_tight[2] = {halves_w + 36 * s, halves_w + 36 * s};
     for (int i = 1; i < dev; ++i) {
@@ -1974,7 +1988,6 @@ void draw_debug_rows(ui::Ctx& c, float cx0, float cx1, float top, float bottom, 
     for (int g = 0; tools && g < kDebugGroups; ++g)
         heading(head_col[g] ? mid + gap * .5f : left, !two || head_col[g] ? right : mid - gap * .5f, head_row[g], debug_groups[g].title);
     if (dev_head >= 0 && n > dev) heading(left, right, dev_row, rows[tab_row_to_global(TAB_DEBUG, dev_head)].name);
-    const char* const buttons[kCheatRows] = {"", "", "Mark", "Return", "", "", "", "", "Choose map", "Switch", "Edit items", ""};
     for (int i = 0; i < n; ++i) {
         const int k = order[i];
         const Row& r = rows[tab_row_to_global(TAB_DEBUG, k)];
@@ -1999,11 +2012,51 @@ void draw_debug_rows(ui::Ctx& c, float cx0, float cx1, float top, float bottom, 
             halves_cell(c, va, vb, "Kid", "Adult", link_age.load(std::memory_order_relaxed) == 1, selected, false);
         } else {
             const std::string v = cheat_value(r.cheat);
-            choice_cell(c, va, vb, v.empty() ? buttons[r.cheat] : v, selected, cheat_chooses(r.cheat), cheat_chooses(r.cheat), r.cheat == 9);
+            choice_cell(c, va, vb, v.empty() ? cheat_button_text(r.cheat) : v, selected, cheat_chooses(r.cheat), cheat_chooses(r.cheat), r.cheat == 9);
         }
         hits.add(x0, std::max(y, top), x1, std::min(y + rh, bottom), menu_hit::kRow, k, va.x, vb.x);
     }
     c.d->PopClipRect();
+}
+
+const char* const tab_titles[TAB_COUNT] = {"Graphics", "Audio", "Gameplay", "Controls", "Debug"};
+inline const char* tab_title(int t) { return t >= 0 && t < TAB_COUNT ? tab_titles[t] : "Settings"; }
+inline bool cheat_is_toggle(int c) { return c == 0 || c == 1 || c == 7; }
+
+/// Draws a row's value cell (slider, toggle, choice, or subpage arrow), shared between the full menu and tuning bar
+void row_value_cell(ui::Ctx& c, const Row& r, ImVec2 va, ImVec2 vb, bool selected, float* t0, float* t1) {
+    const float s = c.s, mid = (va.y + vb.y) * 0.5f;
+    const std::string tool = r.cheat >= 0 ? cheat_value(r.cheat) : "";
+    if (r.cheat >= 0 && cheat_is_toggle(r.cheat)) {
+        halves_cell(c, va, vb, "Off", "On", tool == "On", selected, false);
+    } else if (r.cheat >= 0 && age_shown(r.cheat)) {
+        halves_cell(c, va, vb, "Kid", "Adult", link_age.load(std::memory_order_relaxed) == 1, selected, false);
+    } else if (r.cheat >= 0 && !tool.empty()) {
+        choice_cell(c, va, vb, tool, selected, cheat_chooses(r.cheat), cheat_chooses(r.cheat));
+    } else if (r.cheat >= 0 && *cheat_button_text(r.cheat)) {
+        choice_cell(c, va, vb, cheat_button_text(r.cheat), selected, false, false, r.cheat == 9);
+    } else if (!r.value) {
+        if (pending == &r) choice_cell(c, va, vb, "Press again to confirm", selected, false, false);
+        else {
+            choice_cell(c, va, vb, "", selected, false, false);
+            ui::triangle(c, ImVec2(vb.x - 15 * s, mid), 10 * s, 1, selected ? ui::kGoldInk : ui::kInk);
+        }
+    } else {
+        const bool fixed = row_fixed(r.value);
+        const std::string lo = r.text(r.lo), hi = r.text(r.hi);
+        const float half = (vb.x - va.x) * 0.5f - 18 * s;
+        if (is_slider(r)) {
+            slider_cell(c, va, vb, r.text(*r.value), menu_hit::slider_permille(*r.value, r.lo, r.hi), selected, t0, t1);
+        } else if (r.hi - r.lo == r.step && !fixed && ui::size_of(c.f.strong, 18 * s, lo.c_str()).x <= half &&
+                   ui::size_of(c.f.strong, 18 * s, hi.c_str()).x <= half) {
+            halves_cell(c, va, vb, lo.c_str(), hi.c_str(), *r.value == r.hi, selected, fixed);
+        } else {
+            const bool output_row = r.value == &opts.output_res;
+            const bool left = !fixed && (!output_row || step_output_choice(*r.value, -1) != *r.value) && (!stops_at_ends(r) || *r.value > r.lo);
+            const bool right = !fixed && (!output_row || step_output_choice(*r.value, 1) != *r.value) && (!stops_at_ends(r) || *r.value < r.hi);
+            choice_cell(c, va, vb, r.text(*r.value), selected, left, right, fixed);
+        }
+    }
 }
 
 void draw_options(ui::Ctx& c) {
@@ -2011,7 +2064,6 @@ void draw_options(ui::Ctx& c) {
     ui::banner(c, hh);
     // the tabs in the banner: dark ink on the tan, the shown one light on a dark inset; the tab keys at their ends (a click there
     // is the previous or the next tab)
-    const char* const tab_titles[TAB_COUNT] = {"Graphics", "Audio", "Gameplay", "Controls", "Debug"};
     float tw[TAB_COUNT], total = 0;
     for (int i = 0; i < TAB_COUNT; i++) tw[i] = ui::size_of(c.f.heading, 23 * s, tab_titles[i]).x + 56 * s, total += tw[i];
     float x = (c.w - total) * 0.5f;
@@ -2062,15 +2114,21 @@ void draw_options(ui::Ctx& c) {
     if (help_tall_w != hx1 - hx0) help_tall_w = hx1 - hx0, help_tall = measure_help(c, hx1 - hx0 - 48 * s);
     // (a row that opens a page (Motion, Controls, Open debug tools): A or Enter opens it; Restart and Quit: A or Enter twice)
     const bool confirms = &selr == &rows[kRestartRow] || &selr == &rows[kQuitRow];
-    ui::Prompt prompt_list[5] = {{ui::kUpDown, "Choose"}, {ui::kLeftRight, "Change"}, {ui::kTabs, "Tabs"}, {ui::kBack, "Close"}};
-    int prompts_n = cur_tab == TAB_MOTION ? 3 : 4;
-    if (!selr.value) prompt_list[1] = {ui::kConfirm, confirms ? (pending == &selr ? "Confirm" : selr.name) : "Open"};
-    if (cur_tab == TAB_MOTION) prompt_list[2] = {ui::kBack, "Back"};   // (Esc: to Controls)
-    if (selr.cheat >= 0) {   // (a debug tool: Change when Left and Right do something, then what confirm does)
-        prompts_n = 1;
-        if (selr.cheat <= 1 || selr.cheat == 7 || cheat_chooses(selr.cheat) || age_shown(selr.cheat))
-            prompt_list[prompts_n++] = {ui::kLeftRight, "Change"};
+    ui::Prompt prompt_list[7] = {{ui::kUpDown, "Choose"}};
+    int prompts_n = 1;
+    const char* compact_key_name = opts.compact_menu_key == 1 ? "RCtrl" : "RShift";
+    if (selr.value || (selr.cheat >= 0 && (selr.cheat <= 1 || selr.cheat == 7 || cheat_chooses(selr.cheat) || age_shown(selr.cheat)))) {
+        prompt_list[prompts_n++] = {ui::kLeftRight, "Change"};
+        if (selr.cheat >= 0) if (const char* says = cheat_confirm(selr.cheat)) prompt_list[prompts_n++] = {ui::kConfirm, says};
+        prompt_list[prompts_n++] = {ui::kCompact, "Compact", compact_key_name};
+    } else if (selr.cheat >= 0) {
         if (const char* says = cheat_confirm(selr.cheat)) prompt_list[prompts_n++] = {ui::kConfirm, says};
+        prompt_list[prompts_n++] = {ui::kCompact, "Compact", compact_key_name};
+    } else {
+        prompt_list[prompts_n++] = {ui::kConfirm, confirms ? (pending == &selr ? "Confirm" : selr.name) : "Open"};
+    }
+    if (cur_tab == TAB_MOTION) prompt_list[prompts_n++] = {ui::kBack, "Back"};   // (Esc: to Controls)
+    else {
         prompt_list[prompts_n++] = {ui::kTabs, "Tabs"}, prompt_list[prompts_n++] = {ui::kBack, "Close"};
     }
     const float bar_top = ui::prompt_bar_top(c);   // (the strip itself drawn last, over all: below)
@@ -2112,38 +2170,78 @@ void draw_options(ui::Ctx& c) {
         name_cell(c, ImVec2(rx0, y), ImVec2(split, y + rh), r.name, selected, restart_changed(r));
         const ImVec2 va(split, y), vb(rx1, y + rh);
         float t0 = 0, t1 = 0;
-        const std::string tool = r.cheat >= 0 ? cheat_value(r.cheat) : "";
-        const bool tool_toggle = r.cheat == 0 || r.cheat == 1 || r.cheat == 7;   // (On and Off: halves, as the tabs' toggles)
-        if (r.cheat >= 0 && tool_toggle) {
-            halves_cell(c, va, vb, "Off", "On", tool == "On", selected, false);
-        } else if (r.cheat >= 0 && !tool.empty()) {   // (a debug tool with a value: arrows when Left and Right choose it)
-            choice_cell(c, va, vb, tool, selected, cheat_chooses(r.cheat), cheat_chooses(r.cheat));
-        } else if (!r.value) {   // (a page, or Restart and Quit: Confirm until the second press)
-            if (pending == &r) choice_cell(c, va, vb, "Press again to confirm", selected, false, false);
-            else {
-                choice_cell(c, va, vb, "", selected, false, false);
-                ui::triangle(c, ImVec2(vb.x - 15 * s, y + rh * 0.5f), 10 * s, 1, selected ? ui::kGoldInk : ui::kInk);
-            }
-        } else {
-            const bool fixed = row_fixed(r.value);
-            const std::string lo = r.text(r.lo), hi = r.text(r.hi);
-            const float half = (vb.x - va.x) * 0.5f - 18 * s;
-            if (is_slider(r)) {
-                slider_cell(c, va, vb, r.text(*r.value), menu_hit::slider_permille(*r.value, r.lo, r.hi), selected, &t0, &t1);
-            } else if (r.hi - r.lo == r.step && !fixed && ui::size_of(c.f.strong, 18 * s, lo.c_str()).x <= half &&
-                       ui::size_of(c.f.strong, 18 * s, hi.c_str()).x <= half) {
-                halves_cell(c, va, vb, lo.c_str(), hi.c_str(), *r.value == r.hi, selected, fixed);
-            } else {
-                const bool output_row = r.value == &opts.output_res;
-                const bool left = !fixed && (!output_row || step_output_choice(*r.value, -1) != *r.value) && (!stops_at_ends(r) || *r.value > r.lo);
-                const bool right = !fixed && (!output_row || step_output_choice(*r.value, 1) != *r.value) && (!stops_at_ends(r) || *r.value < r.hi);
-                choice_cell(c, va, vb, r.text(*r.value), selected, left, right, fixed);
-            }
-        }
+        row_value_cell(c, r, va, vb, selected, &t0, &t1);
         hits.add(rx0, std::max(y, top - 8 * s), rx1, std::min(y + rh, bottom + 8 * s), menu_hit::kRow, i, va.x, vb.x, t0, t1);
     }
     c.d->PopClipRect();
     ui::prompt_bar(c, prompt_list, prompts_n);   // (the prompts, on top of the help and the rows)
+}
+
+/// The tuning bar: a compact TV-style picture settings bar docked at the bottom of the screen,
+/// leaving 90% of the game scene visible so visual settings can be judged live.
+void draw_tune_bar(ui::Ctx& c) {
+    const float s = c.s;
+    const int count = tab_row_count(cur_tab);
+    int& sel = tab_selected[cur_tab];
+    if (sel >= count) sel = count - 1;
+    auto heading_at = [&](int k) { return rows[tab_row_to_global(cur_tab, k)].heading; };
+    while (heading_at(sel)) sel = (sel + 1) % count;
+    Row& r = rows[tab_row_to_global(cur_tab, sel)];
+
+    const float bw = std::min(c.w - 2 * c.safe, 740 * s);
+    const float bx0 = (c.w - bw) * 0.5f, bx1 = bx0 + bw;
+    const float bh = 104 * s;
+    const float by1 = c.h - c.safe - 16 * s;
+    const float by0 = by1 - bh;
+
+    // Dark panel with subtle edge
+    c.d->AddRectFilled(ImVec2(bx0, by0), ImVec2(bx1, by1), ui::rgba(14, 10, 6, 235), 6 * s);
+    c.d->AddRect(ImVec2(bx0, by0), ImVec2(bx1, by1), ui::alpha(ui::kEdge, 0.9f), 6 * s, std::max(1.0f, s));
+
+    // Header strip inside card: Tab Name and restart status
+    const char* cur_name = cur_tab == TAB_MOTION ? "Motion" : tab_title(cur_tab);
+    const float header_y = by0 + 13 * s;
+    ui::text_mid(c, c.f.heading, 14 * s, bx0 + 16 * s, header_y, ui::kGoldHi, cur_name);
+
+    char tab_hint[32];
+    if (c.pad) snprintf(tab_hint, sizeof tab_hint, " (LB / RB)");
+    else snprintf(tab_hint, sizeof tab_hint, " (Q / E)");
+    const float thw = ui::size_of(c.f.heading, 14 * s, cur_name).x;
+    ui::text_mid(c, c.f.body, 12 * s, bx0 + 16 * s + thw + 4 * s, header_y, ui::kDim, tab_hint);
+
+    if (restart_changed(r)) {
+        ui::diamond(c, ImVec2(bx1 - 20 * s, header_y), 4 * s, ui::kGoldHi);
+        ui::text_mid_centre(c, c.f.body, 12 * s, bx1 - 68 * s, header_y, ui::kGoldHi, "Restart needed");
+    }
+
+    // Active Row widget: Name cell and Value cell
+    const float ry0 = by0 + 26 * s, ry1 = ry0 + 38 * s;
+    const float rx0 = bx0 + 14 * s, rx1 = bx1 - 14 * s;
+    const float split = rx0 + (rx1 - rx0) * 0.46f;
+    name_cell(c, ImVec2(rx0, ry0), ImVec2(split, ry1), r.name, true, restart_changed(r));
+
+    const ImVec2 va(split, ry0), vb(rx1, ry1);
+    float t0 = 0, t1 = 0;
+    row_value_cell(c, r, va, vb, true, &t0, &t1);
+    hits.add(rx0, ry0, rx1, ry1, menu_hit::kRow, sel, va.x, vb.x, t0, t1);
+
+    // Prompts line
+    const char* compact_key_name = opts.compact_menu_key == 1 ? "RCtrl" : "RShift";
+    ui::Prompt tune_prompts[4] = {
+        {ui::kUpDown, "Setting"},
+        {ui::kLeftRight, "Adjust"},
+        {ui::kCompact, "Full menu", compact_key_name},
+        {ui::kBack, "Close"}
+    };
+    const bool confirms = &r == &rows[kRestartRow] || &r == &rows[kQuitRow];
+    if (r.cheat >= 0 && cheat_confirm(r.cheat)) {
+        tune_prompts[1] = {ui::kConfirm, cheat_confirm(r.cheat)};
+    } else if (!r.value && r.cheat < 0) {
+        tune_prompts[1] = {ui::kConfirm, confirms ? (pending == &r ? "Confirm" : r.name) : "Open"};
+    }
+    const float pw = ui::prompts(c, ImVec2(0, 0), tune_prompts, 4, false);
+    const float px0 = bx0 + (bw - pw) * 0.5f;
+    ui::prompts(c, ImVec2(px0, by1 - 32 * s), tune_prompts, 4, true);
 }
 
 void draw_controls(ui::Ctx& c) {
@@ -2582,7 +2680,7 @@ float menu_ox = 0;   // (the menu's column's left edge in the window: more than 
 /// middle (a window of 16:9 or narrower: the whole of it). The pages draw from 0 as on 16:9; their vertices and clip
 /// rectangles are moved over after, and menu_tick moves the mouse back by menu_ox before it tests the hits
 void draw_menu(ui::Ctx& c) {
-    c.d->AddRectFilled(ImVec2(0, 0), ImVec2(c.w, c.h), ui::rgba(8, 5, 2, ui::kDimAlpha));   // (the game behind, dimmed)
+    if (!(tune_mode && page == 0)) c.d->AddRectFilled(ImVec2(0, 0), ImVec2(c.w, c.h), ui::rgba(8, 5, 2, ui::kDimAlpha));   // (the game behind, dimmed)
     ui::Ctx k = c;
     k.w = std::min(c.w, std::floor(c.h * 16.0f / 9.0f + 0.5f));
     menu_ox = std::floor((c.w - k.w) * 0.5f);
@@ -2592,6 +2690,7 @@ void draw_menu(ui::Ctx& c) {
     else if (page == 1) draw_controls(k);
     else if (page == 3) draw_teleport(k);
     else if (page == 4) draw_inventory(k);
+    else if (tune_mode) draw_tune_bar(k);
     else draw_options(k);
     if (menu_ox <= 0) return;
     for (int i = vtx0; i < c.d->VtxBuffer.Size; i++) c.d->VtxBuffer[i].pos.x += menu_ox;
@@ -2678,7 +2777,7 @@ void draw_fps(ui::Ctx& c, bool under_banner) {
     // wider than 16:9 that the column fits beside the menu's, in its own corner)
     const bool beside = menu_ox >= (level >= fs::kGraph ? gw : nw + lw) + 2 * c.safe + 8 * s;
     int corner = std::clamp(opts.fps_corner, 0, 3);
-    if (under_banner && !beside) corner = 0, level = std::min(level, (int)fs::kFrameTime);
+    if (under_banner && !tune_mode && !beside) corner = 0, level = std::min(level, (int)fs::kFrameTime);
     const bool left = corner & 1, bottom = corner >= 2;
     // (the column's height, to anchor it at the bottom)
     const float row = 17 * s, gh = 50 * s, lh = 16 * s;
@@ -2687,7 +2786,7 @@ void draw_fps(ui::Ctx& c, bool under_banner) {
     if (level >= fs::kGraph) h += 8 * s + gh + 4 * s;
     if (level >= fs::kBreakdown) h += 10 * s + 6 * s + 4 * lh + 6 * s + 3 * lh;
     const float edge = left ? c.safe : c.w - c.safe;
-    const float top = bottom ? c.h - c.safe - h : under_banner && page != 5 && !beside ? banner_h(c) + 10 * s : c.safe;
+    const float top = bottom ? c.h - c.safe - h : under_banner && !tune_mode && page != 5 && !beside ? banner_h(c) + 10 * s : c.safe;
     // (x for a width at the column's edge)
     const auto at = [&](float w) { return left ? edge : edge - w; };
     // (the number's colour: at FPS the classic green whatever the rate, the counter as it always was (#1957); from Frame time on
@@ -3376,6 +3475,30 @@ void menu_tick() {
     const bool chord_now = (raw & chord) == chord && (pad_held & chord) != chord;
     pad_held = raw;
     if (pad_press) pad_last = true;   // (a controller: its buttons in the prompts)
+#ifndef VK_RSHIFT
+#define VK_RSHIFT 0xA1
+#endif
+#ifndef VK_RCONTROL
+#define VK_RCONTROL 0xA3
+#endif
+    const int tune_key = opts.compact_menu_key == 1 ? VK_RCONTROL : VK_RSHIFT;
+    const int tune_parent_key = opts.compact_menu_key == 1 ? VK_CONTROL : VK_SHIFT;
+    static bool tune_held = false, tune_cancelled = false;
+    const bool tune_down = mine && (GetAsyncKeyState(tune_key) & 0x8000) != 0;
+    if (host && host->take_key_press) {
+        (void)host->take_key_press(tune_key);
+        (void)host->take_key_press(tune_parent_key);
+    }
+    bool tune_release = false;
+    if (tune_down && !tune_held) {
+        tune_cancelled = false;
+    } else if (!tune_down && tune_held) {
+        if (!tune_cancelled && open_now.load() && page == 0 && listening == 0) tune_release = true;
+    }
+    tune_held = tune_down;
+    if (!open_now.load() || page != 0 || listening != 0 || (tune_down && (GetAsyncKeyState(VK_TAB) & 0x8000)))
+        tune_cancelled = true;
+    if (tune_release) pad_last = false;
     {   // (RX_VK_UI_PROMPTS=pad or keys: the prompts for screenshots of test runs, which have no controller and no focus)
         static const char* force = getenv("RX_VK_UI_PROMPTS");
         if (force) pad_last = !strcmp(force, "pad");
@@ -3451,7 +3574,7 @@ void menu_tick() {
         int now[mr::kMax];
         restart_values(now);
         restart_state.choose_later(now);
-        open_now = false, page = 0, changed = true;
+        open_now = false, page = 0, tune_mode = false, changed = true;
     };
     // (Menu shortcut "Insert, F1 or Esc": Esc on a closed menu opens it, the keyboard's alone (the
     // gamepad's back is Esc only while it is open, above). The press that opened it does not go back a page below. No
@@ -3464,6 +3587,8 @@ void menu_tick() {
         page = 5, ask_sel = 0, listening = 0, changed = true;
     } else if (press[0] || press[6] || esc_opens) {
         open_now = !open_now.load(), changed = true;
+        if (open_now.load()) tune_mode = tune_down;
+        else tune_mode = false;
         page = 0, listening = 0;
         // (the layout row shows the controls as they are: host/nn_hid.c keeps them, the ini's pad_ lines, and a saved
         // layout is not applied over them at start)
@@ -3485,7 +3610,7 @@ void menu_tick() {
             logf("menu: restart now, to apply %s", restart_list(", ").c_str());
             save();
             pipeline_cache_save(true);
-            open_now = false, page = 0, changed = true;
+            open_now = false, page = 0, tune_mode = false, changed = true;
             PostMessageA(app_window(), WM_APP + 9, 0, 0);
         }
     } else if (open_now.load() && page == 1) {   // (hookshot) the Controls page
@@ -3667,11 +3792,15 @@ void menu_tick() {
             // values change by a click on their arrows or halves, a slider's drag, Left and Right, A and Enter)
             if (ptr.wheel && drag_row < 0) wheel_rows[cur_tab] += ptr.wheel, changed = true;
         }
+        if (tune_down && (press[12] || tab_left || tab_right || press[1] || press[2] || press[3] || press[4] || press[5] || press[7] || ptr.pressed))
+            tune_cancelled = true;
+        const bool tune_toggle = tune_release || pad(HOS_PAD_WEST);
+        if (tune_toggle && listening == 0) tune_mode = !tune_mode, changed = true;
         if (press[5] && cur_tab == TAB_MOTION) cur_tab = TAB_CONTROLS, press[5] = false, changed = true;   // (back)
         if (press[5] && pending) pending = nullptr, changed = true;   // (a Restart or Quit waiting for its second press: cancelled)
         else if (press[5] && cur_tab == TAB_MOTION) cur_tab = TAB_CONTROLS, press[5] = false, changed = true;   // (back)
         else if (press[5] && restart_ask()) page = 5, ask_sel = 0, changed = true;   // (the restart question first)
-        else if (press[5]) open_now = false;
+        else if (press[5]) open_now = false, tune_mode = false;
         // (the tabs: LB and RB, Q and E, or Tab; from the Motion page, as from Controls)
         if ((tab_left || tab_right) && cur_tab == TAB_MOTION) cur_tab = TAB_CONTROLS;
         if (tab_left) cur_tab = (cur_tab + TAB_COUNT - 1) % TAB_COUNT, changed = true;
@@ -3738,6 +3867,7 @@ void menu_tick() {
         static bool told = false;
         const bool now_open = open_now.load();
         if (!now_open) {
+            tune_mode = false;
             if (drag_row >= 0) save();   // (a slider let go off the window: kept now)
             hover_tab = -1, drag_row = -1, mouse_read = false;
             pending = nullptr;

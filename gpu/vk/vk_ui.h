@@ -159,7 +159,7 @@ inline void glow(Ctx& c, ImVec2 a0, ImVec2 b0) {
 inline void gold(Ctx& c, ImVec2 a0, ImVec2 b0) { c.d->AddRectFilledMultiColor(a0, b0, kGoldHi, kGoldHi, kGold, kGold); }
 
 // ---- the button prompts: the keys, or a controller's buttons by position (any layout: the dot lit) ----
-enum Glyph { kUpDown, kLeftRight, kTabs, kConfirm, kBack, kKey };
+enum Glyph { kUpDown, kLeftRight, kTabs, kConfirm, kBack, kKey, kCompact };
 struct Prompt {
     Glyph g;
     const char* what;
@@ -178,6 +178,20 @@ inline float glyph(Ctx& c, float px, ImVec2 p, const Prompt& pr, bool draw) {
         return w;
     };
     if (pr.g == kKey) return key(p.x, pr.key);
+    if (pr.g == kCompact) {
+        if (!c.pad) return key(p.x, pr.key ? pr.key : "RShift");
+        const float r = hh * 0.5f;
+        const ImVec2 m(p.x + r, my);
+        if (draw) {
+            c.d->AddCircleFilled(m, r, cap);
+            const ImVec2 at[4] = {m + ImVec2(0, -r * 0.5f), m + ImVec2(r * 0.5f, 0), m + ImVec2(-r * 0.5f, 0), m + ImVec2(0, r * 0.5f)};
+            for (int i = 0; i < 4; i++) {
+                if (i == 2) c.d->AddCircleFilled(at[i], r * 0.27f, ink);
+                else c.d->AddCircle(at[i], r * 0.22f, dim, 0, std::max(1.0f, s));
+            }
+        }
+        return 2 * r;
+    }
     if (!c.pad) {
         switch (pr.g) {
         case kUpDown:
