@@ -50,6 +50,7 @@ Agents may add and re-score rows; a person reviews the change like any other PR.
 
 | Problem | Fixed by | Notes |
 |---|---|---|
+| Write-back diagnostics cannot report actual GPU mirror/shadow differences per chunk | [#2131](https://github.com/NotRexed/Hookshot/pull/2131) | Opt-in completed-submission observations; no copy/culling or performance change claimed. Existing dirty-origin analysis remains with blessedplummer (#2099). |
 | Every OoT shader program now translates (10 did not: TLD.MS, LDG/STG ordering, ISBERD.O, an immediate read as R254 + compute local memory, R2UR, a loop ending at its self-branch) | #1769, #1778, #1789, #1800, #1806, #1810 | in `main`, not in v2.0.13 |
 | 1D surface loads (SULD.1D) stop 16-17 compute programs from translating; fits the green glow on a Legion Go 2 (890M) | #1447 | in `main`, not in v2.0.13 (log: #bug-reporting "Bugs 2.0.13 Dodaza") |
 | Integer min/max with a wide immediate (IMNMX) does not translate | #1451 | in `main`, not in v2.0.13 (log: #bug-reporting "Bugs 2.0.13 Dodaza") |

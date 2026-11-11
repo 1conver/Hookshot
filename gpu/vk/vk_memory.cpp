@@ -3334,7 +3334,7 @@ void shadows_forget_written() {
         }
     }
 }
-// (the pass's pipeline: 16 bytes of push constants and no descriptors, its buffers by address; made once)
+// (the pass's pipeline: 24 bytes of push constants and no descriptors, its buffers by address; made once)
 struct WbdPipe {
     bool tried = false;
     VkPipelineLayout layout = VK_NULL_HANDLE;
@@ -3352,7 +3352,7 @@ bool wbd_pipe_ready() {
         logf("vk: write-back diff off: the GPU has no subgroup votes in compute shaders");
         return false;
     }
-    const VkPushConstantRange pr{VK_SHADER_STAGE_COMPUTE_BIT, 0, 16};
+    const VkPushConstantRange pr{VK_SHADER_STAGE_COMPUTE_BIT, 0, 24};
     VkPipelineLayoutCreateInfo li{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     li.pushConstantRangeCount = 1;
     li.pPushConstantRanges = &pr;
@@ -3427,6 +3427,19 @@ struct WbdChunk {   // (shaders/wb_diff.comp's Chunk)
     uint64_t mirror, shadow, guest;
     uint32_t count, vecs;   // (16-byte vectors when vecs is 1, else words)
 };
+bool wbd_observe_on() {
+    static const bool on = env_on("RX_VK_WB_OBSERVE");
+    return on;
+}
+constexpr uint64_t kWbdObserveChunks = 256u << 10; // At most 1 MiB of optional flags per table.
+struct WbdObserved {
+    uint64_t batches = 0, chunks = 0, changed = 0, bytes = 0, changed_bytes = 0, missing = 0, last_value = 0;
+} wbd_observed;
+void wbd_observe_missed(uint64_t chunks, const char* reason) {
+    wbd_observed.missing += chunks;
+    static unsigned said;
+    if (said++ < 8) logf("vk: write-back observations unavailable: %s; ordinary write-back kept", reason);
+}
 // (the pass's tables, mapped, a ring: one is taken again once the submission that read it is done)
 struct WbdTable {
     VkBuffer buf = VK_NULL_HANDLE;
@@ -3434,32 +3447,102 @@ struct WbdTable {
     uint8_t* map = nullptr;
     VkDeviceAddress address = 0;
     uint64_t bytes = 0, value = 0;
+    uint64_t observed_offset = 0;
+    uint32_t observed_count = 0;
 };
 WbdTable wbd_tables[64];
 int wbd_table_next = 0;
-WbdTable* wbd_table_get(uint64_t bytes) {
-    WbdTable& t = wbd_tables[wbd_table_next];
-    if (t.value > mem_completed) return nullptr;   // (still read by a submission the GPU has not done)
-    if (t.bytes < bytes) {
-        if (t.buf) destroy_buffer(t.buf, t.alloc);
-        t = {};
-        const uint64_t n = std::max<uint64_t>(128u << 10, (bytes + 65535) & ~65535ull);
-        void* map = nullptr;
-        if (!create_buffer(n, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, true, t.buf, t.alloc, &map) ||
-            !map) {
-            if (t.buf) destroy_buffer(t.buf, t.alloc);
-            t = {};
-            return nullptr;
+void wbd_observe_collect(WbdTable& t) {
+    if (!t.observed_count || t.value > mem_completed) return;
+    const uint64_t count = t.observed_count, offset = t.observed_offset;
+    t.observed_count = 0; // Consume once, including a failed read. Never turn missing data into clean chunks.
+    if (!t.value || !t.map || count > kWbdObserveChunks || offset != count * sizeof(WbdChunk) ||
+        offset > t.bytes || count * sizeof(uint32_t) > t.bytes - offset ||
+        !invalidate_mapped_checked(t.alloc, offset + count * sizeof(uint32_t))) {
+        wbd_observe_missed(count, "result bounds or host visibility");
+        return;
+    }
+    const auto* chunks = reinterpret_cast<const WbdChunk*>(t.map);
+    const auto* flags = reinterpret_cast<const uint32_t*>(t.map + offset);
+    uint64_t changed = 0, bytes = 0, changed_bytes = 0;
+    for (uint64_t i = 0; i < count; ++i) {
+        const uint64_t size = (uint64_t)chunks[i].count * (chunks[i].vecs ? 16u : 4u);
+        if (flags[i] > 1 || chunks[i].vecs > 1 || !size || size > (64u << 10)) {
+            wbd_observe_missed(count, "incomplete or invalid GPU result");
+            return;
         }
+        bytes += size;
+        if (flags[i]) ++changed, changed_bytes += size;
+    }
+    ++wbd_observed.batches;
+    wbd_observed.chunks += count;
+    wbd_observed.changed += changed;
+    wbd_observed.bytes += bytes;
+    wbd_observed.changed_bytes += changed_bytes; // Bytes covered by changed chunks, not exact changed-byte counts.
+    wbd_observed.last_value = std::max(wbd_observed.last_value, t.value);
+}
+bool wbd_table_make(uint64_t bytes, WbdTable& t) {
+    if (!bytes || bytes > UINT64_MAX - 65535) return false;
+    const uint64_t n = std::max<uint64_t>(128u << 10, (bytes + 65535) & ~65535ull);
+    void* map = nullptr;
+    if (create_buffer(n, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                      true, t.buf, t.alloc, &map) && map) {
         VkBufferDeviceAddressInfo da{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO};
         da.buffer = t.buf;
         t.address = vkGetBufferDeviceAddress(dev.device, &da);
-        t.map = (uint8_t*)map;
-        t.bytes = n;
+        if (t.address) {
+            t.map = (uint8_t*)map;
+            t.bytes = n;
+            return true;
+        }
+    }
+    if (t.buf) destroy_buffer(t.buf, t.alloc);
+    t = {};
+    return false;
+}
+WbdTable* wbd_table_get(uint64_t bytes) {
+    WbdTable& t = wbd_tables[wbd_table_next];
+    if (t.value > mem_completed) return nullptr;   // (still read by a submission the GPU has not done)
+    wbd_observe_collect(t); // Before its input table or its trailing flags can be overwritten or freed.
+    const uint64_t count = bytes / sizeof(WbdChunk);
+    const uint64_t extra = wbd_observe_on() && mem_rec_value && bytes % sizeof(WbdChunk) == 0 &&
+                           count <= kWbdObserveChunks ? count * sizeof(uint32_t) : 0;
+    const uint64_t wanted = bytes <= UINT64_MAX - extra ? bytes + extra : bytes;
+    if (t.bytes < wanted) {
+        WbdTable next;
+        if (wbd_table_make(wanted, next)) {
+            if (t.buf) destroy_buffer(t.buf, t.alloc);
+            t = next;
+        } else if (t.bytes < bytes) {
+            // Optional growth failed. Keep an existing input table when it fits; otherwise retry the ordinary
+            // size after releasing the retired old buffer, as the old growth path did.
+            const bool retry = t.buf || wanted != bytes;
+            if (t.buf) destroy_buffer(t.buf, t.alloc);
+            t = {};
+            if (!retry || !wbd_table_make(bytes, t)) return nullptr;
+        }
     }
     wbd_table_next = (wbd_table_next + 1) % 64;
     t.value = mem_rec_value;
     return &t;
+}
+VkDeviceAddress wbd_observe_begin(WbdTable& t, uint64_t count) {
+    if (!wbd_observe_on()) return 0;
+    const uint64_t offset = count * sizeof(WbdChunk);
+    if (!count || count > kWbdObserveChunks || !t.value || !t.map || !t.address ||
+        offset > t.bytes || count * sizeof(uint32_t) > t.bytes - offset || t.address > UINT64_MAX - offset) {
+        wbd_observe_missed(count, "result capacity");
+        return 0;
+    }
+    // Sentinel detects missing stores too. Input and results share this slot's existing allocation and lifetime.
+    memset(t.map + offset, 0xff, (size_t)count * sizeof(uint32_t));
+    if (!flush_mapped_checked(t.alloc, offset + count * sizeof(uint32_t))) {
+        wbd_observe_missed(count, "host flush");
+        return 0;
+    }
+    t.observed_offset = offset;
+    t.observed_count = (uint32_t)count;
+    return t.address + offset;
 }
 
 void memory_end_submission(VkCommandBuffer cmd) {
@@ -3481,6 +3564,15 @@ void memory_end_submission(VkCommandBuffer cmd) {
                      (long long)st_wbd_known_game, (long long)st_wbd_known_collected, (long long)st_wbd_known_replay);
             st_wbd_runs = st_wbd_bytes = st_wbd_fill_pages = 0;
             st_wbd_known_game = st_wbd_known_collected = st_wbd_known_replay = 0;
+            if (wbd_observe_on()) {
+                logf("vk: write-back observations (completed since last report): %llu batches, %llu chunks, %llu changed; "
+                     "%.1f MB compared, %.1f MB covered by changed chunks; %llu unavailable chunks; last completed value %llu",
+                     (unsigned long long)wbd_observed.batches, (unsigned long long)wbd_observed.chunks,
+                     (unsigned long long)wbd_observed.changed, wbd_observed.bytes / 1048576.0,
+                     wbd_observed.changed_bytes / 1048576.0, (unsigned long long)wbd_observed.missing,
+                     (unsigned long long)wbd_observed.last_value);
+                wbd_observed = {};
+            }
             std::vector<std::pair<int64_t, uint64_t>> top;
             for (const auto& [lo, k] : live_by_pool) top.push_back({k, lo});
             std::sort(top.rbegin(), top.rend());
@@ -3636,6 +3728,7 @@ void memory_end_submission(VkCommandBuffer cmd) {
         if (!chunks.empty()) {
             WbdTable* t = wbd_table_get(chunks.size() * sizeof(WbdChunk));
             if (!t) {   // (no table free: the whole copies, the shadows forgotten for those pages)
+                if (wbd_observe_on()) wbd_observe_missed(chunks.size(), "chunk table busy or unavailable");
                 for (const ChunkSrc& c : chunk_src) {
                     const VkBufferCopy r{c.at, c.at, c.len};
                     vkCmdCopyBuffer(cmd, c.p->mirror, c.p->buffer, 1, &r);
@@ -3647,14 +3740,27 @@ void memory_end_submission(VkCommandBuffer cmd) {
             if (filled) transfer_barrier(cmd);   // (the shadows' pages from guest memory before the pass reads them)
             if (t) {
                 memcpy(t->map, chunks.data(), chunks.size() * sizeof(WbdChunk));
-                flush_mapped(t->alloc, chunks.size() * sizeof(WbdChunk));
+                const VkDeviceAddress observations = wbd_observe_begin(*t, chunks.size());
+                if (!observations) flush_mapped(t->alloc, chunks.size() * sizeof(WbdChunk));
                 GprofSpan gd(cmd, "wb diff (mirror -> guest memory where it differs from the shadow)");
                 gd.items = (int)chunks.size();
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, wbd_pipe.pipe);
-                const struct { uint64_t table; uint32_t count, pad; } pc{t->address, (uint32_t)chunks.size(), 0};
+                const struct { uint64_t table; uint32_t count, pad; uint64_t observations; }
+                    pc{t->address, (uint32_t)chunks.size(), 0, observations};
                 vkCmdPushConstants(cmd, wbd_pipe.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof pc, &pc);
                 const uint32_t n = (uint32_t)chunks.size();
                 vkCmdDispatch(cmd, std::min<uint32_t>(n, 65535u), (n + 65534u) / 65535u, 1);
+                if (observations) {
+                    VkMemoryBarrier2 barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+                    barrier.srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+                    barrier.srcAccessMask = VK_ACCESS_2_SHADER_WRITE_BIT;
+                    barrier.dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT;
+                    barrier.dstAccessMask = VK_ACCESS_2_HOST_READ_BIT;
+                    VkDependencyInfo dependency{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+                    dependency.memoryBarrierCount = 1;
+                    dependency.pMemoryBarriers = &barrier;
+                    vkCmdPipelineBarrier2(cmd, &dependency);
+                }
             }
         }
         transfer_barrier(cmd);
