@@ -324,8 +324,8 @@ int prepare(VkCommandBuffer cmd, uint32_t rw, uint32_t rh, uint32_t ow, uint32_t
         snprintf(why, sizeof why, "the render size %ux%u left its range, %ux%u to %ux%u", rw, rh, s.min_rw, s.min_rh,
                  s.feature_rw, s.feature_rh);
     // (the quality mode whose range of render sizes holds this one: the network's 3/4 is DLSS's MaxQuality range; one it
-    // misses by a pixel or two, a rounded size, takes it too: dlss_checks.h mode_for. DLAA's when the render size is the
-    // output's)
+    // misses by a little, a rounded size, takes it too: at most 1/64 of the range's largest size on each axis (2 pixels
+    // at the least), dlss_checks.h mode_for. DLAA's when the render size is the output's)
     static const NVSDK_NGX_PerfQuality_Value scaled[] = {NVSDK_NGX_PerfQuality_Value_MaxQuality, NVSDK_NGX_PerfQuality_Value_DLAA,
                                                         NVSDK_NGX_PerfQuality_Value_Balanced, NVSDK_NGX_PerfQuality_Value_MaxPerf,
                                                         NVSDK_NGX_PerfQuality_Value_UltraPerformance};
@@ -345,9 +345,17 @@ int prepare(VkCommandBuffer cmd, uint32_t rw, uint32_t rh, uint32_t ow, uint32_t
         dlss_checks::ModeRange took;
         const int k = dlss_checks::mode_for(rw, rh, ow, oh, ranges, n, &took);
         if (k < 0) {   // (the size in the log; the feature kept for the sizes it takes, not let go and made again)
-            static char refused[112];
-            snprintf(refused, sizeof refused, "no DLSS mode takes the render size %ux%u for %ux%u", rw, rh, ow, oh);
-            return *fail = refused, 0;
+            // (vk_temporal.cpp's fail() logs a reason again only when its pointer changes: two buffers, the other one for a
+            // new size, so each refused size is logged once, by fail() as any reason)
+            static char refused[2][112];
+            static unsigned last[4];
+            static int at = 0;
+            if (last[0] != rw || last[1] != rh || last[2] != ow || last[3] != oh) {
+                at ^= 1;
+                snprintf(refused[at], sizeof refused[at], "no DLSS mode takes the render size %ux%u for %ux%u", rw, rh, ow, oh);
+                last[0] = rw, last[1] = rh, last[2] = ow, last[3] = oh;
+            }
+            return *fail = refused[at], 0;
         }
         mode = which[k], max_w = took.max_w, max_h = took.max_h, min_w = took.min_w, min_h = took.min_h;
         if (took.max_w != ranges[k].max_w || took.max_h != ranges[k].max_h || took.min_w != ranges[k].min_w ||

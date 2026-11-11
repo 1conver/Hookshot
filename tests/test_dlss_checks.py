@@ -38,7 +38,8 @@ def check_sources():
     # it, rather than letting it go and making it again a frame later)
     prepare = dlss[dlss.index("int prepare(VkCommandBuffer cmd"):dlss.index("bool start()")]
     assert "dlss_checks::mode_for(rw, rh, ow, oh," in prepare, "prepare: the mode by dlss_checks::mode_for"
-    assert prepare.index("dlss_checks::mode_for(") < prepare.index("ReleaseFeature(old)"),         "prepare: the old feature let go before a mode was found"
+    assert prepare.index("dlss_checks::mode_for(") < prepare.index("ReleaseFeature(old)"), \
+        "prepare: the old feature let go before a mode was found"
 
 
 def main():
