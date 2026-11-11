@@ -34,7 +34,7 @@ the console's system software is reimplemented, and the Switch 2 graphics are re
 > Some users report the file in releases to be a Trojan - it is not. Feel free to run it through any antivirus software
 
 
-Discord: discord.gg/rexed
+Discord: https://discord.gg/rexed
 <br>
 
 > [!IMPORTANT]
