@@ -640,6 +640,7 @@ static const unsigned char oot_item_kinds[] = {OOT_CHEAT_ITEMS(OOT_NO_SECTION, O
 
 static int oot_item_count(Ctx *c, const char *name);
 static int oot_gamedata_bool(Ctx *c, uint32_t hash, int *value);
+static int oot_gamedata_set_bool(Ctx *c, uint32_t hash, int value);
 
 static void oot_inventory_refresh(Ctx *c, int64_t now) {
     void rx_option_set(int id, int value);
@@ -985,6 +986,14 @@ static int oot_teleport(Ctx *c, uint64_t actor, unsigned index) {
         release_link(c);
     }
     *c = saved;
+    /* (issue 2217) An area that hides the minimap while Link is in it sets MapIconDeactivateByAreaActor, which is saved,
+       and shows the minimap again as he walks out. This map change takes him out without that: the flag stayed set, and
+       no area had a minimap from then on, in that save and every one made from it. Cleared once the event manager takes the
+       request (0: it did not, and Link stays); the map he arrives in sets it again where it hides its own. A save it is
+       already stuck in is mended by its next teleport. */
+    int hidden = 0;
+    if (ok && result && oot_gamedata_bool(c, 0x9a4dd779u, &hidden) && hidden && oot_gamedata_set_bool(c, 0x9a4dd779u, 0))
+        hos_log("cheats: teleport: the area left had hidden the minimap (MapIconDeactivateByAreaActor): shown again");
     teleport.requested_at = now;
     teleport.check_at = now + 1500000000LL;
     teleport.destination = index;
