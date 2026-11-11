@@ -258,12 +258,55 @@ void hos_update_check(void);   /* (host/hos_update.c) */
 #ifndef _WIN32
 /* (linux) Saves live in $XDG_DATA_HOME/hookshot (~/.local/share/hookshot), so a rebuilt game folder still finds them.
    A user/ folder beside the executable from before is moved there the first time, entry by entry. Anything that
-   cannot be moved keeps the old place. --user still wins. */
+   cannot be moved keeps the old place. --user still wins.
+   A symbolic link in it, to saves the player keeps elsewhere (a synced folder, another drive), is made again in the
+   new place, to the same folder, and never entered. It was moved as it stood, and one written from where it stood
+   ("../../saves") then named nothing; from another drive it was copied as the folder it names and delete_tree emptied
+   that folder, which is not Hookshot's: the next start found the link still here, kept the old place, and showed no
+   saves. A user/ that is a link itself is the player's choice of place, and is used as it is. */
 static int is_dir(const char *p) {
     const DWORD a = GetFileAttributesA(p);
     return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY);
 }
+static int is_link(const char *p) {
+    struct stat st;
+    return lstat(p, &st) == 0 && S_ISLNK(st.st_mode);
+}
+static const char *move_old, *move_new;   /* (the user folder on the move, as realpath names it, and the new place) */
+static int copy_link(const char *from, const char *to) {   /* (to what it names, in full; one that names nothing: as written) */
+    char target[MAX_PATH], there[MAX_PATH];
+    const size_t old = move_old ? strlen(move_old) : 0;
+    if (!realpath(from, target)) {
+        const ssize_t n = readlink(from, target, sizeof target - 1);
+        if (n < 0) return 0;
+        target[n] = 0;
+    } else if (old && !strncmp(target, move_old, old) && target[old] == SEP) {   /* (to an entry that moves too: where it will be) */
+        snprintf(there, sizeof there, "%s%s", move_new, target + old);
+        snprintf(target, sizeof target, "%s", there);
+    }
+    return symlink(target, to) == 0;
+}
+static int has_link(const char *p) {
+    if (is_link(p)) return 1;
+    if (!is_dir(p)) return 0;
+    char pattern[MAX_PATH];
+    snprintf(pattern, sizeof pattern, "%s" SEP_S "*", p);
+    WIN32_FIND_DATAA fd;
+    HANDLE h = FindFirstFileA(pattern, &fd);
+    int found = 0;
+    if (h != INVALID_HANDLE_VALUE) {
+        do {
+            if (!strcmp(fd.cFileName, ".") || !strcmp(fd.cFileName, "..")) continue;
+            char a[MAX_PATH];
+            snprintf(a, sizeof a, "%s" SEP_S "%s", p, fd.cFileName);
+            found = has_link(a);
+        } while (!found && FindNextFileA(h, &fd));
+        FindClose(h);
+    }
+    return found;
+}
 static int copy_tree(const char *from, const char *to) {
+    if (is_link(from)) return copy_link(from, to);
     if (!is_dir(from)) {
         FILE *in = fopen(from, "rb"), *out = in ? fopen(to, "wb") : NULL;
         int ok = in && out;
@@ -293,7 +336,7 @@ static int copy_tree(const char *from, const char *to) {
     return ok;
 }
 static void delete_tree(const char *p) {
-    if (!is_dir(p)) {
+    if (!is_dir(p) || is_link(p)) {   /* (a link goes; what it names stays) */
         DeleteFileA(p);
         return;
     }
@@ -315,6 +358,7 @@ static void delete_tree(const char *p) {
 static const char *saves_dir(const char *beside) {
     static char dir[MAX_PATH];
     const char *xdg = getenv("XDG_DATA_HOME"), *home = getenv("HOME");
+    if (is_link(beside)) return beside;
     if (xdg && xdg[0] == '/') snprintf(dir, sizeof dir, "%s", xdg);
     else if (home && home[0] == '/') {
         snprintf(dir, sizeof dir, "%s/.local", home);
@@ -327,21 +371,27 @@ static const char *saves_dir(const char *beside) {
     if (GetFileAttributesA(dir) == INVALID_FILE_ATTRIBUTES) return beside;
     char pattern[MAX_PATH];
     snprintf(pattern, sizeof pattern, "%s" SEP_S "*", beside);
-    WIN32_FIND_DATAA fd;
-    HANDLE h = FindFirstFileA(pattern, &fd);
-    if (h == INVALID_HANDLE_VALUE) return dir;
     int moved = 0, kept = 0;
-    do {
-        if (!strcmp(fd.cFileName, ".") || !strcmp(fd.cFileName, "..")) continue;
-        char from[MAX_PATH], to[MAX_PATH];
-        snprintf(from, sizeof from, "%s" SEP_S "%s", beside, fd.cFileName);
-        snprintf(to, sizeof to, "%s" SEP_S "%s", dir, fd.cFileName);
-        if (GetFileAttributesA(to) != INVALID_FILE_ATTRIBUTES) kept++;
-        else if (MoveFileExA(from, to, 0)) moved++;
-        else if (copy_tree(from, to)) delete_tree(from), moved++;
-        else delete_tree(to), kept++;
-    } while (FindNextFileA(h, &fd));
-    FindClose(h);
+    char real[MAX_PATH];
+    move_old = realpath(beside, real), move_new = dir;
+    /* (looked at first, then moved: with an entry the new place has already, the old place is kept, and it keeps them all.
+       The others used to go all the same, and the game then ran here without them) */
+    for (int move = 0; move < 2 && !kept; move++) {
+        WIN32_FIND_DATAA fd;
+        HANDLE h = FindFirstFileA(pattern, &fd);
+        if (h == INVALID_HANDLE_VALUE) return dir;
+        do {
+            if (!strcmp(fd.cFileName, ".") || !strcmp(fd.cFileName, "..")) continue;
+            char from[MAX_PATH], to[MAX_PATH];
+            snprintf(from, sizeof from, "%s" SEP_S "%s", beside, fd.cFileName);
+            snprintf(to, sizeof to, "%s" SEP_S "%s", dir, fd.cFileName);
+            if (!move) kept += GetFileAttributesA(to) != INVALID_FILE_ATTRIBUTES;
+            else if (!has_link(from) && MoveFileExA(from, to, 0)) moved++;
+            else if (copy_tree(from, to)) delete_tree(from), moved++;
+            else delete_tree(to), kept++;
+        } while (FindNextFileA(h, &fd));
+        FindClose(h);
+    }
     if (kept) {
         hos_log("saves: %d of %s's entries could not go to %s: the saves stay in %s", kept, beside, dir, beside);
         return beside;
