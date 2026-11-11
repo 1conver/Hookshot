@@ -1,5 +1,8 @@
 """Game-free checks of make_game's NUP cache selection and replacement.
 
+make_game runs as from a checkout of its own, with nothing in its work/: a developer's play profile in the clone's
+work/ (CONTRIBUTING.md puts it there) was copied in and probed with clang, a process these checks refuse.
+
 Run with: python -I tests/test_make_game_cache.py
 """
 import contextlib
@@ -125,6 +128,10 @@ class NupCacheTests(unittest.TestCase):
             stack.enter_context(mock.patch.object(make_game, "drop_stale_objects"))
             stack.enter_context(mock.patch.object(make_game, "no_throttle"))
             stack.enter_context(mock.patch("ctypes.WinDLL", create=True))
+            # (the hot list, link order, PGO profile and chunk boundaries come from <checkout>/work: an empty one here. The lift's
+            # key hashes nx2/ relative to the checkout, which relpath refuses across drives (Windows CI): not what is checked here)
+            stack.enter_context(mock.patch.object(make_game, "ROOT", str(self.root / "checkout")))
+            stack.enter_context(mock.patch.object(make_game, "lift_key", return_value="test key"))
             stack.enter_context(mock.patch.object(make_game, "run", side_effect=run))
             output = stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
             try:
