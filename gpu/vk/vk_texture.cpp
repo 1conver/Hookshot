@@ -144,8 +144,8 @@ VkFormat image_format_of(VkFormat vf, bool astc_decoded) {
     return is_depth_format(vf) ? vf : astc_decoded ? VK_FORMAT_R8G8B8A8_UNORM : linear_twin(vf);
 }
 /// (hookshot) The format a view of an image takes for a use: the view's NVN format as this device has it (widened), the image's own
-/// for depth and for a format Vulkan lacks, decoded ASTC as RGBA8, ASTC kept as BC3 as BC3 (sampled only); UNDEFINED: no such view
-/// (a compressed format is no target). texture_view's choice, and the pipeline state list's: one rule for both
+/// for depth and for a format Vulkan lacks, decoded ASTC as RGBA8, BC targets as their raw block-texel format, ASTC kept as BC3
+/// as BC3 (sampled only); UNDEFINED: no such view (ASTC is no target). texture_view's choice, and the pipeline state list's: one rule for both
 VkFormat view_format_of(VkFormat image, bool astc_decoded, bool bc, int view_nvn, ViewUse use, VkFormat force_format) {
     int from = 0;
     VkFormat f = widened(vk_format(view_nvn).format, &from);
@@ -156,7 +156,8 @@ VkFormat view_format_of(VkFormat image, bool astc_decoded, bool bc, int view_nvn
         f = f == VK_FORMAT_R8G8B8A8_SRGB ? VK_FORMAT_BC3_SRGB_BLOCK : VK_FORMAT_BC3_UNORM_BLOCK;
     }
     if (use == ViewUse::Storage) f = force_format != VK_FORMAT_UNDEFINED ? force_format : storage_view_format(f);
-    if (use == ViewUse::Attachment && (is_astc(f) || is_bc(f))) return VK_FORMAT_UNDEFINED;
+    if (use == ViewUse::Attachment && is_bc(f)) f = storage_view_format(f);
+    if (use == ViewUse::Attachment && is_astc(f)) return VK_FORMAT_UNDEFINED;
     return f;
 }
 /// (hookshot) The format a draw renders in, on this device, into a texture of NVN format tex_nvn through a view of NVN format view_nvn
@@ -2057,15 +2058,18 @@ Texture* create(const Key& key, const nvn_tex* t, VkFormat vf, bool astc, int bw
             vkGetPhysicalDeviceImageFormatProperties(dev.physical, x.format, x.type, VK_IMAGE_TILING_OPTIMAL,
                 x.usage, flags, &limits) == VK_SUCCESS)
             x.usage |= VK_IMAGE_USAGE_STORAGE_BIT;
-        // Render to raw block views of 2D images. A 3D image's attachments use a separate uncompressed mip
+        // Render to raw block views of 2D images. A 3D image's attachments use a separate uncompressed mip.
+        // On AMD drivers (amdvlk), queries against the compressed format return VK_ERROR_FORMAT_NOT_SUPPORTED (-11),
+        // but raw block-texel views can be attached with EXTENDED_USAGE; a refused image is made again without the usage below (#1801).
+        const bool is_amd = dev.props.vendorID == 0x1002;
         if (x.type != VK_IMAGE_TYPE_3D && (format_props(raw).optimalTilingFeatures & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT)) {
             const VkResult r = vkGetPhysicalDeviceImageFormatProperties(dev.physical, x.format, x.type, VK_IMAGE_TILING_OPTIMAL,
                 x.usage | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, flags, &limits);
-            if (r == VK_SUCCESS) x.usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+            if (r == VK_SUCCESS || is_amd) x.usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
             static int told;
             if (r != VK_SUCCESS && told++ < 4)
-                logf("vk: BC image %ux%u (vk %d) as a raw colour attachment: the driver says %d", x.width, x.height,
-                     (int)x.format, (int)r);
+                logf("vk: BC image %ux%u (vk %d) as a raw colour attachment: the driver says %d%s", x.width, x.height,
+                     (int)x.format, (int)r, is_amd ? " (AMD: taken)" : "");
         }
     }
     if (x.type == VK_IMAGE_TYPE_2D && x.layers >= 6 && x.width == x.height && x.samples == VK_SAMPLE_COUNT_1_BIT)
