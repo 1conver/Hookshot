@@ -1805,11 +1805,44 @@ static void driver_cache_room(void) {
     setenv("__GL_SHADER_DISK_CACHE_SIZE", "10737418240", 0);   /* (10 GiB, bytes) */
     setenv("MESA_SHADER_CACHE_MAX_SIZE", "10G", 0);
 }
+#include <errno.h>
+#include <sys/stat.h>
+/* (hookshot, linux) NVIDIA's driver keeps no shader cache at all when __GL_SHADER_DISK_CACHE_PATH names a folder that does not exist:
+   it neither creates it nor falls back to ~/.cache/nvidia, and every start compiles every pipeline again (a test of 300 pipelines:
+   7.9 ms each at the first start and at the second, against 0.06 ms from the cache; driver 620.70). The folder a player or a
+   launcher named is made here, before anything loads Vulkan. Mesa makes its own (MESA_SHADER_CACHE_DIR, parents too). Not needed:
+   NVIDIA files the cache by the program's file name alone (bin/hookshot), not its folder, bytes or date, nor VkApplicationInfo, so
+   an update in place, a folder moved or copied and every Hookshot folder on the PC share one cache (a cache of another driver or
+   GPU is the driver's to drop) */
+static void driver_cache_folder(void) {
+    const char *dir = getenv("__GL_SHADER_DISK_CACHE_PATH");
+    if (!dir || !*dir || strlen(dir) >= 4096) return;
+    char path[4096];
+    strcpy(path, dir);
+    for (char *p = path + 1;; p++) {   /* (each parent, then the folder itself: mkdir -p) */
+        const char c = *p;
+        if (c != '/' && c) continue;
+        *p = 0;
+        if (mkdir(path, 0700) != 0 && errno != EEXIST) {
+            fprintf(stderr, "vk: __GL_SHADER_DISK_CACHE_PATH %s: cannot make %s (%s): NVIDIA's driver keeps no shader cache\n", dir,
+                    path, strerror(errno));
+            return;
+        }
+        if (!c) {   /* (a file already at that name counts as made for mkdir, but the driver can't use it) */
+            struct stat st;
+            if (stat(path, &st) != 0 || !S_ISDIR(st.st_mode))
+                fprintf(stderr, "vk: __GL_SHADER_DISK_CACHE_PATH %s: cannot make it, a file has that name: NVIDIA's driver keeps no shader cache\n", dir);
+            return;
+        }
+        *p = '/';
+    }
+}
 int main(int argc, char **argv) {
     int hos_display_init(void);
     void hos_display_loop(void);
     load_hookshot_env();
     driver_cache_room();
+    driver_cache_folder();
     game_argc = argc, game_argv = argv;
     int prepare_shaders = 0;
     for (int i = 1; i < argc; i++) {
