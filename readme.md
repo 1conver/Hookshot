@@ -808,6 +808,18 @@ For a first run on a 4 GB card such as a GTX 1650, `RX_VK_LOW_SPEC=1` starts wit
 frame generation and upscaling off. It applies only when there is no `hookshot_options.ini` yet; after that, change
 the settings in the in-game menu.
 
+On **Minimum (4GB)**, when the driver reports a nonzero VRAM budget of at most 4.5 GiB, sampled ASTC textures use
+a 1024 dimension limit and an 8 MiB decoded-size threshold for leaving out their top mip levels. This lowers texture
+detail to reduce the working set. Other presets and larger or unknown budgets keep the 2048 / 64 MiB defaults;
+uncompressed render targets, depth images and the separate `RX_VK_TEX_MAX_MB` allocation limit keep their handling.
+The driver budget is sampled at the first texture creation and kept for the session. It is a heuristic, not a physical
+VRAM measurement: other applications can lower the budget even on a larger card.
+
+`RX_VK_LOW_VRAM_MIPS=0` (also `off`, `false` or `no`) disables the automatic rule. `RX_VK_TEX_MAX_DIM` overrides only
+the dimension limit, so setting it to 2048 still leaves the automatic 8 MiB threshold active on Minimum with a small
+budget. `RX_VK_TEX_SKIP_MB` overrides that threshold using its existing parsing. For a more aggressive experiment,
+use `RX_VK_TEX_MAX_DIM=512 RX_VK_TEX_SKIP_MB=2`. Changes to these environment switches take effect after a restart.
+
 `RX_VK_MOVIE_UPSCALE=linear` replaces the movies' neural upscale with the plain linear one. The default, `auto`, keeps
 the networks and falls back only when a movie frame takes the GPU more than 40 ms. That is on NVIDIA cards: on other
 cards, or where the GPU cannot multiply the networks' matrices itself, the movies always get the linear upscale. It does
