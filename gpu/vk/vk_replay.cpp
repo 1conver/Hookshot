@@ -4098,7 +4098,7 @@ void present_finish(VkResult res, bool on_presenter) {
 }
 }  // namespace
 
-// (hookshot) The presenter thread (on by default; RX_VK_PRESENT_THREAD=0: off). With NVIDIA's driver on Wayland, vkQueuePresentKHR waits
+// (hookshot) The presenter thread (RX_VK_PRESENT_THREAD=1; off by default until the swapchain's external sync and the drain are fixed). With NVIDIA's driver on Wayland, vkQueuePresentKHR waits
 // on the CPU until the frame's copy into the window's image is done on the GPU, after all of the frame's work: 2.4 ms a frame of the
 // game's presentation thread on an RTX 3090 in Kokiri Forest (HOS_CHAIN), on the frame's critical path, since the game's main thread
 // waits for that thread's present to return before it starts the next frame's commands. present_image hands the present to a thread
@@ -4210,18 +4210,18 @@ void presenter_loop() {
     }
 }
 bool present_thread_on() {
-    static const bool wanted = [] {
+    static const bool wanted = [] {   // (off by default until the review's swapchain and drain findings are fixed)
         const char* e = getenv("RX_VK_PRESENT_THREAD");
-        return !e || atoi(e) != 0;
+        return e && atoi(e) != 0;
     }();
     // (a queue of its own that presents to this surface: vk_main.cpp; a new surface checks again)
     const bool on = wanted && dev.presenter_queue && dev.presenter_supported;
     static int told = -1;
     if (told != (int)on) {
         told = on;
-        logf("vk: presenter thread: %s", on ? "each present made on a thread and queue of its own once its copy is done (RX_VK_PRESENT_THREAD=0: off)"
+        logf("vk: presenter thread: %s", on ? "each present made on a thread and queue of its own once its copy is done (RX_VK_PRESENT_THREAD=1)"
                                             : wanted ? "no queue of its own that presents to the window: presents on the game's thread"
-                                                     : "off (RX_VK_PRESENT_THREAD=0)");
+                                                     : "off (RX_VK_PRESENT_THREAD=1: on)");
     }
     return on;
 }

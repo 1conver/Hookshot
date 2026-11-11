@@ -1,4 +1,4 @@
-"""The presenter thread (on by default, RX_VK_PRESENT_THREAD=0: off) keeps the presents in order, one out at most, and off the
+"""The presenter thread (RX_VK_PRESENT_THREAD=1; off by default) keeps the presents in order, one out at most, and off the
 swapchain's remaking.
 
 present_out hands a present to the presenter thread only from present_image (it alone sets the copy's fence; frame generation's
@@ -100,7 +100,9 @@ def main():
     need(make[make.index("{") + 1:].lstrip().startswith("present_thread_drain();"),
          "create_swapchain does not wait for the presenter first")
     on = block(replay, "bool present_thread_on() {")
-    need('getenv("RX_VK_PRESENT_THREAD")' in on and "!e || atoi(e) != 0" in on, "the switch is not RX_VK_PRESENT_THREAD, on by default")
+    need('getenv("RX_VK_PRESENT_THREAD")' in on and "return e && atoi(e) != 0;" in on, "the switch is not RX_VK_PRESENT_THREAD, off by default")
+    need("const bool presenter_wanted = pt_env && atoi(pt_env) != 0;" in block(main_cpp, "bool create_device() {"),
+         "the presenter's queue is made while the presenter thread is off")
     need("dev.presenter_queue && dev.presenter_supported" in on, "the presenter thread runs without a queue of its own that presents")
     dev_make = block(main_cpp, "bool create_device() {")
     swap = block(main_cpp, "bool create_swapchain(uint32_t width, uint32_t height) {")
