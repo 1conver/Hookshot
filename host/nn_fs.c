@@ -343,9 +343,20 @@ HLE(_ZN2nn2fs8OpenFileEPNS0_10FileHandleEPKci) {
     char path[HOS_FS_PATH];
     int writable = 0;
     const char *g = gstr(ARG(1));
-    if (!host_path(g, path, sizeof path, &writable)) { hos_log("fs: OpenFile(%s): unknown mount", g); RET(R_PATH_NOT_FOUND); return; }
+    /* (mkw-recomp 16bc3bc: the host's file calls block, so the virtual core goes to another thread meanwhile, as
+       Horizon would run another while this one waits for the file system. OoT's ARes loaders held it up to 250 ms.)
+       (hookshot, #1929) From before host_path: the first open of a button-prompt file builds it there (prompts.c,
+       251-357 ms on Linux), and other threads that open it meanwhile wait in there for the build; with the core held
+       through that, four threads waiting for the core ran without one within 50 ms */
+    const int away = hos_vcore_away();
+    if (!host_path(g, path, sizeof path, &writable)) {
+        if (away) hos_vcore_back();
+        hos_log("fs: OpenFile(%s): unknown mount", g);
+        RET(R_PATH_NOT_FOUND);
+        return;
+    }
     int want_write = (ARG(2) & 6) != 0;
-    if (want_write && !writable) { RET(R_PATH_NOT_FOUND); return; }
+    if (want_write && !writable) { if (away) hos_vcore_back(); RET(R_PATH_NOT_FOUND); return; }
     /* (mkw-recomp) HOS_NO_MOVIES=1: MKW's WebM movies (cup openings, billboards, emblems) are not found, and the
        game goes on without them (decoded by nn_video.c otherwise) */
     if (!want_write && env_on("HOS_NO_MOVIES")) {
@@ -353,6 +364,7 @@ HLE(_ZN2nn2fs8OpenFileEPNS0_10FileHandleEPKci) {
         if (n > 5 && !_stricmp(g + n - 5, ".webm")) {
             static int logged;
             if (!logged++) hos_log("fs: OpenFile(%s): movies are left out (HOS_NO_MOVIES)", g);
+            if (away) hos_vcore_back();
             RET(R_PATH_NOT_FOUND);
             return;
         }
@@ -360,7 +372,7 @@ HLE(_ZN2nn2fs8OpenFileEPNS0_10FileHandleEPKci) {
     { int hos_ultrawide_redirect(const char *guest, char *out, size_t cap);   /* (totk_ultrawide_ui.c: the HUD) */
       char alt[HOS_FS_PATH];
       if (!want_write && hos_ultrawide_redirect(g, alt, sizeof alt)) snprintf(path, sizeof path, "%s", alt); }
-    if (!want_write && hos_blank_cached_icon(g, path)) { RET(R_PATH_NOT_FOUND); return; }
+    if (!want_write && hos_blank_cached_icon(g, path)) { if (away) hos_vcore_back(); RET(R_PATH_NOT_FOUND); return; }
     {   /* HOS_FS_OVERLAY=<folder> (a test): a file of the game's data found there is read in place of the game's own */
         const char *ov = getenv("HOS_FS_OVERLAY");
         const char *rel = !want_write && ov ? strstr(g, ":/") : NULL;
@@ -373,9 +385,6 @@ HLE(_ZN2nn2fs8OpenFileEPNS0_10FileHandleEPKci) {
             }
         }
     }
-    /* (mkw-recomp 16bc3bc: the host's file calls block, so the virtual core goes to another thread meanwhile, as
-       Horizon would run another while this one waits for the file system. OoT's ARes loaders held it up to 250 ms) */
-    const int away = hos_vcore_away();
     HANDLE h = CreateFileA(path, GENERIC_READ | (want_write ? GENERIC_WRITE : 0), FILE_SHARE_READ | FILE_SHARE_WRITE,
                            NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
     if (away) hos_vcore_back();
