@@ -318,6 +318,7 @@ HDR peak brightness show only while HDR is on.
 | | Invert mouse vertical | Off, On | Off |
 | | Invert camera X | Off, On | Off |
 | | Invert camera Y | Off, On | Off |
+| | Camera speed | 50% to 400%, in steps of 25 | 100% |
 | | Stick dead zone | Default (24%), 5%, 10%, 15%, 20%, 30% | Default (24%) |
 | | Rumble strength | Off, 25% to 150%, in steps of 25 | 100% |
 | | Layout preset | Nintendo (Def), Xbox / PC, Swap Face, Custom | Nintendo (Def) |
@@ -435,6 +436,9 @@ HDR peak brightness show only while HDR is on.
 - **Disable camera centering:** On stops the game gradually turning the camera toward your movement, so it does not fight
   native mouse look. Off keeps the game's standard behavior. Changes apply immediately with either Mouse camera mode.
   Manual controls, explicit recentering and scripted camera headings still work; automatic pitch adjustment is unchanged.
+- **Camera speed** is how fast the right stick turns the camera, in percent of the game's own speed. The camera keys
+  follow it, and so does the mouse with Mouse camera on As the stick; Native mouse look has its own sensitivity. The
+  game's own camera speed option still picks the speed this multiplies.
 - **Stick dead zone:** how far a stick moves before it counts, on each axis. Default is XInput's (about 24%); lower suits
   a precise stick, higher one that drifts. The game keeps a dead zone of its own after it.
 - **Rumble strength** scales the controller's rumble: 100% is the game's own, Off turns it off. The game's HD rumble

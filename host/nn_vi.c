@@ -2,7 +2,7 @@
    layer, and the display's vsync event, signaled at 60 Hz by a host thread. HDR and VRR are reported unsupported,
    so the game takes its SDR path. Frames are paced at the native NVN layer's window acquire (the end of this file). */
 #include "hos.h"
-#include "../gpu/vk/vk_api.h"   /* (HOS_OPT_HDR_*: the Insert menu's HDR, answered by the renderer) */
+#include "../gpu/vk/vk_api.h"   /* (HOS_OPT_HDR_*, HOS_OPT_CAMERA_SPEED: the Insert menu's HDR and Camera speed, answered by the renderer) */
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <stdio.h>
@@ -236,6 +236,13 @@ static float text_scale(const char *env, int menu) {
     const int v = env && *env ? atoi(env) : menu;
     return v == 1 ? 2.0f : v == 2 ? 4.0f : v >= 3 ? 1e6f : 1.0f;
 }
+volatile float hos_camera_scale = 1.0f;   /* (the right stick's camera turn speeds, f_80643f10 and three more: nx2/oot_patches.py) */
+/* The Insert menu's Camera speed, in percent of the game's own turn speed (50 to 400; anything else, as without the Vulkan
+   renderer's menu: the game's): what the turn speeds are multiplied by. Even the fastest of the game's own camera speeds turned
+   slowly for players; it still picks the speed this multiplies */
+static float camera_scale(int percent) {
+    return (percent >= 50 && percent <= 400 ? percent : 100) / 100.0f;
+}
 volatile uint64_t hos_step_probe = 0;   /* (f_80706be0's object, set by the lifted code when the frame-time hook is in this build; its
                                             +0xd58 is the game clock in 1/60 s: nx2/oot_patches.py) */
 volatile uint32_t hos_frame_seconds_bits = 0;   /* (the frame's seconds as a float's bits for that hook, 0: the game's own step) */
@@ -324,6 +331,7 @@ static void realtime_step(int64_t now) {
         if (!looked) looked = 1, env = getenv("HOS_TEXT_SPEED");
         hos_text_scale = text_scale(env, rx_option(5, 0));
     }
+    hos_camera_scale = camera_scale(rx_option(HOS_OPT_CAMERA_SPEED, 100));
     {   /* (the Insert menu's Resolution: the fixed path's scale in 1/10000, live; HOS_RES_SCALE
            below stays over it) */
         const int scale = rx_option(3, 0);

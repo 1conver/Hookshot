@@ -35,6 +35,9 @@ enum { HOS_OPT_HDR_NATIVE = 40, HOS_OPT_HDR_PEAK, HOS_OPT_HDR_WHITE, HOS_OPT_DIS
 /* (HOS_OPT_DISABLE_CAMERA_CENTERING, 45: Controls' movement-follow yaw, host/mouse_native.c: 0 stock, 1 disabled;
    44 is reserved for HOS_OPT_SKIP_TITLE) */
 enum { HOS_OPT_DISABLE_CAMERA_CENTERING = 45 };
+/* (hookshot) the Insert menu's Camera speed: the right stick's camera turn in percent of the game's, 50 to 400 (host/nn_vi.c
+   hos_camera_scale, nx2/oot_patches.py). 48: after the HDR and Discord rows' 40 to 43, Skip title's 44 and camera centering's 45 */
+enum { HOS_OPT_CAMERA_SPEED = 48 };
 
 /* (hookshot) the controls' names (host/nn_hid.c, host/pad_sdl.c, the pad_ and key_ lines of hookshot_options.ini):
    the Switch's buttons in nn::hid's bit order, and a gamepad's inputs by position, SDL's order (the bottom face
@@ -206,7 +209,8 @@ typedef struct MkwVkRenderer {
                                 7: the mouse's sensitivity in percent, 8: its up and down swapped (host/nn_hid.c),
                                 18 to 23: the Motion page (HOS_OPT_GYRO*: motion controls from a pad's gyroscope, host/pad_sdl.c;
                                 the horizontal and vertical sensitivity in percent, each turned around, the deadzone),
-                                27: the volume in percent, 28: no sound while another window has the focus (host/nn_audio.c) */
+                                27: the volume in percent, 28: no sound while another window has the focus (host/nn_audio.c),
+                                48: the camera's turn speed in percent of the game's (host/nn_vi.c) */
     /* a submit with its queue */
     void (*nvn_submit_q)(const uint64_t *handles, int n, uint64_t queue);
     /* (hookshot) a fence of one queue: the value its own last submission signals (nvnQueueFenceSync) */

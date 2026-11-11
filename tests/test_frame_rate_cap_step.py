@@ -66,7 +66,8 @@ int hos_ini_option(const char *key, int otherwise) {   /* (frame_rate_cap=: the 
 volatile uint64_t hos_gfx_module = MOD;
 volatile int hos_fixed_resolution, hos_dynres_runs;
 volatile uint32_t hos_fixed_scale_bits;
-volatile float hos_text_scale;
+volatile float hos_text_scale, hos_camera_scale;
+@OPTS@
 volatile uint64_t hos_step_probe, hos_res_module;
 volatile uint32_t hos_frame_seconds_bits;
 @HOST@
@@ -188,8 +189,12 @@ def main():
     check("V-Sync" in row and "real time" in row, "the row's help does not say Uncapped keeps real time and V-Sync limits it")
 
     vi = (ROOT / "host" / "nn_vi.c").read_text(encoding="utf-8")
-    host = "\n".join(block(vi, m) for m in ("static float text_scale(", "static int fps_max(void) {", "static int realtime_rate(", "static void realtime_step("))
-    fixture = FIXTURE.replace("@HOST@", host).replace("@HOOK@", "\n".join(oot_patches.STEP_HOOK.split("\n")[:2]))
+    host = "\n".join(block(vi, m) for m in ("static float text_scale(", "static float camera_scale(", "static int fps_max(void) {",
+                                             "static int realtime_rate(", "static void realtime_step("))
+    # (the option ids realtime_step names: vk_api.h's HOS_OPT_* enums)
+    opts = "\n".join(re.findall(r"enum \{ HOS_OPT_[^}]*\};", (ROOT / "gpu" / "vk" / "vk_api.h").read_text(encoding="utf-8")))
+    fixture = FIXTURE.replace("@OPTS@", opts).replace("@HOST@", host).replace(
+        "@HOOK@", "\n".join(oot_patches.STEP_HOOK.split("\n")[:2]))
     with tempfile.TemporaryDirectory(prefix="cap-step-") as tmp:
         c = Path(tmp) / "fixture.c"
         exe = Path(tmp) / "fixture.exe"
