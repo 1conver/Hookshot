@@ -2767,7 +2767,11 @@ const Program* seed_variant_of(const uint64_t code[3], bool mesh, const uint32_t
     struct Reset { ~Reset() { questions_in = nullptr, answers_in = nullptr; } } reset;
     if (mesh) translate_mesh_into(*p, *blank, by_stage[6] ? &code_of[6] : nullptr, code_of[7], nullptr, fs, color_types);
     else translate_into(*p, *blank, &code_of[0], fs, nullptr, color_types);
-    if (p->failed) return nullptr;
+    if (p->failed) {
+        for (Stage& st : p->stages)
+            if (st.module) vkDestroyShaderModule(dev.device, st.module, nullptr);
+        return nullptr;
+    }
     std::lock_guard lk(shader_mu);
     auto& variants = programs[p->key];
     for (auto& v : variants)

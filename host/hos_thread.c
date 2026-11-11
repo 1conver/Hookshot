@@ -566,6 +566,7 @@ void hos_thread_destroy(HosThread *t) {
         if (threads[i] == t) { threads[i] = threads[--nthreads]; break; }
     ReleaseSRWLockExclusive(&threads_lock);
     if (t->handle) CloseHandle(t->handle);
+    if (t->wake) CloseHandle(t->wake);
     free(t);
 }
 

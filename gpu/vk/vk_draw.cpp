@@ -8029,7 +8029,7 @@ void precompile_run(void (*progress)(size_t done, size_t total)) {
                         e->pipeline = made;
                         e->ready.store(true, std::memory_order_release);
                         pipelines.emplace(n.key, std::move(e));
-                    }
+                    } else if (made) vkDestroyPipeline(dev.device, made, nullptr);   // (unpublished: play or another note already owns the entry)
                 }
             }
             pre->done++;
