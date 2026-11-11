@@ -447,6 +447,9 @@ def keep_heads(out, game, stamp):
         f.write(stamp.strip() + "\n" + listed)
 
 
+DAMAGED_NOTE = "hookshot_damaged_files.txt"   # (in the game folder: the damaged game files the last unpack replaced)
+
+
 def stand_in_damaged_files(out, romfs):
     """An incomplete dump's damaged textures replaced by whole ones of the same kind, and said: without them the game
     leaves out the walls and floors that use them (the Water Temple, #1002). Only in a romfs this builder unpacked (its
@@ -478,16 +481,23 @@ def stand_in_damaged_files(out, romfs):
     write_stamp(checked, stamp)
     with contextlib.suppress(FileNotFoundError):
         os.remove(heads)
+    note = os.path.join(out, DAMAGED_NOTE)
     if not done:
+        with contextlib.suppress(FileNotFoundError):   # (a whole dump unpacked over a damaged one)
+            os.remove(note)
         return
-    print("Your game dump is incomplete: %d game file%s in it %s damaged (a complete dump is about 23.8 GB, an incomplete "
-          "one 23.3 GB). Each is replaced by a similar file so that the places using it are still drawn, with a different "
-          "texture there. Dump the game again for the original look:" % (len(done), "" if len(done) == 1 else "s",
-                                                                          "is" if len(done) == 1 else "are"), flush=True)
+    lines = ["Your game dump is incomplete: %d game file%s in it %s damaged (a complete dump is about 23.8 GB, an incomplete "
+             "one 23.3 GB). Each is replaced by a similar file so that the places using it are still drawn, with a different "
+             "texture there. Dump the game again for the original look:" % (len(done), "" if len(done) == 1 else "s",
+                                                                             "is" if len(done) == 1 else "are")]
     for path, other in done:
-        print("  %s: %s" % (os.path.relpath(path, romfs),
-                            "in its place " + os.path.basename(other) if other else "nothing similar found, left as it is"),
-              flush=True)
+        lines.append("  %s: %s" % (os.path.relpath(path, romfs),
+                                   "in its place " + os.path.basename(other) if other else "nothing similar found, left as it is"))
+    for line in lines:
+        print(line, flush=True)
+    # (the build's output scrolls away, and a later build skips this check: the list stays in the game folder, #2237)
+    with open(note, "w", encoding="utf-8", newline="\n") as f:
+        f.write("\n".join(lines) + "\n")
 
 
 def check_cache_paths(out, paths):

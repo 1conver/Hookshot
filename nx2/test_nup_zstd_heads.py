@@ -78,6 +78,15 @@ class Heads(unittest.TestCase):
             self.assertEqual(Path(romfs, "Model", "damaged.bntx.zs").read_bytes(), WHOLE)
             self.assertFalse(os.path.exists(os.path.join(out, make_game.HEADS)))
             self.assertEqual(Path(out, ".hookshot_romfs_checked").read_text(), stamp + "\n")
+            # (#2237: the list is kept in the game folder, where the build's output is not)
+            note = Path(out, make_game.DAMAGED_NOTE)
+            listed = note.read_text(encoding="utf-8")
+            self.assertTrue(listed.startswith("Your game dump is incomplete: 1 game file in it is damaged"))
+            self.assertIn(os.path.join("Model", "damaged.bntx.zs") + ": in its place ", listed)
+            # (a whole dump unpacked next: the list goes)
+            Path(out, ".hookshot_romfs").write_text("unpacked by this builder: whole.nup 456\n")
+            make_game.stand_in_damaged_files(out, romfs)
+            self.assertFalse(note.exists())
 
     def test_a_list_from_another_unpack_is_not_taken(self):
         with tempfile.TemporaryDirectory() as d:
