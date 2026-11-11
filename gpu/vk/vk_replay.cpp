@@ -3702,9 +3702,17 @@ static void present_out(uint32_t index, std::unique_lock<std::mutex>& qk) {
             if (++frames % 60 == 0) std::fflush(fl);
         }
     }
-    if (res == VK_ERROR_OUT_OF_DATE_KHR || res == VK_SUBOPTIMAL_KHR) {
+    if (res == VK_ERROR_OUT_OF_DATE_KHR) {
         if (!qk.owns_lock()) qk.lock();
         create_swapchain(dev.swap_extent.width, dev.swap_extent.height);
+    } else if (res == VK_SUBOPTIMAL_KHR) {
+        VkSurfaceCapabilitiesKHR caps{};
+        if (vkGetPhysicalDeviceSurfaceCapabilitiesKHR(dev.physical, dev.surface, &caps) == VK_SUCCESS &&
+            caps.currentExtent.width != UINT32_MAX && caps.currentExtent.width > 0 && caps.currentExtent.height > 0 &&
+            (caps.currentExtent.width != dev.swap_extent.width || caps.currentExtent.height != dev.swap_extent.height)) {
+            if (!qk.owns_lock()) qk.lock();
+            create_swapchain(caps.currentExtent.width, caps.currentExtent.height);
+        }
     }
 }
 
