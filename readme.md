@@ -285,30 +285,36 @@ A row for something this PC cannot use is not shown: NVIDIA Reflex and AMD Anti-
 have them, the DLSS model where DLSS does not run. HDR paper white and
 HDR peak brightness show only while HDR is on, the HDR tone mapper only with HDR set to Native.
 
+The Graphics tab groups its rows under section titles: Resolution and upscaling, Frame generation and latency, Screen,
+HDR, Detail, and GPU and memory (last: the rows to change when something is wrong). The table lists them in that order.
+
 | Tab | Option | Choices | Default |
 |---|---|---|---|
 | Graphics | Quality preset | Custom, Minimum (4GB), Low (6GB), Balanced (8GB), High (12GB), Ultra (16GB+) | Custom |
-| | Fullscreen | Off, On (the same as <kbd>F11</kbd>) | Off |
-| | GPU device | Auto, or each graphics card by name (after a restart) | Auto |
-| | Frame generation | Off, Auto, 2x to 8x | Off |
-| | Frame pacing | Off, On | Off |
-| | V-Sync | Auto, On, Off | Auto |
-| | HDR | Off, Expanded, Native (the game's) | Off |
-| | HDR paper white | 80 to 400 nits (while HDR is on) | 200 nits |
-| | HDR peak brightness | 400 to 4000 nits (while HDR is on) | 1000 nits |
-| | HDR tone mapper | Vanilla (the game's curve), PsychoV35 (RenoDX's; with HDR set to Native. DLSS, FSR and TAAU do not take its scene yet: the game's own upscale runs) | Vanilla |
-| | Game frame rate cap | 60, 90, 120, 144, 165, 240 FPS, Uncapped (after a restart) | 60 FPS |
-| | NVIDIA Reflex | Off, On, On + Boost (shown only on NVIDIA GPUs with `VK_NV_low_latency2`) | Off |
-| | AMD Anti-Lag 2 | Off, On (shown only on AMD GPUs with `VK_AMD_anti_lag`) | Off |
 | | Output resolution | 1920x1080, 2048x1152, 2560x1440, 3840x2160, 5120x1440, 5120x2880 (after a restart) | 2048x1152 |
+| | Profile | Docked, Handheld (after a restart) | Docked |
 | | Upscaler | Game's own, NVIDIA DLSS, NVIDIA DLAA (only in builds with NVIDIA's DLSS SDK, below; DLSS and DLAA on RTX GPUs), AMD FSR 3.1 (every build, on GPUs it runs on, below), AMD FSR 4, AMD FSR 4 Native AA (only in builds with FSR 4, below), Off (no upscaling) | Game's own |
 | | DLSS model | Transformer (K), Transformer 2 (M), Transformer 2 (L), NVIDIA default (shown where DLSS runs; used by DLSS and DLAA) | Transformer (K) |
 | | Render resolution | Auto (the game's own dynamic resolution), 100%, 75%, 67%, 50% (each with its size). With DLSS, FSR 3.1 or FSR 4: Auto, Quality (67%), Balanced (58%), Performance (50%), Ultra Performance (33%). With DLAA or FSR 4 Native AA: Native. With Off: Auto, 100%, 75%, 67%, 50%, 33% | Auto |
-| | Window scaling filter | Off, Catmull-Rom, Lanczos | Off |
 | | Sharpness | 0 to 100%, in steps of 10 | 0% |
-| | Anisotropic filtering | Game's, 2x, 4x, 8x, 16x | 16x |
-| | Profile | Docked, Handheld (after a restart) | Docked |
+| | Frame generation | Off, Auto, 2x to 8x | Off |
+| | Frame generation by | Auto (NVIDIA DLSS Frame Generation where it runs: RTX 40 and newer, with a temporal Upscaler; else the built-in one), Built-in (changes at once) | Auto |
+| | Frame pacing | Off, On | Off |
+| | Game frame rate cap | 60, 90, 120, 144, 165, 240 FPS, Uncapped (after a restart) | 60 FPS |
+| | NVIDIA Reflex | Off, On, On + Boost (shown only on NVIDIA GPUs with `VK_NV_low_latency2`) | Off |
+| | AMD Anti-Lag 2 | Off, On (shown only on AMD GPUs with `VK_AMD_anti_lag`) | Off |
+| | Fullscreen | Off, On (the same as <kbd>F11</kbd>) | Off |
+| | V-Sync | Auto, On, Off | Auto |
+| | Window scaling filter | Off, Catmull-Rom, Lanczos | Off |
 | | Aspect ratio | 16:9, Monitor's shape: wider than 16:9, or narrower down to 5:4 (after a restart) | Monitor's shape |
+| | HDR | Off, Expanded, Native (the game's) | Off |
+| | HDR paper white | 80 to 400 nits (while HDR is on) | 200 nits |
+| | HDR peak brightness | 400 to 4000 nits (while HDR is on) | 1000 nits |
+| | HDR contrast | 50% to 200% around mid grey (while HDR is on) | 100% |
+| | HDR tone mapper | Vanilla (the game's curve), PsychoV35 (RenoDX's; with HDR set to Native. DLSS, FSR and TAAU do not take its scene yet: the game's own upscale runs) | Vanilla |
+| | Anisotropic filtering | Game's, 2x, 4x, 8x, 16x | 16x |
+| | GPU device | Auto, or each graphics card by name (after a restart) | Auto |
+| | VRAM budget | Auto, 3.6, 4.8, 6, 7.5, 9, 11 GB (2.2 GB only from the Minimum (4GB) preset); a quality preset sets it | Auto |
 | Audio | Volume | 0 to 100%, in steps of 5 | 100% |
 | | Mute in background | Off, On | Off |
 | | Audio output | Auto, Stereo, 5.1 (after a restart) | Auto |
