@@ -569,7 +569,10 @@ WRITE_TRACK = [] if os.environ.get("RX_SOFT_WRITE_WATCH") == "0" else ["-DA64_WR
 from host_cpu import host_march   # (make_game.py asks it too: the AppImage's renderer)
 
 MARCH = os.environ.get("RX_MARCH") or host_march()
-if MARCH != "x86-64-v3":
+if os.environ.get("RX_MARCH"):
+    if MARCH != "x86-64-v3":
+        print("build: the game is built for %s (RX_MARCH)" % MARCH, flush=True)
+elif MARCH != "x86-64-v3":
     print("build: this CPU has no AVX2: the game is built for %s (a little slower)" % MARCH, flush=True)
 CPU = ["-march=" + MARCH, "-ffp-contract=off"]
 OPT = "O1"   # (the lifted code's level; code_hot.c's is RX_HOT_OPT)
