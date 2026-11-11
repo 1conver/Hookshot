@@ -13,6 +13,7 @@ import queue
 import re
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -122,7 +123,12 @@ def play(folder):
     try:
         with open(os.path.join(HERE, "play-diagnostics.sh"), encoding="utf-8") as script:
             command = ["/bin/sh", "-c", script.read(), "hookshot-play", exe]
-        subprocess.Popen(command, **options)
+        # (stderr a socket, not a pipe: the game takes a socket, as the journal's where a desktop launcher sends it, for nowhere to
+        # log, and writes hookshot_log.txt; a pipe it takes for a reader and writes no log file (host/posix/win32_posix.c GetFileType).
+        # The script reads the other end: what the game prints before its log opens)
+        reading, writing = socket.socketpair()
+        with reading, writing:
+            subprocess.Popen(command, **dict(options, stdin=reading, stderr=writing))
     except OSError:
         subprocess.Popen([exe], **options)
 
