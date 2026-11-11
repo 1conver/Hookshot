@@ -34,6 +34,7 @@ struct {
     uint32_t sg32_stages = 0, subgroup_size = 32, subgroup_max = 32, driver_id = 0;
     struct { bool shaderFloat16 = true; } vk12;   // (k10: f16 lowered where the GPU has none; here it has)
     struct { struct { uint64_t minStorageBufferOffsetAlignment = 16; } limits; } props;
+    struct { bool gather_offset = false; } fixes;   // (vk_vendor.h: make_profile reads the gather offset from it)
 } dev;
 
 using Shader::Stage;

@@ -495,7 +495,7 @@ void EmitSetFragColor(EmitContext& ctx, u32 index, u32 component, Id value) {
         const Id pointer{ctx.OpAccessChain(ctx.output_f32, ctx.frag_color.at(index), component_id)};
         if (frag_nan_guard) {   // (amd-fix, mma_layout.h) NaN -> 0, the rest clamped to +-1e30
             const Id clamped{ctx.OpNMin(ctx.F32[1], ctx.OpNMax(ctx.F32[1], value, ctx.Const(-1e30f)), ctx.Const(1e30f))};
-            value = ctx.OpSelect(ctx.F32[1], ctx.OpIsNan(ctx.U1, value), ctx.Const(0.0f), clamped);
+            value = ctx.OpSelect(ctx.F32[1], IsNan(ctx, value, 32), ctx.Const(0.0f), clamped);
         }
         ctx.OpStore(pointer, value);
     } else if (type == AttributeType::UnsignedInt) {
