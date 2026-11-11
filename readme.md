@@ -88,6 +88,9 @@ you start the game from its launcher, which also updates it.
 
 ### On Windows
 
+For a portable install on an external SSD, run the downloaded setup with `--portable`; see
+[Portable Hookshot Builder](docs/windows-portable-builder.md) for folder, move and repair behavior.
+
 1. Open the [latest release](https://github.com/NotRexed/Hookshot/releases/latest) and download `HookshotBuilder.exe`.
 2. Run it. It downloads the rest of Hookshot Builder (about 500 MB), checks it, and opens it.
 3. Pick your game. The builder looks for `.nup` files in your Downloads, Desktop and Documents folders and lists them

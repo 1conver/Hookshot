@@ -32,6 +32,8 @@ def main():
 using Process = DigestFixture.FakeProcess;
 using Environment = DigestFixture.FakeEnvironment;
 using AppContext = DigestFixture.FakeAppContext;
+using BuilderHome = DigestFixture.FakeBuilderHome;
+using PortableArchive = DigestFixture.UnusedPortableArchive;
 """
     fixture = (ROOT / "tests/updater_asset_digest_test.cs").read_text(encoding="utf-8")
     with tempfile.TemporaryDirectory(prefix="updater-digest-build-") as folder:

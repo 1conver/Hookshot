@@ -47,7 +47,8 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        OutPath.Text = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Games", "Hookshot");
+        OutPath.Text = BuilderHome.DefaultGame;
+        if (BuilderHome.Portable) DesktopTick.IsChecked = StartTick.IsChecked = false;
         LanguageBox.ItemsSource = Strings.All;
         LanguageBox.SelectedItem = lang;
         WorkerBox.ItemsSource = BuildWorkers.Choices(Environment.ProcessorCount);
@@ -322,13 +323,16 @@ public partial class MainWindow : Window
         Process.Start(new ProcessStartInfo(launchFolder) { UseShellExecute = true });
 
     // ---- what the player chose last time (BuilderSettings.cs): builder-settings.json beside the versions ----
-    static string SettingsPath => System.IO.Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HookshotBuilder", "builder-settings.json");
+    static string SettingsPath => System.IO.Path.Combine(Storage.Base, "builder-settings.json");
 
     void ApplySettings()
     {
         var s = BuilderSettings.Load(SettingsPath);
         if (s == null) return;
+        s.Out = BuilderHome.LoadPath(s.Out);
+        s.Nup = BuilderHome.LoadPath(s.Nup);
+        s.Romfs = BuilderHome.LoadPath(s.Romfs);
+        s.Exefs = BuilderHome.LoadPath(s.Exefs);
         PrepareTick.IsChecked = !s.PrepareLater;
         if (!string.IsNullOrEmpty(s.Out)) OutPath.Text = s.Out;
         DlssTick.IsChecked = s.Dlss;
@@ -356,7 +360,9 @@ public partial class MainWindow : Window
     {
         try
         {
-            var s = new BuilderSettings { Out = OutPath.Text, Nup = romfs == null ? chosenNup : null, Romfs = romfs, Exefs = exefs,
+            var s = new BuilderSettings { Out = BuilderHome.SavePath(OutPath.Text),
+                                          Nup = BuilderHome.SavePath(romfs == null ? chosenNup : null),
+                                          Romfs = BuilderHome.SavePath(romfs), Exefs = BuilderHome.SavePath(exefs),
                                           Dlss = DlssTick.IsChecked == true, Fsr = FsrTick.IsChecked == true,
                                           FsrLicense = fsrLicense,
                                           PrepareLater = PrepareTick.IsChecked != true,
@@ -1207,7 +1213,7 @@ public partial class MainWindow : Window
             ProblemTitle.Text = "The build tools need repairing";
             ProblemHead.Text = "Your antivirus removed part of the build tools";
             ProblemText.Text = why + "\n\nAntivirus programs sometimes flag unsigned developer tools by mistake.";
-            var base_ = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HookshotBuilder");
+            var base_ = Storage.Base;
             foreach (var (n, s) in new[]
                      {
                          (1, "Open Windows Security → Protection history, and restore the removed files."),

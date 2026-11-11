@@ -1441,6 +1441,50 @@ def place_ngx_runtime(out):
     return dst
 
 
+def portable_game_home(out):
+    """Validate the portable context before a build changes output; association is relative to this game."""
+    if os.name != "nt" or os.environ.get("HOOKSHOT_BUILDER_PORTABLE") != "1":
+        return None
+    home = os.environ.get("HOOKSHOT_SETUP_BASE", "")
+    if not ntpath.isabs(home) or not ntpath.splitdrive(home)[0] or home.startswith(("\\\\?\\", "\\\\.\\")):
+        raise ValueError("The portable Builder home must be a fully qualified drive or UNC folder.")
+    home = os.path.abspath(home)
+    with open(os.path.join(home, ".hookshot-portable"), "rb") as f:
+        marker = f.read(36)
+    magic = b"Hookshot Builder portable home v1"
+    if len(marker) > len(magic) + 2 or marker.rstrip(b"\r\n") != magic:
+        raise ValueError("The portable Builder home marker is invalid.")
+    if os.path.dirname(home) == home:
+        raise ValueError("The portable Builder home must be a dedicated folder.")
+    launcher = os.path.join(os.path.dirname(os.path.abspath(ROOT)), "HookshotBuilder-Setup.exe")
+    if not os.path.isfile(launcher):
+        raise ValueError("A portable game needs the packaged Builder setup launcher.")
+    try:
+        relative = os.path.relpath(home, os.path.abspath(out))
+    except ValueError as e:
+        raise ValueError("Keep a portable game and its Builder on the same volume.") from e
+    if len(home) >= 260 or len(relative.encode("utf-8")) >= 780 or any(c in relative for c in "\r\n\0:"):
+        raise ValueError("The portable Builder association cannot be represented by the Windows setup.")
+    return relative
+
+
+def write_game_home(out, relative):
+    """Only called after successful output finalization; never resolves relative to the process cwd."""
+    destination = os.path.join(out, ".hookshot_builder_home")
+    if relative is None:
+        with contextlib.suppress(FileNotFoundError):
+            os.remove(destination)
+        return
+    fd, partial = tempfile.mkstemp(prefix=".hookshot-home-", dir=out)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+            f.write(relative)
+        os.replace(partial, destination)
+    finally:
+        if os.path.exists(partial):
+            os.remove(partial)
+
+
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("--nup")
@@ -1449,7 +1493,8 @@ def parse_args():
     p.add_argument("--out")
     p.add_argument("--work", default=os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"),
                                                   "hookshot-builder-windows" if CROSS else "hookshot-builder")   # (the objects apart)
-                   if os.name != "nt" else os.path.join(os.environ.get("LOCALAPPDATA", ROOT), "HookshotBuilder"))
+                   if os.name != "nt" else os.environ.get("HOOKSHOT_SETUP_BASE") or
+                   os.path.join(os.environ.get("LOCALAPPDATA", ROOT), "HookshotBuilder"))
     # (HOOKSHOT_JOBS: fewer compilers on a PC short of memory; the AppImage's builds pass no --jobs)
     p.add_argument("--jobs", type=int)
     p.add_argument("--language", default="en-US", help="the game's language: a code from LANGUAGES, written to language.txt")
@@ -1473,7 +1518,9 @@ def parse_args():
     if a.prepare:   # (first: a bad --game below is said as RecompLauncher's "error" line)
         global PREPARE
         PREPARE = True
-        a.out = a.out or os.path.join(os.path.expanduser("~"), "Games", "Hookshot")
+        a.out = a.out or (os.path.join(os.path.dirname(os.environ["HOOKSHOT_SETUP_BASE"]), "Hookshot")
+                          if os.name == "nt" and os.environ.get("HOOKSHOT_BUILDER_PORTABLE") == "1" and
+                          os.environ.get("HOOKSHOT_SETUP_BASE") else os.path.join(os.path.expanduser("~"), "Games", "Hookshot"))
     if a.game:   # (a path from a launcher: said plainly before any folder is made, not as a traceback halfway in)
         if os.path.isdir(a.game):
             a.romfs, a.exefs = os.path.join(a.game, "romfs"), os.path.join(a.game, "exefs")
@@ -1575,6 +1622,7 @@ def end_stale_games(folders):
 def main(a=None):
     if a is None:
         a = parse_args()
+    portable_home = portable_game_home(a.update or a.out) if not a.check and (a.update or a.out) else None
     if a.jobs is not None and a.jobs < 0:
         fail("--jobs must be 1 or more, or 0 for automatic.")
     a.jobs = chosen_jobs(a.jobs)
@@ -1911,9 +1959,12 @@ def main(a=None):
             if tag:
                 break
     if tag:
+        write_game_home(out, portable_home)
         with open(os.path.join(out, "hookshot_version.txt"), "w", encoding="utf-8", newline="\n") as f:
             f.write("version=%s\n" % tag)
-            if os.environ.get("HOOKSHOT_BUILDER_EXE"):
+            if portable_home is not None:
+                f.write("builder_local=1\n")
+            elif os.environ.get("HOOKSHOT_BUILDER_EXE"):
                 f.write("builder=%s\n" % os.environ["HOOKSHOT_BUILDER_EXE"])
                 # (the Python builder: builder is its pythonw.exe, and these the arguments before --update, host/hos_update.c)
                 if os.environ.get("HOOKSHOT_BUILDER_ARGS"):

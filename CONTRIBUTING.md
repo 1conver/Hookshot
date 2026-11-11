@@ -132,6 +132,9 @@ workload, or build it from a developer prompt:
 dotnet build builder/HookshotBuilder.sln
 ```
 
+For a Windows installation that keeps its own state on an external SSD, see
+[portable Builder setup and relocation](docs/windows-portable-builder.md).
+
 You only need Visual Studio for the builder itself. The game build uses llvm-mingw.
 
 The Windows app's **Build workers** choice applies to builds started from that window. **Automatic** keeps the existing
