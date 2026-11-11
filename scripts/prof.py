@@ -32,6 +32,22 @@ def load_map(path, base):
 GAME_MODS = ("hookshot.exe", "hookshot")
 VK_MODS = ("hookshot_vk.dll", "hookshot_vk.so")
 RUN_MODS = GAME_MODS + VK_MODS
+# A sample whose leaf is outside Hookshot is a wait only when a wait is on its stack: libc's memcpy and the driver's own
+# vkCmd* work are CPU time of the thread. These names (as the samples are named: Hookshot's frames, leaf first) wait.
+WAIT_FRAMES = ("SleepConditionVariableSRW", "WaitForSingleObject", "hos_cv_sleep", "condition_variable::wait",
+               "hos_sleep_ns", "sleep_ns", "hos_thread_wait", "vc_acquire", "present_out", "vkWaitForFences",
+               "vkWaitSemaphores", "wait_value", "vk_timeline_wait", "recording_wait", ":Sleep", ":SleepEx",
+               "WaitForMultipleObjects", "WaitOnAddress")
+
+
+def waiting(leaf_module, names):
+    """whether a sample (its leaf's module, its frames named) waits: outside Hookshot, under a wait"""
+    if leaf_module in RUN_MODS:
+        return False
+    for n in names:
+        if n.startswith(("hookshot:", "hookshot_vk:", "hookshot.exe:", "hookshot_vk.dll:")):
+            return n.endswith(WAIT_FRAMES)
+    return True   # (no frame of Hookshot's at all: a thread blocked outside it)
 
 
 def load_elf(path):

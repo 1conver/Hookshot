@@ -582,6 +582,7 @@ static DWORD WINAPI sample_all_thread(void *p) {
             }
             CloseHandle(snap);
             t0 = hos_now_ns();
+            fprintf(out, "# t0_ns %lld\n", (long long)t0);   /* (the clock of HOS_CHAIN's records: scripts/chain.py) */
             hos_log("prof: all-thread sampling of %d threads into %s", nt, path);
         }
         Sleep(2);

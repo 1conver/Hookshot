@@ -68,6 +68,8 @@ static int64_t now_ns = 1000;
 static int yields, timer_waits, sleeps, logged, threads, groups = 1, affinity_calls, core_yields, aways, backs;
 static int64_t timer_due;
 static int64_t hos_now_ns(void) { return now_ns; }
+enum { HOS_CHAIN_WAIT = 1, HOS_CHAIN_WOKE, HOS_CHAIN_SIGNAL, HOS_CHAIN_SLEEP, HOS_CHAIN_AWAKE, HOS_CHAIN_PRESENT };
+#define HOS_CHAIN(kind, key) ((void)(kind), (void)(key))   /* (HOS_CHAIN off: host/hos.h) */
 static BOOL SwitchToThread(void) { yields++; now_ns += 3000; return 1; }
 static void YieldProcessor(void) { now_ns += 100; }
 static void Sleep(DWORD ms) { sleeps++; now_ns += (int64_t)ms * 1000000; }

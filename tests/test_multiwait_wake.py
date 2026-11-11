@@ -76,6 +76,11 @@ static void hos_vcore_checkpoint(void) { if (lock_depth) sched_locked++; }
 static void hos_vcore_yield(void) { if (lock_depth) sched_locked++; }
 static int wake_lat_on(void) { return 1; }
 static void wake_lat_note(int how, int64_t lat_ns) { (void)how; (void)lat_ns; }
+/* (HOS_CHAIN off: host/hos.h) */
+enum { HOS_CHAIN_WAIT = 1, HOS_CHAIN_WOKE, HOS_CHAIN_SIGNAL };
+static volatile int hos_chain_on;
+static void hos_chain_note(int kind, uint64_t key, uint64_t lr) { (void)kind; (void)key; (void)lr; }
+#define HOS_CHAIN(kind, key) do { if (hos_chain_on) hos_chain_note((kind), (key), 0); } while (0)
 enum { K_EVENT = 1, K_TIMER, K_SEMA, K_QUEUE, K_MULTIWAIT, K_HOLDER };
 HOLDER_ENUM
 static Obj objs[128];

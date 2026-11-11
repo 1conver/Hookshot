@@ -235,6 +235,9 @@ void reflex_game_submitted() {
     if (r.frame_marked) mark(VK_LATENCY_MARKER_RENDERSUBMIT_END_NV);
 }
 
+const VkPhysicalDevicePresentIdFeaturesKHR* reflex_present_id_features() {
+    return rx().have_ext ? &rx().present_id : nullptr;
+}
 const void* reflex_present_id(const void* next) {
     Reflex& r = rx();
     std::lock_guard lk(r.mu);

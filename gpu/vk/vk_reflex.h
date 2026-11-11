@@ -31,6 +31,9 @@ void reflex_present_begins();
 void reflex_submit_ends();
 /// The present: a VkPresentIdKHR for VkPresentInfoKHR's pNext (or null), and the present's start marker
 const void* reflex_present_id(const void* next);
+/// Its present-id feature struct when its extensions put one in the device's feature chain (null: none; the presenter thread's
+/// present waits then add their own, vk_main.cpp create_device)
+const VkPhysicalDevicePresentIdFeaturesKHR* reflex_present_id_features();
 void reflex_presented();
 /// After the present: the driver's sleep until the next frame should start, then that frame's start markers
 void reflex_sleep();

@@ -437,13 +437,21 @@ HosThread *hos_thread_by_handle(uint32_t h) {
 }
 
 /* Block on the thread's wake event (the kernel layer's lock must not be held). */
+/* (HOS_CHAIN: the kernel's waits, svc mutexes, condition variables and the address arbiter, end in a wake of the
+   thread itself: one key per thread, bit 62: never a guest address) */
+static uint64_t wake_chain_key(HosThread *t) { return 1ULL << 62 | (uint64_t)(uintptr_t)t; }
 void hos_thread_wait(HosThread *t, int64_t timeout_ns, int *timed_out) {
     DWORD ms = timeout_ns < 0 ? INFINITE : (DWORD)((timeout_ns + 999999) / 1000000);
+    HOS_CHAIN(HOS_CHAIN_WAIT, wake_chain_key(t));
     const int away = hos_vcore_away();
     *timed_out = WaitForSingleObject(t->wake, ms) == WAIT_TIMEOUT;
     if (away) hos_vcore_back();
+    HOS_CHAIN(HOS_CHAIN_WOKE, wake_chain_key(t));
 }
-void hos_thread_wake(HosThread *t) { SetEvent(t->wake); }
+void hos_thread_wake(HosThread *t) {
+    HOS_CHAIN(HOS_CHAIN_SIGNAL, wake_chain_key(t));
+    SetEvent(t->wake);
+}
 
 HosThread *hos_thread_of(uint64_t guest_tt) {
     HosThread *r = NULL;
@@ -857,9 +865,11 @@ static void sleep_away(int64_t ns, int guest) {
         SwitchToThread();
         return;
     }
+    HOS_CHAIN(HOS_CHAIN_SLEEP, (uint64_t)ns);
     const int away = hos_vcore_away();
     sleep_ns(ns, guest);
     if (away) hos_vcore_back();
+    HOS_CHAIN(HOS_CHAIN_AWAKE, (uint64_t)ns);
 }
 void hos_sleep_ns(int64_t ns) { sleep_away(ns, 0); }
 static void sleep_ns(int64_t ns, int guest) {
@@ -1379,6 +1389,8 @@ static void vc_dequeue(HosThread *t) {
         }
     t->vc_queued = 0;
 }
+/* (HOS_CHAIN: a thread's wait for a core, and the grant that ends it; bit 63: never a guest address) */
+static uint64_t vc_chain_key(HosThread *t) { return 1ULL << 63 | (uint64_t)(uintptr_t)t; }
 /* core c is free: to the best waiter allowed on it; holding vc_lock */
 static void vc_grant(int c) {
     HosThread *best = NULL;
@@ -1387,6 +1399,7 @@ static void vc_grant(int c) {
     if (!best) return;
     vc_dequeue(best);
     vc_take(best, c);
+    HOS_CHAIN(HOS_CHAIN_SIGNAL, vc_chain_key(best));
     WakeConditionVariable(&best->vc_cv);
 }
 static void vc_stats_locked(int64_t now) {
@@ -1419,6 +1432,7 @@ static void vc_acquire(HosThread *t) {
         return;
     }
     const int64_t t0 = hos_now_ns();
+    HOS_CHAIN(HOS_CHAIN_WAIT, vc_chain_key(t));
     t->vc_since = t0;
     t->vc_queued = 1;
     if (vc_nq < 1024) vc_queue[vc_nq++] = t;
@@ -1471,6 +1485,7 @@ static void vc_acquire(HosThread *t) {
         }
     }
     const int64_t waited = hos_now_ns() - t0;
+    HOS_CHAIN(HOS_CHAIN_WOKE, vc_chain_key(t));
     vc_st.wait_ns += waited;
     if (waited > vc_st.max_ns) vc_st.max_ns = waited;
     vc_stats_locked(hos_now_ns());
