@@ -7,6 +7,7 @@
 
 #include <math.h>
 #include <stdint.h>
+#include <stdlib.h>
 
 /* The host and the menu accept the same custom output shapes and pixel budget. */
 static inline int hos_output_size_valid(uint32_t w, uint32_t h) {
@@ -25,11 +26,17 @@ static inline double hos_wide_clamp(double want) {
     return want >= surround - 0.0001 ? surround : want < 5.0 / 4.0 ? 5.0 / 4.0 : want;
 }
 
-/* The most pixels a widescreen picture takes: 3840 x 2160's. The game's render targets come from a pool sized for its picture
-   (host/nn_applet.c hos_rt_pool_size), and a 32:9 screen at the 4K output made a 7680 x 2160 one. Its pool at the output's size
-   ran out as Kokiri Forest loaded (a null pointer, issue 1031); a pool for the whole picture, 1.4 GB, failed the game's own
-   reservation at boot. 5400 x 1520 there, more than the 5120 x 1440 screens it was seen on. */
-static inline double hos_wide_max_px(void) { return 3840.0 * 2160.0; }
+/* The most pixels a widescreen picture takes: 5120 x 2160's (a 21:9 screen at the 4K output, native; 7680 x 1440, 48:9 at
+   1440, has as many). The game's render targets come from a pool scaled with the picture's pixels (host/nn_applet.c
+   hos_rt_pool_size): 915 MB for that, from the game's 305 MB for 2560 x 1440. It was 3840 x 2160's: a 32:9 screen at the 4K
+   output made a 7680 x 2160 picture whose pool at the output's size ran out as Kokiri Forest loaded (a null pointer, issue
+   1031), and a pool for that whole picture, 1.4 GB, failed the game's own reservation at boot. HOS_WIDE_MAX_PX=<pixels>
+   overrides it (3840 x 2160's, 8294400, as before). */
+static inline double hos_wide_max_px(void) {
+    const char *e = getenv("HOS_WIDE_MAX_PX");
+    const double v = e ? atof(e) : 0.0;
+    return v >= 640.0 * 360.0 ? v : 5120.0 * 2160.0;
+}
 
 /* The picture for an output height at ratio r (hos_wide_clamp's): *w x *h */
 static inline void hos_wide_size(unsigned out_h, double r, double max_px, unsigned *w, unsigned *h) {
