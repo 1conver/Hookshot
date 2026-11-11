@@ -251,10 +251,13 @@ use and cause stalls when the card runs out of headroom. To undo it, turn the ro
 
 ## In-game menu
 
-By default, press <kbd>Insert</kbd> or <kbd>F1</kbd> in game. On a controller, press Home or Select and Start together; on
-a DualShock 4 or DualSense, clicking the touchpad does the same as <kbd>F1</kbd>.
-The same keys close it, and so does <kbd>Esc</kbd>. <kbd>F1</kbd> always works; **Controls → Menu shortcut** can leave
-<kbd>Insert</kbd> free for another overlay. The menu has five tabs, Graphics, Audio, Gameplay, Controls and Debug:
+By default, press <kbd>Insert</kbd>, <kbd>F1</kbd> or <kbd>Esc</kbd> in game. On a controller, press Home or Select and
+Start together; on a DualShock 4 or DualSense, clicking the touchpad does the same as <kbd>F1</kbd>.
+The same keys close it; with every Menu shortcut, <kbd>Esc</kbd> goes back a page or closes the open menu.
+<kbd>F1</kbd> always works. **Controls → Menu shortcut** can leave <kbd>Insert</kbd> free for another overlay (F1 only).
+With Insert or F1, or with F1 only, <kbd>Esc</kbd> does not open the menu: it only lets the mouse go. Options saved by
+an older version on Insert or F1, the default then, move to Insert, F1 or Esc; F1 only stays.
+The menu has five tabs, Graphics, Audio, Gameplay, Controls and Debug:
 <kbd>Q</kbd> and <kbd>E</kbd> (or <kbd>Tab</kbd> and <kbd>Shift</kbd>+<kbd>Tab</kbd>) switch between them, LB and RB on
 a controller (or the triggers). <kbd>Up</kbd> and <kbd>Down</kbd> choose a row, <kbd>Left</kbd> and <kbd>Right</kbd>
 change it (<kbd>Enter</kbd> changes it too); beside the rows, the help says what the row is and, on a line of its own,
@@ -325,7 +328,7 @@ HDR peak brightness show only while HDR is on.
 | | Layout preset | Nintendo (Def), Xbox / PC, Swap Face, Custom | Nintendo (Def) |
 | | Motion | Opens the Motion page: Motion controls (Off, On; On), Motion sensitivity X (10% to 600%) and Y (10% to 300%; 100%), Invert motion X and Y (Off, On; Off), Motion deadzone (Low, Standard, High; Standard) | |
 | | Controls | Opens the Controls page | |
-| | Menu shortcut | Insert or F1, F1 only | Insert or F1 |
+| | Menu shortcut | Insert or F1; F1 only; Insert, F1 or Esc | Insert, F1 or Esc |
 | Debug | Debug tools | Off, On (the tools below it while on) | Off |
 | | Developer: Descriptor reuse | Off, On (after a restart) | On |
 | | Developer: Sampler cache | Off, On (after a restart) | Off |
