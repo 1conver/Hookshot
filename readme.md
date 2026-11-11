@@ -520,7 +520,10 @@ A mod file larger than the game's own does not load unless the resource size tab
 aside for it (by the CRC32 of its path without `.zs`; for a texture, its decompressed size + 280). Past that, the game
 goes on without the mod's file, or a loading screen waits for good. A mod that makes files bigger (HD
 textures, longer parameter files) ships the table with its entries grown. Since only one mod's table is used, mods that
-each grow files need one table with all their entries, in the mod that sorts last.
+each grow files need one table with all their entries, in the mod that sorts last. Hookshot merges the button prompts'
+entries into that table (each file gets the larger of the two), so your controller's icons stay in texts; the log says
+`(with the button prompts' sizes merged in)` after the table's line. A table it cannot read that way (not the game's
+format, or a zstd frame that does not give its size) is used as it is, with the Switch's icons.
 
 ## Build from source
 

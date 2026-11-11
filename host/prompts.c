@@ -11,7 +11,11 @@
    The font as built: an OpenType font behind an 8-byte header, XORed per little-endian word with the key the header's magic
    (0x18029a7f) gives. Its cmap has one icon per pad input at U+F700 + HOS_PAD_*, and each Switch button's code point in a
    format 4 segment of its own, by idDelta: pointing a button at another icon is that segment's idDelta. The result goes out
-   as a zstd frame of raw blocks (the file name says .zs; the game's decoder takes a frame made without its dictionary). */
+   as a zstd frame of raw blocks (the file name says .zs; the game's decoder takes a frame made without its dictionary).
+
+   The faces' fonts are larger than the game's, and the game drops a file larger than its entry in the resource size table: the
+   game's table is served with the font's entry raised (prompts/rsizetable.zs, nx2/prompt_assets.py), and a mod's own table with
+   our entries merged into it (sizes), so a mod that grows files keeps the icons. */
 #include "hos.h"
 #include "hos_paths.h"
 #include <ctype.h>
@@ -21,11 +25,12 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include "../gpu/vk/vk_api.h"   /* (HOS_SW_*, HOS_PAD_*, HOS_BIND_PAD) */
+#include "zstd.h"   /* (third_party/zstd: a mod's size table) */
 
 int hos_binding(int set, int button, int slot);   /* nn_hid.c */
 int hos_sdl_pads(uint64_t *buttons, int32_t stick[4]);   /* pad_sdl.c */
 void hos_sdl_pad_first_name(char *out, size_t cap);
-int hos_mods_has(const char *prefix, const char *suffix);   /* mods.c */
+int hos_mods_find(const char *prefix, const char *suffix, char *out, size_t cap);   /* mods.c */
 
 #define FONT_PATH "font2/scalable/external.nin_ounce_nvn2.bfotf.zs"   /* (as hos_mods_romfs's keys: lower case) */
 #define TEXTURES_PATH "ui/layout2archive/common.product.100.nin_ounce_nvn2.bntx.zs"
@@ -209,6 +214,116 @@ static uint8_t *read_all(const char *path, const char *magic, long *n) {   /* (t
         return NULL;
     }
     return t;
+}
+
+/* a zstd frame's content, when its header gives its size (at most 64 MB): the bytes (malloc, *out_n), NULL otherwise */
+static uint8_t *unzstd(const uint8_t *in, size_t n, size_t *out_n) {
+    const unsigned long long size = ZSTD_getFrameContentSize(in, n);
+    if (size == ZSTD_CONTENTSIZE_ERROR || size == ZSTD_CONTENTSIZE_UNKNOWN || size > (64u << 20)) return NULL;
+    uint8_t *out = (uint8_t *)malloc(size ? (size_t)size : 1);
+    const size_t got = out ? ZSTD_decompress(out, (size_t)size, in, n) : 0;
+    if (!out || ZSTD_isError(got) || got != size) {
+        free(out);
+        return NULL;
+    }
+    *out_n = (size_t)size;
+    return out;
+}
+
+/* the resource size table, decompressed (nx2/prompt_assets.py size_table): "RESTBL", u32 version, u32 name field's size, u32
+   hashed entries, u32 named entries; each hashed one u32 CRC-32 of a file's path and u32 size, by CRC; each named one (a path
+   whose CRC-32 another path has too) the path in the name field and u32 size, by name. 1 when t (n bytes) is one */
+static int restbl_head(const uint8_t *t, size_t n, uint32_t *name, uint32_t *hashed, uint32_t *named) {
+    if (n < 22 || memcmp(t, "RESTBL", 6)) return 0;
+    *name = rd32le(t + 10), *hashed = rd32le(t + 14), *named = rd32le(t + 18);
+    return *name && *name <= 1024 && 22 + 8 * (uint64_t)*hashed + (*name + 4ull) * *named == n;
+}
+
+static int restbl_cmp(const uint8_t *x, const uint8_t *y, size_t key) {   /* (a hashed entry's CRC, a named entry's path) */
+    if (key == 4) return (rd32le(x) > rd32le(y)) - (rd32le(x) < rd32le(y));
+    return strncmp((const char *)x, (const char *)y, key);
+}
+
+/* the entries of a part of two tables (a: na of them, b: nb; each a key of key bytes and its u32 size) into out, in order: a's,
+   with b's size where it is larger, and b's that a lacks; how many, -1 when a part is out of order. *raised: b's that went in */
+static long restbl_part(const uint8_t *a, uint32_t na, const uint8_t *b, uint32_t nb, size_t key, uint8_t *out, int *raised) {
+    const size_t es = key + 4;
+    long n = 0;
+    for (uint32_t i = 0, j = 0; i < na || j < nb; n++) {
+        const uint8_t *x = i < na ? a + es * i : NULL, *y = j < nb ? b + es * j : NULL;
+        if ((x && i && restbl_cmp(x - es, x, key) >= 0) || (y && j && restbl_cmp(y - es, y, key) >= 0)) return -1;
+        const int c = !x ? 1 : !y ? -1 : restbl_cmp(x, y, key);
+        memcpy(out + es * n, c <= 0 ? x : y, es);
+        if (c > 0 || (c == 0 && rd32le(y + key) > rd32le(x + key))) {
+            wr32le(out + es * n + key, rd32le(y + key));
+            (*raised)++;
+        }
+        i += c <= 0, j += c >= 0;
+    }
+    return n;
+}
+
+/* a mod's size table (a, an bytes) with ours (b) merged in: each file the larger of the two entries, sorted as the game's
+   (restbl_head). The bytes (malloc, *n), *raised how many of ours went in; NULL when either is no table, their name fields
+   differ or one's entries are out of order */
+static uint8_t *merge_restbl(const uint8_t *a, size_t an, const uint8_t *b, size_t bn, size_t *n, int *raised) {
+    uint32_t name, hashed, named, bname, bhashed, bnamed;
+    if (!restbl_head(a, an, &name, &hashed, &named) || !restbl_head(b, bn, &bname, &bhashed, &bnamed) || name != bname) return NULL;
+    uint8_t *t = (uint8_t *)malloc(22 + 8 * ((size_t)hashed + bhashed) + (name + (size_t)4) * ((size_t)named + bnamed));
+    *raised = 0;
+    const long h = t ? restbl_part(a + 22, hashed, b + 22, bhashed, 4, t + 22, raised) : -1;
+    const long m = h < 0 ? -1 : restbl_part(a + 22 + 8 * (size_t)hashed, named, b + 22 + 8 * (size_t)bhashed, bnamed, name,
+                                            t + 22 + 8 * (size_t)h, raised);
+    if (m < 0) {
+        free(t);
+        return NULL;
+    }
+    memcpy(t, a, 14);   /* (the mod's version and name field) */
+    wr32le(t + 14, (uint32_t)h), wr32le(t + 18, (uint32_t)m);
+    *n = 22 + 8 * (size_t)h + (name + (size_t)4) * (size_t)m;
+    return t;
+}
+
+/* the size table served for a mod's own (mod: its file): the mod's with ours (prompts/rsizetable.zs) merged in, as raw zstd
+   blocks in prompts/rsizetable.mod.zs (out). 1 with it; 0 when we have none (the faces' fonts fit the game's entry); -1 when
+   the mod's cannot take ours: it is served as it is, and the game's own icons with it. Made once, for the first mod table asked */
+static int sizes(const char *dir, const char *mod, char *out, size_t cap) {
+    static volatile LONG state;   /* 0 not made, 1 being made, 2 made, 3 none of ours, 4 failed */
+    static char from[MAX_PATH], path[MAX_PATH];
+    if (InterlockedCompareExchange(&state, 1, 0) == 0) {
+        snprintf(from, sizeof from, "%s", mod);
+        snprintf(path, sizeof path, "%sprompts/rsizetable.zs", dir);
+        LONG r = 3;
+        if (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES) {
+            long on = 0, mn = 0;
+            size_t bn = 0, an = 0, n = 0;
+            int raised = 0;
+            char file[MAX_PATH];   /* (mods.c's paths have '\', which fopen on Linux does not take) */
+            snprintf(file, sizeof file, "%s", mod);
+#ifndef _WIN32
+            for (char *p = file; *p; p++) if (*p == '\\') *p = '/';
+#endif
+            uint8_t *ours = read_all(path, NULL, &on), *theirs = read_all(file, NULL, &mn);
+            uint8_t *b = ours ? unzstd(ours, (size_t)on, &bn) : NULL, *a = theirs ? unzstd(theirs, (size_t)mn, &an) : NULL;
+            uint8_t *t = a && b ? merge_restbl(a, an, b, bn, &n, &raised) : NULL;
+            snprintf(path, sizeof path, "%sprompts/rsizetable.mod.zs", dir);
+            r = t && write_zstd_raw(path, t, n) ? 2 : 4;
+            if (r == 2)
+                hos_log("prompts: %s: the button prompts' sizes merged into the mod's resource size table (%d entries raised or added)",
+                        mod, raised);
+            else
+                hos_log("prompts: %s: %s: the mod's resource size table as it is", mod,
+                        !b ? "prompts/rsizetable.zs could not be read" : !theirs ? "could not be read"
+                        : !a ? "not a zstd frame that gives its size" : !t ? "not a resource size table as the game's"
+                        : "prompts/rsizetable.mod.zs could not be written");
+            free(t), free(a), free(b), free(theirs), free(ours);
+        }
+        InterlockedExchange(&state, r);
+    }
+    while (state == 1) Sleep(1);
+    if (strcmp(from, mod)) return -1;   /* (a second table, of another name: as it is) */
+    if (state == 2) snprintf(out, cap, "%s", path);
+    return state == 2 ? 1 : state == 3 ? 0 : -1;
 }
 
 static volatile LONG setup_state;   /* setup's: 0 not looked, 1 looking, 2 prompts, 3 none */
@@ -471,9 +586,11 @@ static int build(char *out, size_t cap) {
     char dir[MAX_PATH], path[MAX_PATH];
     int face;
     if (!setup(dir, sizeof dir, &face)) return 0;
-    /* (a mod's size table is served, not ours: the faces' fonts, larger than the game's, do not fit it) */
-    if (hos_mods_has(SIZES_PATH, ".rsizetable.zs")) {
-        hos_log("prompts: a mod has the resource size table: the game's own icons in texts");
+    /* (a mod's size table is served with ours merged in: sizes. One that cannot take ours is served as it is, and the faces'
+       fonts, larger than the game's, would not fit it) */
+    char mod[MAX_PATH];
+    if (hos_mods_find(SIZES_PATH, ".rsizetable.zs", mod, sizeof mod) && sizes(dir, mod, path, sizeof path) < 0) {
+        hos_log("prompts: a mod's resource size table cannot take the prompts' sizes: the game's own icons in texts");
         return 0;
     }
     snprintf(path, sizeof path, "%sprompts/%s/External.bfotf", dir, faces[face]);
@@ -495,9 +612,9 @@ static int build(char *out, size_t cap) {
     return ok;
 }
 
-/* mods.c: the file for a RomFS path the prompts replace (key: lower case, '/'), 1 with one. Asked only when no mod has
-   the file: a mod's own wins */
-int hos_prompts_romfs(const char *key, char *out, size_t cap) {
+/* mods.c: the file for a RomFS path the prompts replace (key: lower case, '/'), 1 with one. mod: a mod's file for it, or NULL.
+   A mod's own wins, but for the size table: that gets our entries merged in (sizes) */
+int hos_prompts_romfs(const char *key, const char *mod, char *out, size_t cap) {
     static volatile LONG state[3];   /* the font, the textures, the layouts: 0 not built, 1 being built, 2 built, 3 none */
     static char path[3][MAX_PATH];
     const size_t kn = strlen(key);
@@ -505,9 +622,11 @@ int hos_prompts_romfs(const char *key, char *out, size_t cap) {
         char dir[MAX_PATH];   /* (the game's size table with room for the faces' fonts, larger than its: nx2/prompt_assets.py) */
         int face;
         if (!setup(dir, sizeof dir, &face)) return 0;
+        if (mod) return sizes(dir, mod, out, cap) > 0;
         snprintf(out, cap, "%sprompts/rsizetable.zs", dir);
         return GetFileAttributesA(out) != INVALID_FILE_ATTRIBUTES;
     }
+    if (mod) return 0;
     const int which = !strcmp(key, FONT_PATH) ? 0 : !strcmp(key, TEXTURES_PATH) ? 1 : !strcmp(key, LAYOUTS_PATH) ? 2 : -1;
     if (which < 0) return 0;
     static int (*const builders[3])(char *, size_t) = {build, build_textures, build_layouts};

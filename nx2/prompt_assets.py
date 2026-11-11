@@ -21,7 +21,8 @@ layers first: --dump <dir> writes them as PNG, and a PNG of the same name in nx2
 rework one by hand (nx2/prompt_faces/README.md).
 
 The faces' fonts are larger than the game's, and the game drops a file larger than its entry in the resource size table: <out>/
-rsizetable.zs is the game's table with the font's entry raised to fit the largest, served in its place.
+rsizetable.zs is the game's table with the font's entry raised to fit the largest, served in its place (host/prompts.c merges it
+into a mod's own table when a mod ships one).
 
 A .bfotf is an OpenType font behind an 8-byte header and XORed per little-endian word: the header is the magic 0x18029a7f and the
 font's size (big-endian), each XORed with the same key as the font. The .zs files are zstd frames made with the dictionary zs.zsdic
