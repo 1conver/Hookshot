@@ -381,8 +381,8 @@ static void pads_poll(void) {
             const int z = rx_option(11, 0);   /* (the menu's Stick dead zone: nn_hid.c's hos_stick_axis) */
             int32_t v[4] = {stick_value(hos_sdl_pad_axis(gc, AX_LX), 0, z),
                             stick_value(hos_sdl_pad_axis(gc, AX_LY), 1, z),
-                            stick_value(hos_sdl_pad_axis(gc, AX_RX), inv_x, z),
-                            stick_value(hos_sdl_pad_axis(gc, AX_RY), inv_y ? 0 : 1, z)};
+                            stick_value(hos_sdl_pad_axis(gc, AX_RX), 0, z),
+                            stick_value(hos_sdl_pad_axis(gc, AX_RY), 1, z)};
             /* (hookshot) An axis steers once it has been seen at rest (inside the dead zone) since the pad was opened. The sticks are
                the strongest of all the pads', so a device whose axis reads held for good (a mapping that puts a trigger or an
                unused axis on a stick, a second virtual pad) turned the camera or walked Link in circles on its own, with the
@@ -394,6 +394,10 @@ static void pads_poll(void) {
                 pads[i].held[k] = way;
                 if (!(pads[i].rested >> k & 1)) v[k] = 0;
             }
+            /* Camera inversion changes output, not whether the physical stick crossed its rest position. Otherwise
+               toggling the setting admits a held phantom axis, which stays admitted after the setting is restored (#2273). */
+            if (inv_x) v[2] = -v[2];
+            if (inv_y) v[3] = -v[3];
             for (int k = 0; k < 4; k++)
                 if ((v[k] < 0 ? -v[k] : v[k]) > (s[k] < 0 ? -s[k] : s[k])) s[k] = v[k];
             {   /* (motion: the pad last used; a stick counts by which way it is pushed, not by how far) */
