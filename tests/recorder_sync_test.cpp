@@ -27,6 +27,9 @@
 #ifdef _WIN32
 #include <malloc.h>
 #endif
+#ifdef __linux__
+#include <sys/prctl.h>
+#endif
 
 #include "vk_work.h"
 
@@ -1600,6 +1603,9 @@ static void thread_checks(const std::vector<Call>& ref) {
 int main(int argc, char** argv) {
 #ifdef _WIN32
     SetErrorMode(0x0002 | 0x0001);   // (SEM_NOGPFAULTERRORBOX | SEM_FAILCRITICALERRORS)
+#endif
+#ifdef __linux__
+    prctl(PR_SET_DUMPABLE, 0, 0, 0, 0);   // (a fault or abort ends it without a core dump: no crash report, no notification)
 #endif
     std::setvbuf(stdout, nullptr, _IONBF, 0);   // (a broken variant may end the process: what it printed before is kept)
     // (the switch as the renderer reads it: first use, from the environment)

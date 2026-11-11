@@ -29,6 +29,9 @@ HEAD = r"""
 #include <mutex>
 #include <setjmp.h>
 #include <signal.h>
+#ifdef __linux__
+#include <sys/prctl.h>
+#endif
 using VkResult = int;
 using VkPipeline = uintptr_t;
 using VkPipelineCache = uintptr_t;
@@ -66,6 +69,9 @@ VkResult vkCreateGraphicsPipelines(uintptr_t device, VkPipelineCache cache, unsi
 
 MAIN = r"""
 int main(int argc, char **argv) {
+#ifdef __linux__
+    prctl(PR_SET_DUMPABLE, 0, 0, 0, 0);   // (fault-outside ends it by SIGSEGV on purpose: without a core dump, a crash report)
+#endif
     const char *what = argc > 1 ? argv[1] : "ok";
     if (!std::strcmp(what, "fault-outside")) { fault_now(); std::printf("fail: the fault returned\n"); return 8; }
     VkComputePipelineCreateInfo ci;
