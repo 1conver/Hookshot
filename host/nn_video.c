@@ -585,6 +585,11 @@ static void dec_acquire(Ctx *c) {
     if (!d) { RET(RESULT_NO_OUTPUT); return; }
     /* (the library aborts on any failure here: the hardware call waits for a picture. Up to ~100 ms for one decoded
        by another thread's submission; then a free buffer as it was, so the caller is never refused) */
+    /* (hookshot, #1929) and no virtual core held through it: the decoding blocks (dav1d waits for its own frame
+       threads), and with the core held the movie thread kept it 100-270 ms on Linux while a thread waiting for that core
+       ran without one. It is taken again only once d->lock is let go, as in hos_cv_sleep: waiting for a core while
+       holding the lock could stall a thread that holds a core and waits for the lock (dec_submit) */
+    const int away = hos_vcore_away();
     AcquireSRWLockExclusive(&d->lock);
     decode_pending(d);
     for (int tries = 0; !d->qn && !d->eos && tries < 50; tries++) {
@@ -598,6 +603,7 @@ static void dec_acquire(Ctx *c) {
         if (d->slots[i] && !d->busy[i] && host_of(d->slots[i], POOL_MAGIC)) slot = i;
     if (slot < 0) {
         ReleaseSRWLockExclusive(&d->lock);
+        if (away) hos_vcore_back();
         RET(RESULT_NO_OUTPUT);
         return;
     }
@@ -613,6 +619,7 @@ static void dec_acquire(Ctx *c) {
         else if (d->acquires == 1 && !d->eos)   /* (the start: the frame shows the buffer as it was, black since the pool's fill) */
             hos_log("video: the first buffer went out before the first picture was decoded (shown black)");
         ReleaseSRWLockExclusive(&d->lock);
+        if (away) hos_vcore_back();
         if (ARG(0)) G32(ARG(0)) = (uint32_t)slot;
         RET(0);
         return;
@@ -695,6 +702,7 @@ static void dec_acquire(Ctx *c) {
     picture_free(p);
     d->qhead = (d->qhead + 1) % MAX_QUEUE, d->qn--;
     ReleaseSRWLockExclusive(&d->lock);
+    if (away) hos_vcore_back();
     if (ARG(0)) G32(ARG(0)) = (uint32_t)slot;
     RET(0);
 }
