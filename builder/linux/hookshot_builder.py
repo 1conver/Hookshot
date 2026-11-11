@@ -1074,6 +1074,7 @@ class Builder(tk.Tk):
         self.proc = subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                      text=True, bufsize=1, encoding="utf-8", errors="replace", start_new_session=True, **env_kw)
         threading.Thread(target=self.read, args=(self.proc,), daemon=True).start()
+        self.tick()
 
     def read(self, proc):
         for line in proc.stdout:
@@ -1127,7 +1128,6 @@ class Builder(tk.Tk):
         self.buttons.grid(row=4, column=0, sticky="e", pady=(px(14), 0))
         ttk.Button(self.buttons, text="Cancel", command=self.cancel, cursor="hand2").pack(side="right")
         self.stage_text.set("Starting")
-        self.tick()
 
     def tick(self):
         if self.proc and self.proc.poll() is None:
@@ -1230,6 +1230,7 @@ class Builder(tk.Tk):
 
     def on_exit(self, code):
         self.proc = None
+        self.time_text.set("")   # (the clock and its countdown are a running build's; the line above says how it ended)
         for w in self.buttons.winfo_children():
             w.destroy()
         folder = getattr(self, "built", None)
