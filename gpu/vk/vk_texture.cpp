@@ -53,6 +53,9 @@
 #include "keep_rendered.h"
 #include "target_overlap.h"
 #include "host_shaders/block_linear_unswizzle_2d_comp_spv.h"
+#ifndef HOOKSHOT_ENV_H   // (env_on: the switches' one rule)
+#include "hookshot_env.h"
+#endif
 #include "vk_work.h"   // (after the others: counts the commands that do GPU work, for full_barrier)
 
 namespace mkwvk {
@@ -494,7 +497,7 @@ bool astc_ready() {
     static int state = 0;   // 0 untried, 1 ready, -1 unavailable
     if (state) return state > 0;
     state = -1;
-    if (!dev.push_descriptor || !vkCmdPushDescriptorSetKHR || getenv("RX_VK_ASTC_CPU")) return false;
+    if (!dev.push_descriptor || !vkCmdPushDescriptorSetKHR || env_on("RX_VK_ASTC_CPU")) return false;
     const VkDescriptorSetLayoutBinding b[2] = {
         {0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
         {1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr}};
@@ -588,7 +591,8 @@ VkImageView cached_image_view(Texture* tex, uint64_t key, Make&& make) {
 // layers at a time, re-encoded by Eden's encoder (host_shaders/bc_encoder.comp: bounding box along the colours'
 // covariance, inset; GPL, as the decoder) into a buffer, copied into the image. Decoded RGBA8 took 6 GB of VRAM at
 // the title (the terrain's material arrays, 2048 x 2048 x 68, 1.45 GB each): more than the driver allowed, which
-// paged VRAM out and evicted textures that were made and uploaded again. RX_VK_ASTC_RGBA8=1: all as RGBA8.
+// paged VRAM out and evicted textures that were made and uploaded again. ASTC as RGBA8 (the menu's Developer row) or
+// RX_VK_ASTC_RGBA8=1: all as RGBA8.
 struct BcPush {
     uint32_t blocks_x, blocks_y, width, height, bc3, out_offset;
 };
@@ -635,7 +639,7 @@ bool bc_scratch_make() {   // (bc_mu held)
     ii.arrayLayers = kBcLayers;
     ii.samples = VK_SAMPLE_COUNT_1_BIT;
     ii.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-    static const bool pool = getenv("RX_VK_BC_POOL") != nullptr;
+    static const bool pool = env_on("RX_VK_BC_POOL");
     if (!create_image(ii, bc_scratch, bc_scratch_alloc, !pool)) return false;
     VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
     vi.image = bc_scratch;
@@ -669,7 +673,9 @@ bool bc_ready() {
     static int state = 0;
     if (state) return state > 0;
     state = -1;
-    if (!astc_ready() || getenv("RX_VK_ASTC_RGBA8") || !dev.features.textureCompressionBC) return false;
+    // (the Developer section's ASTC as RGBA8 row, or RX_VK_ASTC_RGBA8 for a run: no BC3, the AMD texture workaround)
+    const char* rgba8 = getenv("RX_VK_ASTC_RGBA8");
+    if (!astc_ready() || (rgba8 ? !env_value_off(rgba8) : opts.astc_rgba8 != 0) || !dev.features.textureCompressionBC) return false;
     VkFormatProperties fp{};
     vkGetPhysicalDeviceFormatProperties(dev.physical, VK_FORMAT_BC3_UNORM_BLOCK, &fp);
     if (!(fp.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT)) return false;
@@ -703,7 +709,7 @@ bool bc_ready() {
     vkDestroyShaderModule(dev.device, m, nullptr);
     if (r != VK_SUCCESS) return false;
     state = 1;
-    logf("vk: big ASTC textures are kept as BC3 (re-encoded on the GPU; RX_VK_ASTC_RGBA8=1: as RGBA8)");
+    logf("vk: big ASTC textures are kept as BC3 (re-encoded on the GPU; ASTC as RGBA8 or RX_VK_ASTC_RGBA8=1: as RGBA8)");
     return true;
 }
 
@@ -717,7 +723,7 @@ bool bc_scratch2_make() {
     ii.arrayLayers = kBcLayers;
     ii.samples = VK_SAMPLE_COUNT_1_BIT;
     ii.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-    static const bool pool = getenv("RX_VK_BC_POOL") != nullptr;
+    static const bool pool = env_on("RX_VK_BC_POOL");
     if (!create_image(ii, bc_scratch2, bc_scratch2_alloc, !pool)) return false;
     VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
     vi.image = bc_scratch2;
@@ -1612,7 +1618,7 @@ bool upload_inner(Texture& tex, const Ranges* dirty) {
                         for (uint32_t t = 1; t < nthreads; t++) pool.emplace_back(part, t);
                         part(0);
                         for (std::thread& t : pool) t.join();
-                        static const bool check = getenv("RX_VK_UNSWIZZLE_CHECK") != nullptr;   // (against one thread)
+                        static const bool check = env_on("RX_VK_UNSWIZZLE_CHECK");   // (against one thread)
                         if (check && src) {
                             std::vector<uint8_t> ref(block_bytes);
                             Tegra::Texture::UnswizzleTexture(std::span<uint8_t>(ref.data(), block_bytes),
@@ -1746,7 +1752,7 @@ bool texture_dirty(Texture& tex, uint32_t gen, Ranges& out) {
         }
         std::erase_if(tex.runs, [](const Texture::Run& r) { return r.n == 0; });
         {   // (RX_VK_LOG_REMAP=1: a big texture's pages mapped anew: to which guest memory, and what images are there)
-            static const bool log_remap = getenv("RX_VK_LOG_REMAP") != nullptr;
+            static const bool log_remap = env_on("RX_VK_LOG_REMAP");
             static int logged;
             if (log_remap && had_map && !remapped.empty() && tex.guest_size >= (32ull << 20) && logged < 120) {
                 for (size_t i = 0; i < remapped.size() && i < 4 && logged < 120; i++, logged++) {
@@ -1956,7 +1962,7 @@ Texture* create(const Key& key, const nvn_tex* t, VkFormat vf, bool astc, int bw
             if (const char* e = getenv("RX_VK_UNEVEN_BC")) return e[0] == '0';
             return false;
         }();
-        static const bool rgba8_instead = getenv("RX_VK_UNEVEN_RGBA8") != nullptr;
+        static const bool rgba8_instead = env_on("RX_VK_UNEVEN_RGBA8");
         const bool bc_candidate = astc && !(x.skip && x.layers == 1) && x.type == VK_IMAGE_TYPE_2D &&
                                   x.samples == VK_SAMPLE_COUNT_1_BIT && x.width <= kBcDim && x.height <= kBcDim &&
                                   px * x.layers * 4 >= min_bytes;
@@ -2121,7 +2127,7 @@ Texture* create(const Key& key, const nvn_tex* t, VkFormat vf, bool astc, int bw
     x.bytes = x.sparse ? 0 : px * x.layers * texel * x.samples;   // (a sparse image's: as its layers are bound)
     // (the budget counts what the allocator gave it: the texels' 8% short of that over a scene's 2000 textures, 3228 MB counted for 3504
     // MB held, and a budget of 4035 MB took 4300. RX_VK_COUNT_BY_ESTIMATE=1: the texels)
-    static const bool by_estimate = getenv("RX_VK_COUNT_BY_ESTIMATE") != nullptr;
+    static const bool by_estimate = env_on("RX_VK_COUNT_BY_ESTIMATE");
     if (!x.sparse && !by_estimate) x.pad = std::max(x.bytes, allocation_size(x.allocation)) - x.bytes;
     total_bytes += x.bytes + x.pad;
     InitRedirect redirect;   // (a parallel replay's worker: into the earliest open segment's init command buffer)
@@ -2223,7 +2229,7 @@ void barrier_stats(int64_t* made, int64_t* left_out) {
 // (vk_work.h counts them), orders nothing the first did not: left out. The game's own barrier (end of a pass), then the next pass's
 // start barrier, then a dispatch's, were two or three in a row. RX_VK_BARRIER_DEDUPE_OFF=1: all recorded, as before.
 void full_barrier(VkCommandBuffer cmd, const char* why) {
-    static const bool off = getenv("RX_VK_BARRIER_DEDUPE_OFF") != nullptr;
+    static const bool off = env_on("RX_VK_BARRIER_DEDUPE_OFF");
     const bool dedupe = !off && !par_active.load(std::memory_order_relaxed);   // (a parallel replay's threads share command buffers and the count)
     if (dedupe && cmd == last_barrier_cmd && work_epoch.load(std::memory_order_relaxed) == last_barrier_epoch) {
         st_barriers_left_out.fetch_add(1, std::memory_order_relaxed);
@@ -2401,7 +2407,7 @@ Texture* texture_touch(Texture* tex, bool for_sampling) {
     if (tex->gpu_written && !tex->released) {
         // (hookshot) and a texture the GPU only cleared: the game's font cache, whose letters the CPU writes as text appears. Its menu text
         // went missing at random (Hookshot issues 40 and 44), whenever the clear reached the image first
-        static const bool take = getenv("RX_VK_CPU_OVER_GPU") != nullptr;
+        static const bool take = env_on("RX_VK_CPU_OVER_GPU");
         if ((!take && !tex->only_cleared) || tex->checked_epoch == epoch) return tex;
         tex->checked_epoch = epoch;
         static thread_local Ranges cpu, inner;
@@ -2452,7 +2458,7 @@ Texture* texture_touch(Texture* tex, bool for_sampling) {
     if (tex->uploaded && tex->checked_epoch == epoch) return tex;
     tex->checked_epoch = epoch;
     static thread_local Ranges dirty;
-    static const bool no_partial = getenv("RX_VK_NO_PARTIAL") != nullptr;   // (A/B: whole re-uploads)
+    static const bool no_partial = env_on("RX_VK_NO_PARTIAL");   // (A/B: whole re-uploads)
     // (a buffer the GPU wrote over its storage, done since: all of it again; the tiles of MKW's terrain are filled so
     // and stayed the flat placeholder they were made with)
     const bool gpu_dirty = tex->uploaded && gpu_wrote_into(*tex);
@@ -2476,7 +2482,7 @@ Texture* texture_touch(Texture* tex, bool for_sampling) {
     // render target sampled before it is rendered at its new address (the culling reads last frame's shadow map)
     // was unswizzled from that memory: 55 MB for the 3072 x 3072 x 3 shadow map, frame after frame. Not "storage
     // the write watch never saw written": the game fills memory before it makes a pool of it.)
-    static const bool upload_all = getenv("RX_VK_UPLOAD_ALL") != nullptr;   // (A/B: such storage uploaded too)
+    static const bool upload_all = env_on("RX_VK_UPLOAD_ALL");   // (A/B: such storage uploaded too)
     uint32_t owned = !tex->uploaded && !upload_all ? gpu_owned_since(tex->gpu, tex->guest_size) : 0;
     if (owned && !remade_skip_old()) {   // (one evicted that came from memory: uploaded from it again. Above)
         std::lock_guard lk(from_memory_mu);
@@ -2511,7 +2517,7 @@ Texture* texture_touch(Texture* tex, bool for_sampling) {
         }
         return tex;
     }
-    if (partial && getenv("RX_VK_LOG_PARTIAL")) {
+    if (partial && env_on("RX_VK_LOG_PARTIAL")) {
         static int logged;
         if (logged++ < 200) {
             char line[512];
@@ -2703,10 +2709,10 @@ VkImageView texture_view(Texture* tex, const nvn_tex* t, const nvn_view* v, VkIm
             break;
         default: break;
         }
-        static const bool swap_9e5 = getenv("RX_VK_9E5_SWAP") != nullptr;   // (hookshot, diagnosis: R and B swapped)
+        static const bool swap_9e5 = env_on("RX_VK_9E5_SWAP");   // (hookshot, diagnosis: R and B swapped)
         if (swap_9e5 && nf == NVN_FORMAT_RGB9E5F) std::swap(sw[0], sw[2]);
         cm = {component(sw[0]), component(sw[1]), component(sw[2]), component(sw[3])};
-        static const bool log_swizzle = getenv("RX_VK_LOG_SWIZZLE") != nullptr;   // (hookshot: RGB9E5 and R11G11B10 views)
+        static const bool log_swizzle = env_on("RX_VK_LOG_SWIZZLE");   // (hookshot: RGB9E5 and R11G11B10 views)
         static int swizzle_logged;
         if (log_swizzle && nf == NVN_FORMAT_RGB9E5F && swizzle_logged++ < 12)
             logf("vk: sampled view of #%u NVN %#x as vk %d: swizzle %u %u %u %u (descriptor %u %u %u %u, view %d)", tex->id,
@@ -2794,7 +2800,7 @@ bool flushable(const Texture& t) {
     return !from;   // (the image's texels as the storage's: no 3-byte formats kept as four)
 }
 void vw_note(Texture& t) {
-    static const bool off = getenv("RX_VK_NO_VMAP_FLUSH") != nullptr;
+    static const bool off = env_on("RX_VK_NO_VMAP_FLUSH");
     if (off || t.vw_listed || !flushable(t)) return;
     std::lock_guard lk(vw_mu);
     uint64_t& end = vw[t.gpu];
@@ -2878,7 +2884,7 @@ struct Flush {
 // (cached host memory, which the CPU reads: the sequential-write kind is write-combined, or VRAM behind the BAR, and every read
 // of it by the unswizzle goes over PCIe uncached. RX_VK_FLUSH_UNCACHED=1: as before)
 bool flush_uncached() {
-    static const bool uncached = getenv("RX_VK_FLUSH_UNCACHED") != nullptr;
+    static const bool uncached = env_on("RX_VK_FLUSH_UNCACHED");
     return uncached;
 }
 /// The copies of f's image into a staging buffer of its own, recorded into rb_cmd (begun by the caller); false: nothing recorded
@@ -2923,7 +2929,7 @@ bool flush_finish(Flush& f, bool gpu_ok) {
     bool ok = f.ok && gpu_ok;
     if (ok && !flush_uncached()) invalidate_mapped(f.alloc, total);
     if (ok && total <= 64) {   // (RX_VK_LOG_TINY_FLUSH=1: the values of tiny ones, 400 lines: a 1 x 1 luminance)
-        static const bool log_tiny = getenv("RX_VK_LOG_TINY_FLUSH") != nullptr;
+        static const bool log_tiny = env_on("RX_VK_LOG_TINY_FLUSH");
         static int logged;
         if (log_tiny && logged++ < 400) {
             const float* f = (const float*)map;
@@ -3269,7 +3275,7 @@ bool sparse_flush(Texture* tex) {
         // barriers, and one that landed while a pass sampled the image changed what the pass read part-way through
         // its tiles. Opt-in, RX_VK_SPARSE_IDLE=1: MKW binds hundreds of blocks a race, and the replay's stalls at
         // each made its other races worse)
-        static const bool no_idle = getenv("RX_VK_SPARSE_IDLE") == nullptr;
+        static const bool no_idle = !env_on("RX_VK_SPARSE_IDLE");
         static int64_t binds;
         std::lock_guard qk(dev.present_mu);
         queue_flush_locked();
@@ -3793,7 +3799,7 @@ void texture_frame(uint64_t completed) {
     // once), mostly the same ones: their uploads and decodes, and images made empty in the frame that drew them.
     // The driver's own count near its limit (97%) still squeezes, whatever the blocks hold free: then it pages VRAM
     // out. RX_VK_BUDGET_BY_BLOCKS=1: as before)
-    static const bool by_blocks = getenv("RX_VK_BUDGET_BY_BLOCKS") != nullptr;
+    static const bool by_blocks = env_on("RX_VK_BUDGET_BY_BLOCKS");
     uint64_t evict_to = 0;   // (hookshot, RX_VK_COMPACT: what an eviction goes down to when the compaction's hold set the budget)
     // (hookshot, RX_VK_COMPACT) compacted, only the textures' pool's free space comes off the count: vram_compact.h
     uint64_t reclaim = block_free;
@@ -3827,7 +3833,7 @@ void texture_frame(uint64_t completed) {
     // ratchet. On a 4 GB RX 5500M (3337 MB used of 3337, 1224 MB free in the blocks) a paused game, whose scene draws nothing,
     // lost 1700 MB of textures in seconds, made again on unpausing (the long wait), and the HUD's drawn textures went with them.
     // RX_VK_SQUEEZE_ALWAYS=1: as before
-    static const bool squeeze_always = getenv("RX_VK_SQUEEZE_ALWAYS") != nullptr;
+    static const bool squeeze_always = env_on("RX_VK_SQUEEZE_ALWAYS");
     const bool room_in_blocks = !squeeze_always && block_free >= allowed / 8;
     if (known && !by_blocks && used > allowed / 100 * 97 && !room_in_blocks) {
         const uint64_t over = used - allowed / 100 * 97;
@@ -3867,7 +3873,7 @@ void texture_frame(uint64_t completed) {
             }
             big.push_back(t);
         }
-        if (getenv("RX_VK_LOG_BAKED")) {   // (what the textures drawn in one frame are: by size, finalized or not)
+        if (env_on("RX_VK_LOG_BAKED")) {   // (what the textures drawn in one frame are: by size, finalized or not)
             logf("vk: drawn in one frame: <=64 KB %zu (%llu KB, %zu finalized), <=256 KB %zu (%llu KB, %zu), <=1 MB %zu "
                  "(%llu KB, %zu), <=4 MB %zu (%llu KB, %zu)", bucket_n[0], (unsigned long long)(bucket_b[0] >> 10),
                  bucket_rel[0], bucket_n[1], (unsigned long long)(bucket_b[1] >> 10), bucket_rel[1], bucket_n[2],
@@ -3917,7 +3923,7 @@ void texture_frame(uint64_t completed) {
         logf("vk: verify %ux%u: %d textures, %d changed since uploaded, %d of them unnoticed", verify_dim().first,
              verify_dim().second, checked, changed, missed);
     }
-    static const bool no_evict = getenv("RX_VK_NO_EVICT") != nullptr;   // (an experiment: nothing evicted)
+    static const bool no_evict = env_on("RX_VK_NO_EVICT");   // (an experiment: nothing evicted)
     // (hookshot) under the budget, every 600 presents: the render targets drawn over since (below), unused for 120
     const bool sweep = total_bytes <= budget;
     // (hookshot-amd) and every 60 presents for the render targets drawn over by one at another start (below): OoT makes a frame's
@@ -4044,13 +4050,13 @@ void texture_frame(uint64_t completed) {
         // (nor what the GPU wrote and the game still has: the image is its only copy, and one made again over that
         // storage started empty or from stale memory: a sky or course texture drawn once, garbage from then on.
         // RX_VK_EVICT_RENDERED=1: as before)
-        static const bool evict_rendered = getenv("RX_VK_EVICT_RENDERED") != nullptr;
+        static const bool evict_rendered = env_on("RX_VK_EVICT_RENDERED");
         // (one unused for 3600 presents (a minute) goes: a course left behind; the game draws it again when it comes
         // back to that course. Without it a course change kept 1.4 GB arrays and VRAM ran over)
         // (600 presents near what the driver allows, at the budget's 97%: past it the driver pages VRAM to system memory.
         // AMD's driver reports the use at most at what it allows, so "over it" never held there: keep_rendered.h.
         // RX_VK_KEEP_RENDERED_OVER=1: only past what it allows, as before)
-        static const bool keep_over_only = getenv("RX_VK_KEEP_RENDERED_OVER") != nullptr;
+        static const bool keep_over_only = env_on("RX_VK_KEEP_RENDERED_OVER");
         const uint64_t keep_rendered = keep_rendered::presents(known, used, allowed, keep_over_only);
         const bool overwritten = shifted || drawn_over(tex);   // (above)
         if (finalized_kept && keep_finalized(tex)) {   // (above. Oldest first: beyond the cap the least recently used go)
@@ -4096,7 +4102,7 @@ void texture_frame(uint64_t completed) {
         // uploaded from there with what the GPU drew. Evicted without it, it came back empty or stale: a terrain chunk dark, a
         // tiled pattern over the Deku Tree's planks and Hyrule Field's path, with a 16 GB card's textures at the 6 GB budget
         // (issue 386). RX_VK_EVICT_NO_FLUSH=1: not written back, as before)
-        static const bool no_flush = getenv("RX_VK_EVICT_NO_FLUSH") != nullptr;
+        static const bool no_flush = env_on("RX_VK_EVICT_NO_FLUSH");
         evict.push_back({tex, !no_flush && !overwritten && tex->gpu_written && !tex->released && flushable(*tex), shifted});
         pending_bytes += tex->bytes + tex->pad;
     }

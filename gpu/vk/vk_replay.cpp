@@ -50,6 +50,9 @@
 #include "vk_present_trace.h"
 
 #include "vk_internal.h"
+#ifndef HOOKSHOT_ENV_H   // (env_on: the switches' one rule)
+#include "hookshot_env.h"
+#endif
 #include "vk_work.h"   // (after the others: counts the commands that do GPU work, for full_barrier)
 
 namespace mkwvk {
@@ -514,7 +517,7 @@ struct ParPoint {
 };
 std::vector<ParPoint> par_points;   // (every 64 draws and dispatches of the dry pass)
 bool dry_clears_on() {   // (the dry pass marks a clear's targets too: NOP_CLEAR_COLOR in replay())
-    static const bool v = getenv("RX_VK_NO_DRY_CLEARS") == nullptr;
+    static const bool v = !env_on("RX_VK_NO_DRY_CLEARS");
     return v;
 }
 int64_t dry_work = 0;
@@ -522,7 +525,7 @@ size_t ub_first_of_recording = 0;  // (the current recording's first entry)
 uint64_t rec_value_now = 0;
 
 bool deferred_late() {   // (RX_VK_DEFERRED_LATE=1: deferred binds read from the game's arrays at the replay)
-    static const bool v = getenv("RX_VK_DEFERRED_LATE") != nullptr;
+    static const bool v = env_on("RX_VK_DEFERRED_LATE");
     return v;
 }
 
@@ -639,7 +642,7 @@ void ub_copy_keep(uint64_t addr, uint64_t n, const uint8_t* base, size_t first, 
 uint64_t ub_overlay(uint64_t addr, uint64_t n, uint8_t* base, const std::function<uint64_t(uint64_t)>& alloc) {
     // (a worker: those before its place in the stream; a background thread: none, not even the list's size)
     const size_t lim = ub_limit ? std::min(ub_limit, ub_updates.size()) : 0;
-    static const bool cur_only = getenv("RX_VK_UB_CUR_ONLY") != nullptr;   // (A/B: this submission's updates only)
+    static const bool cur_only = env_on("RX_VK_UB_CUR_ONLY");   // (A/B: this submission's updates only)
     const size_t first = cur_only ? std::min(ub_first_of_recording, lim) : 0;
     if (ub_gap_holds(addr, n, first, lim)) return UINT64_MAX;
     const uint64_t view = memory_capture_view();
@@ -809,7 +812,7 @@ void replay(VkCommandBuffer& cmd, NvnState& s, const uint8_t* p, const uint8_t* 
             // GPU takes 6-7 ms a frame at the resolution it then holds. RX_VK_TS_SCALE=1: the real clock;
             // RX_VK_TS_GLOBAL=1: scaled from the start, not from each present.)
             static const double ts_scale = getenv("RX_VK_TS_SCALE") ? atof(getenv("RX_VK_TS_SCALE")) : 0.1;
-            static const bool ts_global = getenv("RX_VK_TS_GLOBAL") != nullptr;
+            static const bool ts_global = env_on("RX_VK_TS_GLOBAL");
             static uint64_t ts_base = 0;
             uint64_t ns = host->ticks() * 32;
             if (ts_scale != 1.0) {
@@ -1021,7 +1024,7 @@ void replay(VkCommandBuffer& cmd, NvnState& s, const uint8_t* p, const uint8_t* 
             // took other patches' placements (holes in the far terrain, the minimap's triangles). RX_VK_DEFERRED_LATE=1:
             // read at the replay, as before.)
             {   // (EvilOOT, RX_VK_LOG_DEFERRED=1: compute's deferred binds, as at the submit and as the array holds them now)
-                static const bool on = getenv("RX_VK_LOG_DEFERRED") != nullptr;
+                static const bool on = env_on("RX_VK_LOG_DEFERRED");
                 static std::atomic<int> told{0};
                 if (on && b.src && b.stage == 5 && told < 400) {
                     NVNbufferRange now[16]{};
@@ -1043,7 +1046,7 @@ void replay(VkCommandBuffer& cmd, NvnState& s, const uint8_t* p, const uint8_t* 
                 const int index = b.first + i;
                 if (b.stage < 0 || b.stage >= kNvnStages || index < 0 || index >= 16) continue;
                 {
-                    static const bool on = getenv("RX_VK_LOG_MESH_BINDS") != nullptr;
+                    static const bool on = env_on("RX_VK_LOG_MESH_BINDS");
                     static std::atomic<int> told{0};
                     if (on && b.stage >= 6 && b.r[i].size != 0x100 && told++ < 300)
                         logf("vk: bind (many) %s stage %d index %d addr %#llx size %#llx", b.ssbo ? "ssbo" : "ubo", b.stage, index,
@@ -1062,7 +1065,7 @@ void replay(VkCommandBuffer& cmd, NvnState& s, const uint8_t* p, const uint8_t* 
             const auto b = payload<nvn_p_bind_buf>(a, avail);
             if (b.stage >= kNvnStages) log_stage_bind(h.op, b.stage);
             {   // (hookshot) RX_VK_LOG_MESH_BINDS=1: what the game binds to the task and mesh stages, 80 lines
-                static const bool on = getenv("RX_VK_LOG_MESH_BINDS") != nullptr;
+                static const bool on = env_on("RX_VK_LOG_MESH_BINDS");
                 static std::atomic<int> told{0};
                 if (on && b.stage >= 6 && b.size != 0x100 && told++ < 300)
                     logf("vk: bind %s stage %d index %d addr %#llx size %#llx", h.op == NOP_BIND_UBO ? "ubo" : "ssbo", b.stage, b.index,
@@ -1141,7 +1144,7 @@ void replay(VkCommandBuffer& cmd, NvnState& s, const uint8_t* p, const uint8_t* 
             }
             s.render_enabled = r.mode == 0 ? x == y : x != y;
             {   // (RX_VK_COND_ALWAYS=1 (test): every condition holds. The frame log's dark frames dump the last ones)
-                static const bool always = getenv("RX_VK_COND_ALWAYS") != nullptr;
+                static const bool always = env_on("RX_VK_COND_ALWAYS");
                 const uint32_t at = cond_ring_at++ % (1 << 15);
                 cond_ring[at] = {presents_now, r.addr, x, y, (int)r.mode, s.render_enabled};
                 if (always) s.render_enabled = true;
@@ -2264,7 +2267,7 @@ bool tex_pages_any(uint64_t gpu, uint64_t size) {
 void texture_created_of(const nvn_tex* t) { tex_pages_add(t, +1); }
 uint64_t fence();
 void invalidate(uint64_t gpu, uint64_t size) {
-    static const bool log_inv = getenv("RX_VK_LOG_INVALIDATE") != nullptr;
+    static const bool log_inv = env_on("RX_VK_LOG_INVALIDATE");
     static std::atomic<int> logged{0};
     if (log_inv && logged++ < 400) {
         std::string hits;
@@ -2295,7 +2298,7 @@ void invalidate(uint64_t gpu, uint64_t size) {
     // frame added to it (2x): the exposure stepped 0.2 EV up and down several times a second (the white flashes).
     // RX_VK_NO_READBACK_WAIT=1: as before
     if (size) {
-        static const bool off = getenv("RX_VK_NO_READBACK_WAIT") != nullptr;
+        static const bool off = env_on("RX_VK_NO_READBACK_WAIT");
         bool ever = false;
         if (!off && (memory_writeback_value(host->gpu_guest(gpu), size, &ever), ever)) {
             memory_note_readback(host->gpu_guest(gpu), size);   // (PR 430: the CPU may write it back: memory_rb_refresh)
@@ -2304,7 +2307,7 @@ void invalidate(uint64_t gpu, uint64_t size) {
             bool w = false;
             const uint64_t f0 = fence(), c0 = completed();
             const bool behind0 = replay_behind();
-            static const bool no_catchup = getenv("RX_VK_READBACK_NO_CATCHUP") != nullptr;   // (A/B: recorded work only)
+            static const bool no_catchup = env_on("RX_VK_READBACK_NO_CATCHUP");   // (A/B: recorded work only)
             // (hookshot) not on the submitting thread's replay (the default): there what is handed over is recorded at once, and
             // the work not recorded yet is stopped at an event wait. Catching up forced it past that wait, ahead of the work it
             // waits for (OoT's presentation work before the scene's: the fog of the frame before, for a frame, at 1 in 20 of the
@@ -2326,7 +2329,7 @@ void invalidate(uint64_t gpu, uint64_t size) {
                 waited++;
                 const int64_t d = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - w0).count();
                 ns += d;
-                static const bool log_each = getenv("RX_VK_LOG_READBACK_WAITS") != nullptr;
+                static const bool log_each = env_on("RX_VK_LOG_READBACK_WAITS");
                 static std::atomic<int> logged{0};
                 if (log_each && presents_now > 4000 && logged++ < 300)
                     logf("vk: readback wait %lld %#llx +%#llx: %.2f ms (catch-up %.2f) value %llu, fence %llu, done %llu, behind %d",
@@ -2355,7 +2358,7 @@ void invalidate(uint64_t gpu, uint64_t size) {
     // RX_VK_INVALIDATE_WAIT=1: every range, as before)
     // (decided by the live textures' storage, not by what the replay has listed: a region guessed to hold buffers
     // only, after probes that found no texture, left MKW's Grand Prix waiting at its map for a texture's texels)
-    static const bool always = getenv("RX_VK_INVALIDATE_WAIT") != nullptr;
+    static const bool always = env_on("RX_VK_INVALIDATE_WAIT");
     if (!size) return;
     // (hookshot) and on the submitting thread's replay, the catch-up lets on what may go without forcing anything past its wait
     // (once the exposure readback above no longer did, this one forced OoT's presentation work on, every frame or two)
@@ -3111,7 +3114,7 @@ void do_present(const nvn_tex* t, const int crop[4]) {
         // after the submit that signals the present's value, in a submit of its own: the game waits for that value
         // before it submits its next frame, and the interpolation's GPU work (~1 ms) held it back. The display
         // thread's present follows it on the one queue. RX_VK_SHOT_MADE shots need it in this recording.)
-        static const bool fg_inline = getenv("RX_VK_SHOT_MADE") != nullptr;
+        static const bool fg_inline = env_on("RX_VK_SHOT_MADE");
         const bool fg_after = framegen_on() && tex && !fg_inline;
         interpolated = framegen_on() && tex && fg_inline &&
                        framegen_record(r.cmd, texture_view(tex, t, nullptr, VK_IMAGE_VIEW_TYPE_2D, ViewUse::Sample), sw,
@@ -3157,10 +3160,10 @@ void do_present(const nvn_tex* t, const int crop[4]) {
             }
             // (RX_VK_SHOT_MENU=1, a debug aid: without a window the Insert menu is neither ticked nor drawn; this ticks it
             // at each present and draws it into the shots, for pictures of it from a headless run)
-            static const bool shot_menu = getenv("RX_VK_SHOT_MENU") != nullptr;
+            static const bool shot_menu = env_on("RX_VK_SHOT_MENU");
             if (shot_menu && dev.offscreen) menu_tick();
             // (RX_VK_SHOT_MADE=1: the frame interpolation made before it too, written beside it as vk_N_made.png)
-            static const bool shot_made = getenv("RX_VK_SHOT_MADE") != nullptr;
+            static const bool shot_made = env_on("RX_VK_SHOT_MADE");
             uint32_t mw = 0, mh = 0;
             made_src = shot && shot_made && interpolated ? framegen_made_image(&mw, &mh) : VK_NULL_HANDLE;
             if (made_src && !made_shot_init()) made_src = VK_NULL_HANDLE;
@@ -3180,7 +3183,7 @@ void do_present(const nvn_tex* t, const int crop[4]) {
                 // (RX_VK_SHOT_FX=1: through the window's scale pass too, ultrawide's menu sides as the window shows them. For headless
                 // runs: in a window it resizes the pass's image to the shot's size and the present back again, two device waits a
                 // shot, and it is not under present_image_mu, which frame generation's display thread takes for the same pass)
-                static const bool shot_fx = getenv("RX_VK_SHOT_FX") != nullptr;
+                static const bool shot_fx = env_on("RX_VK_SHOT_FX");
                 const VkImage fx_img = shot_fx && tex ? framegen_scale(r.cmd, texture_view(tex, t, nullptr, VK_IMAGE_VIEW_TYPE_2D, ViewUse::Sample),
                                                                        src, sw, sh, crop, kShotW, kShotH) : VK_NULL_HANDLE;
                 if (fx_img) full_barrier(r.cmd), blit_crop(r.cmd, fx_img, kShotW, kShotH, nullptr, shot_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, kShotW, kShotH);
@@ -3225,7 +3228,7 @@ void do_present(const nvn_tex* t, const int crop[4]) {
         }
         if (presents % 300 == 0) pipeline_cache_save(false);
         {   // (RX_VK_DUMP_KEY: F9 dumps the next frame, 8 times at most)
-            static const bool dump_key = getenv("RX_VK_DUMP_KEY") != nullptr;
+            static const bool dump_key = env_on("RX_VK_DUMP_KEY");
             static bool was_down;
             static int key_left = 8;
             const bool down = dump_key && (GetAsyncKeyState(VK_F9) & 0x8000) != 0;
@@ -3604,7 +3607,7 @@ void framelog_collect(int slot) {
         }
         if (l.kind == 0) last_mean = mean;
     }
-    static const bool drop = getenv("RX_VK_FRAMELOG_DROP") != nullptr;
+    static const bool drop = env_on("RX_VK_FRAMELOG_DROP");
     if (drop) return;
     framelog_enqueue(std::move(rec));
 }
@@ -3888,7 +3891,7 @@ void read_texels(const nvn_tex* t, unsigned level, unsigned layer0, const NVNcop
     finish();   // (what the submits before it wrote)
     std::lock_guard lk(replay_mu);
     {   // (RX_VK_LOG_READ_TEXELS=1: the CPU reading textures back, 200 lines: are they ones the GPU wrote?)
-        static const bool log_reads = getenv("RX_VK_LOG_READ_TEXELS") != nullptr;
+        static const bool log_reads = env_on("RX_VK_LOG_READ_TEXELS");
         static int logged;
         if (log_reads && t && logged < 200) {
             logged++;
@@ -3907,7 +3910,7 @@ void read_texels(const nvn_tex* t, unsigned level, unsigned layer0, const NVNcop
 bool replay_behind();
 void vmap_changing(uint64_t gpu, uint64_t size) {
     if (!size) return;
-    static const bool log_calls = getenv("RX_VK_LOG_VMAP_CHANGING") != nullptr;   // (each call, 300 lines)
+    static const bool log_calls = env_on("RX_VK_LOG_VMAP_CHANGING");   // (each call, 300 lines)
     static std::atomic<int> logged{0};
     // (the list of GPU-written textures is complete only once the replay has caught up: MK World unmaps a tile's pool
     // a frame or two after it submitted the drawing, which the replay may not have recorded yet)
@@ -4126,7 +4129,7 @@ void wait_queue_empty() {
         // 40000 waits gone past and 250-1100 flashing frames before, ~300 and ~65 now, 60 fps either way. A catch-up now lets on the
         // waits that are met; what stays stopped goes on with its own queue's work, a present, or sync_watch's hold_ms as before.
         // RX_VK_CATCHUP_FORCE=1: forced, as before.
-        static const bool force = getenv("RX_VK_CATCHUP_FORCE") != nullptr;
+        static const bool force = env_on("RX_VK_CATCHUP_FORCE");
         if (force) return sync_drain(2);
         if (!blocked_n.load()) return;
         std::lock_guard lk(sync_order_mu);
@@ -4264,7 +4267,7 @@ void program_released_locked(const nvn_prog* p) {
 // dark) for a frame, with the size changes (every few frames when the resolution swung). Now they are jobs, applied
 // where the game made them among its submits, as finalized textures already were. RX_VK_REGISTER_AT_ONCE=1: as before.
 bool register_at_once() {
-    static const bool v = getenv("RX_VK_REGISTER_AT_ONCE") != nullptr;
+    static const bool v = env_on("RX_VK_REGISTER_AT_ONCE");
     return v;
 }
 void register_texture_queued(int id, const nvn_tex* t, const nvn_view* v) {

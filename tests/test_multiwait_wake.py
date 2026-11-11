@@ -12,6 +12,9 @@ import shutil
 import subprocess
 import tempfile
 
+# (env_on, the switches' rule, before the code cut out of the sources: gpu/vk/compat/hookshot_env.h)
+ENV_ON_H = str(Path(__file__).resolve().parents[1] / "gpu" / "vk" / "compat" / "hookshot_env.h")
+
 RUN_ALL_ARGS = ["--cxx", "{cxx}"]
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -237,7 +240,7 @@ def main():
     safe_external = {"AcquireSRWLockExclusive", "AcquireSRWLockShared", "ReleaseSRWLockExclusive", "ReleaseSRWLockShared",
                      "InitializeSRWLock", "InitializeConditionVariable", "InterlockedIncrement", "InterlockedDecrement",
                      "InterlockedCompareExchange", "InterlockedExchange", "__atomic_load_n", "__atomic_store_n",
-                     "malloc", "calloc", "realloc", "free", "memset", "memcpy", "memmove", "getenv", "hos_now_ns", "offsetof"}
+                     "malloc", "calloc", "realloc", "free", "memset", "memcpy", "memmove", "getenv", "env_on", "hos_now_ns", "offsetof"}
     not_calls = {"if", "for", "while", "switch", "return", "sizeof", "case", "SLEEP_LETS_MW_LOCK_GO"}
 
     def code_of(s):   # (comments blanked: words in them are not calls)
@@ -368,7 +371,7 @@ def main():
         folder = Path(temporary)
         (folder / "fixture.cpp").write_text(fixture(source), encoding="utf-8")
         exe = folder / ("fixture.exe" if os.name == "nt" else "fixture")
-        subprocess.run([compiler, "-std=c++17", "-O1", "-w", str(folder / "fixture.cpp"), "-o", str(exe)], check=True,
+        subprocess.run([compiler, "-std=c++17", "-include", ENV_ON_H, "-O1", "-w", str(folder / "fixture.cpp"), "-o", str(exe)], check=True,
                        timeout=120)
         env = os.environ.copy()
         for mode in ("targeted", "all"):

@@ -238,23 +238,19 @@ has more switches.
 
 For these AMD texture artifacts, try keeping decoded ASTC textures as RGBA8 instead of re-encoding them to BC3
 ([#57](https://github.com/NotRexed/Hookshot/issues/57), [#1006](https://github.com/NotRexed/Hookshot/issues/1006)).
-Close the game, then create or edit `hookshot_env.txt` in the built game folder, beside `image.bin`, and add:
-
-```ini
-RX_VK_ASTC_RGBA8=1
-```
-
-Restart the game. The same setting applies when Steam or RecompLauncher starts that game folder.
+Turn on **ASTC as RGBA8** in the menu's Debug tab, under Developer, and restart the game. (`RX_VK_ASTC_RGBA8=1` in
+`hookshot_env.txt` does the same, as earlier versions of this readme said; while that line is there the row shows its
+value and cannot be changed, so remove the line to choose in the menu.)
 
 This is a workaround for some artifacts, not a general lighting fix. It can substantially increase graphics-memory
-use and cause stalls when the card runs out of headroom. To undo it, remove that line and restart the game.
+use and cause stalls when the card runs out of headroom. To undo it, turn the row off (and remove any `RX_VK_ASTC_RGBA8` line from `hookshot_env.txt`) and restart the game.
 
 ## In-game menu
 
 By default, press <kbd>Insert</kbd> or <kbd>F1</kbd> in game. On a controller, press Home or Select and Start together; on
 a DualShock 4 or DualSense, clicking the touchpad does the same as <kbd>F1</kbd>.
 The same keys close it, and so does <kbd>Esc</kbd>. <kbd>F1</kbd> always works; **Controls → Menu shortcut** can leave
-<kbd>Insert</kbd> free for another overlay. The menu has four tabs, Graphics, Gameplay, Controls and Debug:
+<kbd>Insert</kbd> free for another overlay. The menu has five tabs, Graphics, Audio, Gameplay, Controls and Debug:
 <kbd>Q</kbd> and <kbd>E</kbd> (or <kbd>Tab</kbd> and <kbd>Shift</kbd>+<kbd>Tab</kbd>) switch between them, LB and RB on
 a controller (or the triggers). <kbd>Up</kbd> and <kbd>Down</kbd> choose a row, <kbd>Left</kbd> and <kbd>Right</kbd>
 change it (<kbd>Enter</kbd> changes it too); beside the rows, the help says what the row is and, on a line of its own,
@@ -302,7 +298,6 @@ HDR peak brightness show only while HDR is on.
 | | Anisotropic filtering | Game's, 2x, 4x, 8x, 16x | 16x |
 | | Profile | Docked, Handheld (after a restart) | Docked |
 | | Ultrawide | Off (16:9), Monitor's shape: wider than 16:9, or narrower down to 5:4 (after a restart) | Off (16:9) |
-| | Robust buffers | Auto, Off, On (after a restart) | Auto |
 | Audio | Volume | 0 to 100%, in steps of 5 | 100% |
 | | Mute in background | Off, On | Off |
 | | Audio output | Auto, Stereo, 5.1 (after a restart) | Auto |
@@ -326,6 +321,11 @@ HDR peak brightness show only while HDR is on.
 | | Motion | Opens the Motion page: Motion controls (Off, On; On), Motion sensitivity X (10% to 600%) and Y (10% to 300%; 100%), Invert motion X and Y (Off, On; Off), Motion deadzone (Low, Standard, High; Standard) | |
 | | Controls | Opens the Controls page | |
 | | Menu shortcut | Insert or F1, F1 only | Insert or F1 |
+| Debug | Debug tools | Off, On (the tools below it while on) | Off |
+| | Developer: Descriptor reuse | Off, On (after a restart) | On |
+| | Developer: Sampler cache | Off, On (after a restart) | Off |
+| | Developer: Robust buffers | Auto, Off, On (after a restart) | Auto |
+| | Developer: ASTC as RGBA8 | Off, On (after a restart) | Off |
 
 - **Quality preset** sets Render resolution, Window scaling filter, Sharpness, Frame pacing, Game speed, Profile
   and the video memory limits for a card with that much memory. It leaves the Upscaler and Frame generation as
@@ -395,8 +395,9 @@ HDR peak brightness show only while HDR is on.
   Off. On waits for each refresh (FIFO): no tearing, at most the display's rate. Off shows each frame at once and can
   tear (where the driver cannot, it is Auto). It changes at once. `RX_VK_FIFO=1` (On) or `RX_VK_IMMEDIATE=1` (Off) chooses
   for one run.
-- **Robust buffers:** a read past a buffer's end is dropped instead of stopping the GPU. Auto is on, on every card; Off
-  can be faster on some NVIDIA cards.
+- **Robust buffers** (Debug tab, Developer): a read past a buffer's end is dropped instead of stopping the GPU. Auto is
+  on, on every card; Off can be faster on some NVIDIA cards.
+- **ASTC as RGBA8** (Debug tab, Developer): the AMD texture workaround below.
 - **Game speed:** with Per frame, the game runs slower whenever it is below 60 fps. Real time keeps it at normal speed
   down to 15 fps.
 - **FPS counter** shows in a corner (**FPS counter position**; at the top right while the menu is open), at one of
@@ -744,15 +745,19 @@ Switches to test (`RX_VK_NOOPT=1` and the others) go in `hookshot_env.txt` in th
 line, on Windows and Linux. The running game reads it, not the builder. A test run can name another file with
 `HOS_ENV_FILE=<path>`; the game then reads that one instead and leaves `hookshot_env.txt` alone.
 `hookshot_env.txt` sets only the game's own switches (names that start with `RX_`, `HOS_`, `HOOKSHOT_`, `EDEN_`,
-`NVN_`, `TOTK_` or `SDL_`, but not SDL's library names such as `SDL_VULKAN_LIBRARY`), and no value that is a path except
+`NVN_` or `SDL_`, but not SDL's library names such as `SDL_VULKAN_LIBRARY`), and no value that is a path except
 `RX_VK_DLSS_DIR`'s (a folder on this PC, not a network share), and no value at all for the switches that name a file
 or folder (`HOS_AUDIO_DUMP`, `RX_VK_SHOTS` and the like) or press buttons on a timer (`HOS_INPUT_SCRIPT`,
 `RX_VK_MENU_SCRIPT`); other lines are left out, and the log says so. Switches that need a path, or other variables, go
 in a file named by `HOS_ENV_FILE`.
+A switch set in the environment the game is started with (a shell's `HOS_FULLSCREEN=0 ./hookshot`, a launcher's own)
+goes over the same name in the file, and the log says so; within the file, a later line replaces an earlier one. A
+switch that stands in for a menu row (`RX_VK_PACE`, `RX_VK_UPSCALE`, `RX_VK_FRAMEGEN_MULT`, `HOS_REALTIME_STEP`,
+`HOS_DYNRES`, `HOS_OUTPUT_RES`) applies to that run only: `hookshot_options.ini` keeps the value chosen in the menu.
 
 To enable the debug tools, turn **Debug tools** on in the menu's Debug tab (or add `HOS_OOT_CHEATS=1` to
 `hookshot_env.txt` in the game folder). The tools then show below it on the same tab. The tab's Developer section,
-always shown, has the Descriptor reuse and Sampler cache rows.
+always shown, has the Descriptor reuse, Sampler cache, Robust buffers and ASTC as RGBA8 rows.
 
 `RX_VK_UI_GAME_FONT=0` draws the menu with the included font (Libertinus) even when the game's files have the game's own
 menu font. `RX_VK_UI_PROMPTS=pad` (or `keys`) shows the controller's (or the keyboard's) prompts whatever was used last,
@@ -833,7 +838,8 @@ Hookshot exists thanks to the work of many people:
 - **[kinnay/zbic](https://github.com/kinnay/zbic)**, **Opus** and **SDL**: decompression, audio and controllers.
 - **[sostenesfreitas/ocarina-recomp](https://github.com/sostenesfreitas/ocarina-recomp)**: this README's layout, and its notes
   confirmed the mesh stage's control section.
-- **[MythosOfs/Orchid](https://github.com/MythosOfs/Orchid)**: the fog and exposure workaround for Ocarina of Time.
+- **[MythosOfs/Orchid](https://github.com/MythosOfs/Orchid)**: the fog and exposure workaround Ocarina of Time used before
+  its fog and lighting were fixed.
 - **Mesa (NAK)**: the reference for Ampere's instruction encoding.
 - Everyone who sent fixes: SkippySteve (Linux and the AppImage, and many more), monsterlag, klimovich008, hckrman101 (NVIDIA
   DLSS, DLAA and Reflex, the exposure flicker and fog fixes, build speed, CI), madebyjordan (AMD FSR 4.1), N3oTraX (FSR 4 on
@@ -843,7 +849,7 @@ Hookshot exists thanks to the work of many people:
 ## License
 
 Hookshot is free software under the [GNU General Public License, version 3 or later](LICENSE) (GPL-3.0-or-later).
-It includes code from Eden, suyu and Orchid, which are under the GPL too. Third-party parts under other licenses that
+It includes code from Eden and suyu, which are under the GPL too. Third-party parts under other licenses that
 work with the GPL (Sirit, the Vulkan Memory Allocator, SDL, Opus, Dear ImGui, zstd, the Libertinus fonts, zbic and the
 a64-kit tools) keep their own notices in their folders.
 

@@ -16,6 +16,9 @@
 
 #include "vk_internal.h"
 #include "vk_state.h"
+#ifndef HOOKSHOT_ENV_H   // (env_on: the switches' one rule)
+#include "hookshot_env.h"
+#endif
 
 namespace mkwvk {
 // (hookshot) the seed's compute programs (vk_shader.cpp seed_program) have no bound program to read their layout from. Translated
@@ -81,7 +84,7 @@ CsLayout cs_layout(const NvnState& s) {
         host->gpu_read(s.prog.sd[i].control + 0x56, &st, 2);
         if (magic != 0x98761234 || st != 5) continue;
         l = cs_layout_of(c);
-        static const bool log_cs = getenv("RX_VK_LOG_CS") != nullptr;   // (hookshot) the control bytes 0xb0..0xbf
+        static const bool log_cs = env_on("RX_VK_LOG_CS");   // (hookshot) the control bytes 0xb0..0xbf
         if (log_cs) {
             char hex[700];
             int k = 0;

@@ -16,6 +16,9 @@ import sys
 import tempfile
 from pathlib import Path
 
+# (env_on, the switches' rule, before the code cut out of the sources: gpu/vk/compat/hookshot_env.h)
+ENV_ON_H = str(Path(__file__).resolve().parents[1] / "gpu" / "vk" / "compat" / "hookshot_env.h")
+
 RUN_ALL_ARGS = ["--cc", "gcc", "--cxx", "g++"]
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -155,8 +158,8 @@ int main() {
 }
 '''
     with tempfile.TemporaryDirectory(prefix="stick-dead-zone-") as tmp:
-        run(a.cc, c, "stick.c", tmp, ["-std=c11", "-O1"])
-        run(a.cxx, cxx, "menu.cpp", tmp, ["-std=c++17"])
+        run(a.cc, c, "stick.c", tmp, ["-std=c11", "-include", ENV_ON_H, "-O1"])
+        run(a.cxx, cxx, "menu.cpp", tmp, ["-std=c++17", "-include", ENV_ON_H])
     print("ok")
 
 

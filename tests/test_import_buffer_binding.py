@@ -4,6 +4,9 @@ from pathlib import Path
 import subprocess
 import tempfile
 
+# (env_on, the switches' rule, before the code cut out of the sources: gpu/vk/compat/hookshot_env.h)
+ENV_ON_H = str(Path(__file__).resolve().parents[1] / "gpu" / "vk" / "compat" / "hookshot_env.h")
+
 RUN_ALL_ARGS = ['--cxx', '{cxx}', '--headers', '{vulkan_headers}']
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -43,7 +46,7 @@ def main():
         cpp.write_text(fixture, encoding="utf-8")
         for platform in [0, 1]:
             exe = Path(temp) / ("fixture-" + str(platform) + ".exe")
-            subprocess.run([a.cxx, "-std=c++20", "-O1", "-Wall", "-Wextra", "-Werror",
+            subprocess.run([a.cxx, "-std=c++20", "-include", ENV_ON_H, "-O1", "-Wall", "-Wextra", "-Werror",
                             "-Wno-missing-field-initializers", "-pthread", "-DTEST_DMA_FALLBACK=" + str(platform),
                             "-I" + str(a.headers), "-I" + str(ROOT / "gpu/vk"),
                             *(["-fsanitize=address,undefined", "-fno-omit-frame-pointer", "-fno-pie", "-no-pie"] if a.sanitize else []),

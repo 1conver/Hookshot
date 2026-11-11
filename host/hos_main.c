@@ -9,6 +9,9 @@
    Environment: HOS_TRACE=1 (log HLE calls), HOS_MEMORY_MB (memory the game is told it has),
                 HOS_NVN_CONTINUE=1 (go on past nvnBootstrapLoader). */
 #include "hos.h"
+#ifndef HOOKSHOT_ENV_H   /* (env_on: the switches' one rule) */
+#include "../gpu/vk/compat/hookshot_env.h"
+#endif
 #include "hos_paths.h"
 #include "hos_wide_size.h"   /* (the widescreen picture's size, shared with the Insert menu) */
 #include "../gpu/vk/vk_api.h"
@@ -129,7 +132,7 @@ static int reserve_guest(void) {
        pages changed (GetWriteWatch) so that it uploads only those (soft write watch builds mark pages themselves). */
 #if defined(A64_WRITE_TRACK)
     const DWORD watch = 0;
-    if (getenv("HOS_LARGE_PAGES") && reserve_large(GUEST_SPACE) == (void *)A64_HOST_BASE) {
+    if (env_on("HOS_LARGE_PAGES") && reserve_large(GUEST_SPACE) == (void *)A64_HOST_BASE) {
         hos_large_pages = 1;
         hos_log("mem: the guest window is in large pages (%llu MB)", (unsigned long long)(GUEST_SPACE >> 20));
         return 1;
@@ -210,11 +213,11 @@ static int reserve_guest(void) {
     /* (issue 312) no transparent huge pages in the guest window: the renderer imports its pools as userptr memory, and every
        collapse khugepaged makes in them changes their mappings, which the kernel answers by pinning the pages again at the
        next submission: ~250 ms a submit on RADV while the GPU sat idle. HOS_THP=1: as before */
-    if (!getenv("HOS_THP")) madvise((void *)A64_HOST_BASE, GUEST_SPACE, MADV_NOHUGEPAGE);
+    if (!env_on("HOS_THP")) madvise((void *)A64_HOST_BASE, GUEST_SPACE, MADV_NOHUGEPAGE);
 #ifdef __linux__
     /* (HOS_NO_THP=1, experiment: none outside the window either. With THP "always" 400-450 MB of the host heap's and the binary's bss are huge
        pages, each resident whole when any of its 2 MB is touched) */
-    if (getenv("HOS_NO_THP")) prctl(PR_SET_THP_DISABLE, 1, 0, 0, 0);
+    if (env_on("HOS_NO_THP")) prctl(PR_SET_THP_DISABLE, 1, 0, 0, 0);
 #endif
     return 1;
 #endif
@@ -365,11 +368,11 @@ static const char *saves_dir(const char *beside) {
    HOS_ENV_FILE=<path> reads that file instead: a scripted or A/B test run brings its own switches and leaves the
    player's hookshot_env.txt as it is.
    (hookshot) hookshot_env.txt is a file players pass around, so it sets only the game's own switches (RX_, HOS_,
-   HOOKSHOT_, EDEN_, NVN_, TOTK_ and SDL_ names), never HOS_ENV_FILE or SDL's library override, and no value that is a
+   HOOKSHOT_, EDEN_, NVN_ and SDL_ names), never HOS_ENV_FILE or SDL's library override, and no value that is a
    path but RX_VK_DLSS_DIR's: the system's variables (the Vulkan loader's layers, PATH and the like) can load code, and
    the dump switches write files where they name. The file HOS_ENV_FILE names sets anything. */
 static int env_line_allowed(const char *name, const char *value) {
-    static const char *const prefixes[] = {"RX_", "HOS_", "HOOKSHOT_", "EDEN_", "NVN_", "TOTK_", "SDL_"};
+    static const char *const prefixes[] = {"RX_", "HOS_", "HOOKSHOT_", "EDEN_", "NVN_", "SDL_"};
     int ok = 0;
     for (size_t i = 0; i < sizeof prefixes / sizeof *prefixes; i++) ok |= !strncmp(name, prefixes[i], strlen(prefixes[i]));
     if (!ok || !strcmp(name, "HOS_ENV_FILE") || !strcmp(name, "SDL_DYNAMIC_API")) return 0;
@@ -412,6 +415,13 @@ static void load_hookshot_env(void) {
     }
     FILE *f = fopen(path, "r");
     if (!f) return;
+    /* The environment the game was started with wins over the file: a switch set for one launch (HOS_FULLSCREEN=0 in a
+       shell, a script's RX_VK_PACE=1) beats the same name saved in the file. The file's own later lines still replace its
+       earlier ones: the names it set are kept here (for the whole run: a second read sets them again), so they are not taken
+       for the environment's */
+    static char from_file[256][128];   /* (names of up to 127 characters; a file with more names than this has its later
+                                          lines for the names past it taken as the environment's, logged as left out) */
+    static int from_file_n;
     char line[512];
     while (fgets(line, sizeof line, f)) {
         char *s = line;
@@ -426,6 +436,15 @@ static void load_hookshot_env(void) {
             fprintf(stderr, "env: hookshot_env.txt: %s left out (only the game's switches, and no paths, are taken from it)\n", s);
             continue;
         }
+        int ours = 0;
+        for (int i = 0; i < from_file_n && !ours; i++) ours = !strcmp(from_file[i], s);
+        if (!ours && getenv(s)) {
+            fprintf(stderr, "env: %s: %s left out (set in the environment, which goes first)\n",
+                    other && *other ? "HOS_ENV_FILE" : "hookshot_env.txt", s);
+            continue;
+        }
+        if (!ours && from_file_n < (int)(sizeof from_file / sizeof *from_file) && strlen(s) < sizeof from_file[0])
+            strcpy(from_file[from_file_n++], s);
 #ifdef _WIN32
         *eq = '=';
         _putenv(s);
@@ -434,6 +453,30 @@ static void load_hookshot_env(void) {
 #endif
     }
     fclose(f);
+}
+
+/* Switches this build no longer reads, still set (in the environment or hookshot_env.txt, as older issues told players):
+   one log line each, naming what took its place, so a bug report shows the switch did nothing */
+static void removed_switch_notes(void) {
+    static const char *const gone[][2] = {
+        {"RX_VK_NO_DESC_REUSE", "RX_VK_DESC_REUSE=never"},
+        {"RX_VK_DESC_SLOTGEN", "RX_VK_DESC_REUSE (the same 0 and 1) or the Descriptor reuse row"},
+        {"RX_VK_DESC_REUSE_DGEN", NULL},
+        {"RX_VK_NO_NAN_GUARD", "RX_VK_NAN_GUARD=0"},
+        {"RX_VK_FOLLOW_MESH", NULL},
+        {"RX_VK_OOT", NULL},
+        {"RX_VK_OOT_EXPOSURE", NULL},
+        {"RX_VK_OOT_FOG", NULL},
+        {"RX_VK_OOT_VISUAL", NULL},
+        {"HOS_FIX_RES", NULL},
+        {"HOS_SCENE_NATIVE", NULL},
+        {"TOTK_MINIMAL_LAYOUT", NULL},
+    };
+    for (size_t i = 0; i < sizeof gone / sizeof *gone; i++)
+        if (getenv(gone[i][0])) {
+            if (gone[i][1]) hos_log("env: %s is no longer read: use %s", gone[i][0], gone[i][1]);
+            else hos_log("env: %s is no longer read: it does nothing", gone[i][0]);
+        }
 }
 
 int hos_oot_protect_hearts;
@@ -1403,10 +1446,6 @@ void hos_oot_free_view(Ctx *c, uint64_t view) {
 float hos_aspect_ratio = 0;   /* (the window's default shape: host/display.c) */
 /* (nx2/oot_wide.py) read by the widescreen patches in the game's code; 0: the game's own 16:9 */
 volatile uint64_t hos_wide_out, hos_wide_scene;
-/* (nx2/oot_native_resolution.py) mode 1's scene base scale 1.0 instead of 0.8: Resolution 100% (host/nn_vi.c keeps it current),
-   HOS_SCENE_NATIVE=0/1 over it */
-volatile int hos_native_scene;
-volatile int hos_fix_res;   /* (nx2/oot_native_resolution.py's cached-scale refresh: HOS_FIX_RES=1; #849's fixed-scale patch does it by default) */
 volatile float hos_wide_ratio, hos_wide_squeeze, hos_wide_margin;
 volatile uint32_t hos_wide_keep_mask = 0xf;   /* (nx2/oot_wide.py KEEP_VTABLES: the screens that keep the whole picture, a bit each; MkwVkHost.wide_menus) */
 /* (nx2/oot_occlusion.py) read by the game's code where it decides to make occlusion queries: 1, none (HOOKSHOT_OCCLUSION_OFF=1) */
@@ -1450,7 +1489,7 @@ static void memory_notice(void) {
         return;
     }
     hos_log("boot: LOW MEMORY: %llu MB of memory, %llu MB of swap, below the ~%llu MB the game needs", ram, swap, HOS_MEMORY_NEEDED_MB);
-    if (getenv("HOS_HEADLESS")) return;
+    if (env_on("HOS_HEADLESS")) return;
 #ifndef _WIN32
     int hos_sdl_load(void);
     hos_sdl_load();   /* (host/posix MessageBoxA shows it through the SDL already loaded) */
@@ -1477,7 +1516,7 @@ static int narrow_paths_ok(int argc, char **argv) {
     GetModuleFileNameW(NULL, w, MAX_PATH * 2);
     fprintf(stderr, "hookshot: this folder's path cannot be opened (code page %u, %s): move the game to a folder with a plain name\n",
             GetACP(), n >= MAX_PATH ? "too long" : "has characters the code page lacks");
-    int quiet = getenv("HOS_HEADLESS") != NULL;
+    int quiet = env_on("HOS_HEADLESS");
     for (int i = 1; i < argc; i++) quiet |= !strcmp(argv[i], "--prepare-shaders");
     if (!quiet) {
         wchar_t text[MAX_PATH * 2 + 640];
@@ -1499,6 +1538,10 @@ static int game_main(int argc, char **argv) {
 #endif
 #ifdef _WIN32
     if (!narrow_paths_ok(argc, argv)) return 1;
+    {
+        void hos_relaunch_keep_env(void);   /* (host/hos_relaunch.c: the environment before the file's lines, for a restart) */
+        hos_relaunch_keep_env();
+    }
     load_hookshot_env();
 #endif
     occlusion_switch();
@@ -1511,7 +1554,7 @@ static int game_main(int argc, char **argv) {
         // Windows answered such a thread 2560 x 1440: the picture was that size, in the corner of the window. Hookshot issues 15, 18, 20)
         typedef BOOL(WINAPI * SetAware)(void *);
         SetAware set = (SetAware)(void *)GetProcAddress(GetModuleHandleA("user32.dll"), "SetProcessDpiAwarenessContext");
-        if (set && !getenv("HOS_DPI_UNAWARE")) set((void *)(intptr_t)-4);
+        if (set && !env_on("HOS_DPI_UNAWARE")) set((void *)(intptr_t)-4);
     }
 #endif
     {   // (started from its icon the game has nowhere to log to: hookshot_log.txt beside it, last run only, for players to send in)
@@ -1549,6 +1592,7 @@ static int game_main(int argc, char **argv) {
         }
     }
     hos_log("hookshot %s", HOOKSHOT_VERSION);   /* (the log's first line: which build a report comes from) */
+    removed_switch_notes();
     void hos_control_start(const char *version);
     hos_control_start(HOOKSHOT_VERSION);   /* (HOS_CONTROL=<socket>: the control bridge, host/control.c) */
     const char *image = NULL;
@@ -1607,7 +1651,7 @@ static int game_main(int argc, char **argv) {
                 argv[0]);
         return 2;
     }
-    if (getenv("HOS_TRACE")) hos_trace = 1;
+    if (env_on("HOS_TRACE")) hos_trace = 1;
     if (!hos_user_dir) hos_user_dir = "user";
     CreateDirectoryA(hos_user_dir, NULL);
     if (!reserve_guest()) {
@@ -1665,8 +1709,6 @@ static int game_main(int argc, char **argv) {
                     char line[80];
                     while (fgets(line, sizeof line, o)) {
                         if (!strncmp(line, "ultrawide=", 10)) on = atoi(line + 10) != 0;
-                        /* (the game sizes its scene before the menu is up: Resolution 100% read here too) */
-                        /* (resolution=1 no longer raises the scene: #849 makes a fixed Resolution reach the 3D; HOS_SCENE_NATIVE=1 below) */
                     }
                     fclose(o);
                 }
@@ -1674,9 +1716,6 @@ static int game_main(int argc, char **argv) {
             const int sw = GetSystemMetrics(SM_CXSCREEN), sh = GetSystemMetrics(SM_CYSCREEN);
             if (on && sh > 0) want = (float)sw / (float)sh;
         }
-        if (getenv("HOS_SCENE_NATIVE")) hos_native_scene = atoi(getenv("HOS_SCENE_NATIVE")) != 0;
-        if (getenv("HOS_FIX_RES")) hos_fix_res = atoi(getenv("HOS_FIX_RES")) != 0;
-        if (hos_native_scene) hos_log("boot: HOS_SCENE_NATIVE=1: the scene's base scale 1.0 (the game's 0.8 otherwise)");
         extern volatile uint64_t hos_wide_out, hos_wide_scene;
         extern volatile float hos_wide_ratio, hos_wide_squeeze, hos_wide_margin;
         uint32_t hos_output_size(int height);

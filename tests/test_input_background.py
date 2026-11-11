@@ -19,6 +19,9 @@ import sys
 import tempfile
 from pathlib import Path
 
+# (env_on, the switches' rule, before the code cut out of the sources: gpu/vk/compat/hookshot_env.h)
+ENV_ON_H = str(Path(__file__).resolve().parents[1] / "gpu" / "vk" / "compat" / "hookshot_env.h")
+
 RUN_ALL_ARGS = ["--cc", "gcc"]
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -114,7 +117,7 @@ static void player_used(void) {}
         (folder / "input_actual.inc").write_text(actual, encoding="utf-8")
         exe = folder / "fixture.exe"
         # Production's button table deliberately leaves its unused axis fields zero-initialized.
-        run([a.cc, "-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-missing-field-initializers",
+        run([a.cc, "-std=c11", "-include", ENV_ON_H, "-Wall", "-Wextra", "-Werror", "-Wno-missing-field-initializers",
              "-D_CRT_SECURE_NO_WARNINGS",
              "-I" + str(folder), str(ROOT / "tests/input_background_test.c"), "-o", str(exe)])
         for case in ((a.case,) if a.case else CASES):

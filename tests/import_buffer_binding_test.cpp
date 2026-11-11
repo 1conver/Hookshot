@@ -46,6 +46,7 @@ constexpr VkBufferUsageFlags kUsage = VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
 bool failing(Fault f, int kind) { return fault == f && (fail_kind == EveryMemory || fail_kind == kind); }
 void logf(const char*, ...) {}
 const char* getenv(const char*) { return nullptr; }
+bool env_on(const char* name) { const char* v = getenv(name); return v && !env_value_off(v); }   // (the switches through the stand-in)
 using SIZE_T = size_t;
 constexpr int MEM_COMMIT = 1, MEM_RESERVE = 2, PAGE_READWRITE = 4;
 struct MEMORY_BASIC_INFORMATION { uint8_t* BaseAddress; size_t RegionSize; int State; };

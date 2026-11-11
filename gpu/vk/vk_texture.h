@@ -208,7 +208,7 @@ void texture_stats(int64_t* uploads, int64_t* astc_gpu, int64_t* bytes_uploaded)
 /// (hookshot) whether texture_read_texels' walk of r at that row stride (0: the region's own) and its own image stride
 /// stays within avail bytes of the data it is given (overflow-checked: the stride is the game's)
 bool texels_fit(const nvn_tex* t, const NVNcopyRegion* r, uint64_t row, uint64_t avail);
-/// RX_VK_DUMP_TEX: the textures uploaded next written to that folder as PPM (diagnostics)
+/// ReadTexels / WriteTexels: the CPU's copy of a region of the texture in guest memory (vk_texture.cpp)
 void texture_read_texels(const nvn_tex* t, unsigned level, unsigned layer0, const NVNcopyRegion* r, uint8_t* dst,
                          uint64_t row, uint64_t img, bool write);
 

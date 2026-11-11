@@ -1,6 +1,9 @@
 /* Guest memory map: the system region (our own objects), the heap, address regions.
    The whole 4 GB window is committed up front (hos_main.c), so "mapping" here is only bookkeeping and zeroing. */
 #include "hos.h"
+#ifndef HOOKSHOT_ENV_H   /* (env_on: the switches' one rule) */
+#include "../gpu/vk/compat/hookshot_env.h"
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -146,7 +149,7 @@ static void discard_pages(uint64_t addr, uint64_t size) {
     if (!hos_guest_range(addr, size)) return;   /* (hookshot: guest pages only; Linux's discard zeroes what it is given) */
     const uint64_t lo = (addr + 0xFFF) & ~0xFFFULL, hi = (addr + size) & ~0xFFFULL;
     static int keep = -1;
-    if (keep < 0) keep = getenv("HOS_KEEP_FREED_PAGES") != NULL;
+    if (keep < 0) keep = env_on("HOS_KEEP_FREED_PAGES");
     if (hi <= lo || keep) return;
 #if defined(_WIN32) && !defined(__EMSCRIPTEN__)
     extern int hos_large_pages;   /* (hos_main.c: large pages cannot be discarded) */
@@ -221,7 +224,7 @@ HLE(_ZN2nn2os17SetMemoryHeapSizeEm) {
     }
     /* HOS_PREFAULT=1 (experiment): the new heap pages touched now (a zero written to fresh, zero memory), so that the
        game's first touches while streaming are not page faults (which may hold up the renderer's write-watch scans) */
-    if (size > hos_heap_size && getenv("HOS_PREFAULT")) {
+    if (size > hos_heap_size && env_on("HOS_PREFAULT")) {
         const int64_t t0 = hos_now_ns();
         for (uint64_t a = HOS_HEAP_BASE + hos_heap_size; a < HOS_HEAP_BASE + size; a += 4096) *(volatile uint8_t *)GP(a) = 0;
         hos_log("heap: %llu MB prefaulted in %.0f ms", (unsigned long long)((size - hos_heap_size) >> 20), (hos_now_ns() - t0) / 1e6);
@@ -274,7 +277,7 @@ HLE(_ZN2nn2os19AllocateMemoryPagesEmm) {
         return;
     }
     static int zero_all = -1;
-    if (zero_all < 0) zero_all = getenv("HOS_ZERO_ALL_PAGES") != NULL;
+    if (zero_all < 0) zero_all = env_on("HOS_ZERO_ALL_PAGES");
     if (end > (1ULL << 32) && !zero_all) {
         /* (mkw-recomp) above 4 GB the used-page bitmap does not reach, and zeroing the whole range wiped live data
            when the game mapped pages over memory it already used (a heap's list lost its links). Horizon's rule

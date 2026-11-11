@@ -10,6 +10,9 @@
 
 #include "vk_loader.h"
 #include "vk_api.h"
+#ifndef HOOKSHOT_ENV_H   // (env_on: the switches' one rule)
+#include "compat/hookshot_env.h"
+#endif
 
 #if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
 #include <intrin.h>
@@ -356,7 +359,7 @@ inline int64_t prof_now() {
 // one around it. What is slow and rare inside (a program or pipeline made, a texture created or uploaded, a wait) is timed
 // by PROF / PROF_EXACT and counted once as it is, sampled draw or not: the PROF_HOT scopes around it weigh only the rest.
 // Every scope timed (prof_full): RX_VK_PROF_ALL=1, RX_VK_SLOW_LOG, and while RX_VK_BENCH replays its frame.
-inline std::atomic<int> prof_full{getenv("RX_VK_PROF_ALL") || getenv("RX_VK_SLOW_LOG") ? 1 : 0};
+inline std::atomic<int> prof_full{env_on("RX_VK_PROF_ALL") || getenv("RX_VK_SLOW_LOG") ? 1 : 0};
 struct ProfThread {
     uint32_t rng;    // (xorshift32, seeded at the thread's first pick)
     int open, k;     // (the PROF_HOT scopes open, and the outermost one's weight: 0 not timed)

@@ -49,6 +49,7 @@ int saves = 0;
 void save() { ++saves; }
 void apply_pad_layout(int) {}
 void sync_preset_budgets(int) {}
+void env_release(const int*) {}   // (the environment's hold on a row: none here)
 bool row_fixed(const int*) { return false; }
 int upscaler() { return 0; }
 unsigned upscalers_available() { return 1; }

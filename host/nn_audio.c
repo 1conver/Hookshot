@@ -34,6 +34,9 @@
 #include "hos_sdl.h"
 #endif
 #include "hos_paths.h"   /* (the game folder: hookshot_options.ini, au_menu_output) */
+#ifndef HOOKSHOT_ENV_H   /* (env_on: the switches' one rule) */
+#include "../gpu/vk/compat/hookshot_env.h"
+#endif
 
 void hos_system_event_init(uint64_t key, int autoclear);
 void hos_system_event_signal(uint64_t key);
@@ -118,7 +121,7 @@ static void put_handle(uint64_t obj, int kind, int index) {
     if (obj) G64(obj) = (uint64_t)AU_MAGIC << 32 | (uint64_t)kind << 24 | (uint32_t)index;
 }
 static int au_trace = -1;   /* HOS_AUDIO_TRACE=1: the graph setup calls */
-#define AUT(...) do { if (au_trace < 0) au_trace = getenv("HOS_AUDIO_TRACE") != NULL; if (au_trace) hos_log(__VA_ARGS__); } while (0)
+#define AUT(...) do { if (au_trace < 0) au_trace = env_on("HOS_AUDIO_TRACE"); if (au_trace) hos_log(__VA_ARGS__); } while (0)
 static int get_handle(uint64_t obj, int kind) {
     if (!obj) return -1;
     const uint64_t h = G64(obj);
@@ -303,7 +306,7 @@ static Reverb reverbs[MAX_EFFECTS];
 static float mb_gain(float mb) { return powf(10.0f, mb / 2000.0f); }
 static void reverb_frame(Reverb *rv, Mix *m) {
     static int off = -1;
-    if (off < 0) off = getenv("HOS_AUDIO_NO_REVERB") != NULL;
+    if (off < 0) off = env_on("HOS_AUDIO_NO_REVERB");
     if (off || !rv->enabled || rv->n <= 0) return;
     static const int base_len[4] = {1559, 1617, 1491, 1422};
     const float density = rv->density > 0 ? rv->density / 100.0f : 1.0f;
@@ -513,7 +516,7 @@ static void render_frame(int16_t *pcm, int channels) {   /* 240 frames of the de
     const int nch = six ? 6 : 2;
     {   /* HOS_AUDIO_STATS=1: once a second, what plays and where the signal is */
         static int stats = -1, frames;
-        if (stats < 0) stats = getenv("HOS_AUDIO_STATS") != NULL;
+        if (stats < 0) stats = env_on("HOS_AUDIO_STATS");
         if (stats && ++frames % 200 == 0) {
             int started = 0, with_buffers = 0, to_mix = 0, to_split = 0;
             for (int i = 0; i < MAX_VOICES; i++) {
@@ -605,7 +608,7 @@ static uint64_t au_ms(void) { return (uint64_t)GetTickCount64(); }
 /* HOS_AUDIO_MUTE=1 (test runs): the device opened and fed as for a player, at volume 0 */
 static void au_opened(HWAVEOUT w) {
 #ifdef _WIN32
-    if (getenv("HOS_AUDIO_MUTE")) waveOutSetVolume(w, 0);
+    if (env_on("HOS_AUDIO_MUTE")) waveOutSetVolume(w, 0);
 #else
     (void)w;
 #endif
@@ -1005,7 +1008,7 @@ static void apply(const Cmd *k) {   /* (with the lock held) */
 }
 static void submit(const Cmd *k) {   /* (with the lock held) */
     static int immediate = -1;
-    if (immediate < 0) immediate = getenv("HOS_AUDIO_IMMEDIATE") != NULL;
+    if (immediate < 0) immediate = env_on("HOS_AUDIO_IMMEDIATE");
     if (ncmds == cmds_cap && !immediate) {
         const int cap = cmds_cap ? cmds_cap * 2 : 4096;
         Cmd *grown = (Cmd *)realloc(cmds, (size_t)cap * sizeof *grown);

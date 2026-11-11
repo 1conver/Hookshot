@@ -90,7 +90,9 @@ def main():
         (tmp / "harness.cpp").write_text(HARNESS, encoding="utf-8")
         exe = tmp / ("harness.exe" if os.name == "nt" else "harness")
         command = [cxx, "-std=c++20", "-O0", "-Wall", "-Wextra", "-Werror", "-Wno-unused-function",
-                   "-D_CRT_SECURE_NO_WARNINGS", "-I" + str(tmp), str(tmp / "harness.cpp"), "-o", str(exe)]
+                   "-D_CRT_SECURE_NO_WARNINGS", "-I" + str(tmp), str(tmp / "harness.cpp"), "-o", str(exe),
+                   # (env_on, the switches' rule: gpu/vk/compat/hookshot_env.h)
+                   "-include", str(args.source_root / "gpu/vk/compat/hookshot_env.h")]
         result = subprocess.run(command, cwd=tmp, env=env, capture_output=True, text=True, timeout=60,
                                 creationflags=flags)
         if result.returncode:

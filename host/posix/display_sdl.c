@@ -22,6 +22,9 @@
 #include "../display_pointer.h"
 #include <math.h>
 #include <limits.h>
+#ifndef HOOKSHOT_ENV_H   /* (env_on: the switches' one rule) */
+#include "../../gpu/vk/compat/hookshot_env.h"
+#endif
 
 int rx_start(void *hwnd);
 void rx_resize(int width, int height);
@@ -205,7 +208,7 @@ int hos_display_owns_sdl(void) { return sdl_ready; }   /* (controllers stay on t
 /* main(), before the game: SDL's video on this, the main, thread; the screen's size for GetSystemMetrics.
    Returns 1 when ready, 0 for explicit headless, -1 for startup failure. */
 int hos_display_init(void) {
-    if (getenv("HOS_HEADLESS")) return 0;
+    if (env_on("HOS_HEADLESS")) return 0;
     if (!hos_sdl_load()) {
         hos_log("display: no SDL: no window");
         fprintf(stderr, "display: no SDL: no window\n");
@@ -240,7 +243,7 @@ int hos_display_init(void) {
 
 /* the game's thread, when NVN is up (hos_main.c): the window is made on the main thread, which waits for this */
 void hos_display_start(void) {
-    if (getenv("HOS_HEADLESS") || !sdl_ready) {   /* no window: the renderer still draws, offscreen (screenshots) */
+    if (env_on("HOS_HEADLESS") || !sdl_ready) {   /* no window: the renderer still draws, offscreen (screenshots) */
         rx_start(NULL);
         return;
     }

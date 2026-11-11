@@ -8,6 +8,9 @@ import re
 import subprocess
 import tempfile
 
+# (env_on, the switches' rule, before the code cut out of the sources: gpu/vk/compat/hookshot_env.h)
+ENV_ON_H = str(Path(__file__).resolve().parents[1] / "gpu" / "vk" / "compat" / "hookshot_env.h")
+
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--source', type=Path, default=Path(__file__).resolve().parents[1])
 p.add_argument('--cxx', default='clang++')
@@ -215,5 +218,5 @@ with tempfile.TemporaryDirectory(prefix='present-semaphores-') as directory:
     folder = Path(directory)
     cpp, exe = folder/'fixture.cpp', folder/'fixture.exe'
     cpp.write_text(fixture)
-    subprocess.run([a.cxx, '-std=c++20', '-O1', str(cpp), '-o', str(exe)], check=True)
+    subprocess.run([a.cxx, '-std=c++20', '-include', ENV_ON_H, '-O1', str(cpp), '-o', str(exe)], check=True)
     raise SystemExit(subprocess.run([str(exe)]).returncode)

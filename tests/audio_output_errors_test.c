@@ -103,6 +103,7 @@ static int speakers = 2;   /* (the game's speakers: 6 in the "surround" and "fal
 static int au_speakers(void) { return speakers; }
 static const WAVEFORMATEX *au_format(const WAVEFORMATEX *f) { return f; }
 #define getenv test_getenv
+#define env_on(name) (getenv(name) && !env_value_off(getenv(name)))   /* (the switches read through the stand-in above) */
 #define waveOutOpen test_open
 #define waveOutPrepareHeader test_prepare
 #define waveOutWrite test_write

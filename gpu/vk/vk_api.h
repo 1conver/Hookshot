@@ -1,7 +1,7 @@
-/* The Vulkan back end (mkw_vk.dll) and the game executable: what each gives the other.
+/* The Vulkan back end (hookshot_vk.dll, hookshot_vk.so on Linux) and the game executable: what each gives the other.
 
    The executable records the game's NVN command buffers (host/nvn_native.c) and calls a renderer through the rx_*
-   functions (gpu/render/rx_nvn.h). With RX_BACKEND=vulkan host/rx_backend.c loads mkw_vk.dll, hands it the host
+   functions (gpu/render/rx_nvn.h). Unless RX_BACKEND names another, host/rx_backend.c loads it, hands it the host
    functions below and routes the rx_* calls to the table it returns; otherwise they go to the WebGPU renderer in
    the executable. The DLL carries Eden's shader recompiler (gpu/vk/eden, SPIR-V back end) and sirit: their C++
    namespaces are the same as those of the WebGPU renderer's suyu copy, so the two live in different binaries. */
@@ -111,7 +111,7 @@ typedef struct MkwVkHost {
     /// The soft write watch's marks within [ranges[i][0], ranges[i][1]) only, read and cleared (free with free_pages)
     int64_t (*collect_written_in)(const uint64_t (*ranges)[2], int n, uint32_t **pages);
     /// Zeroed guest memory of the renderer's own (address space above the heap, never freed; 0 when none is left):
-    /// what the NVN driver keeps in GPU memory of its own, such as its constant banks (mkw_eden.dll)
+    /// what the NVN driver keeps in GPU memory of its own, such as its constant banks
     uint64_t (*guest_alloc)(uint64_t size);
     /// (debugging) CPU writes to [guest, guest + size) logged with the writer's guest call stack (a page watch)
     void (*watch_guest_writes)(uint64_t guest, uint64_t size);

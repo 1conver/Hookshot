@@ -11,6 +11,9 @@
 #include <string.h>
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#ifndef HOOKSHOT_ENV_H   /* (env_on: the switches' one rule) */
+#include "../gpu/vk/compat/hookshot_env.h"
+#endif
 
 /* (hookshot, #1468) A game folder whose deepest file passes 260 characters (MAX_PATH: "E:\Games\...\romfs\Event\EventSetting\
    Ev..." at 262) is read too. The host paths here are up to HOS_FS_PATH bytes, and on Windows each file call goes through
@@ -332,7 +335,7 @@ int hos_blank_cached_icon(const char *guest, const char *host);   /* (totk_icon_
 /* HOS_FS_TRACE=1: every file opened (or not found) is logged */
 static int fs_trace(void) {
     static int on = -1;
-    if (on < 0) on = getenv("HOS_FS_TRACE") != NULL;
+    if (on < 0) on = env_on("HOS_FS_TRACE");
     return on;
 }
 /* OpenFile(FileHandle*, char const* path, int mode): mode bit 0 read, bit 1 write, bit 2 append */
@@ -345,7 +348,7 @@ HLE(_ZN2nn2fs8OpenFileEPNS0_10FileHandleEPKci) {
     if (want_write && !writable) { RET(R_PATH_NOT_FOUND); return; }
     /* (mkw-recomp) HOS_NO_MOVIES=1: MKW's WebM movies (cup openings, billboards, emblems) are not found, and the
        game goes on without them (decoded by nn_video.c otherwise) */
-    if (!want_write && getenv("HOS_NO_MOVIES")) {
+    if (!want_write && env_on("HOS_NO_MOVIES")) {
         const size_t n = strlen(g);
         if (n > 5 && !_stricmp(g + n - 5, ".webm")) {
             static int logged;

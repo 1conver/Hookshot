@@ -23,6 +23,9 @@
 #include "hd_rumble.h"
 #include "hos_motion.h"
 #include "../gpu/vk/vk_api.h"   /* (HOS_PAD_*) */
+#ifndef HOOKSHOT_ENV_H   /* (env_on: the switches' one rule) */
+#include "../gpu/vk/compat/hookshot_env.h"
+#endif
 
 void hos_host_thread_register_self(const char *name);   /* hos_prof.c */
 
@@ -94,7 +97,7 @@ static int pads_start(void) {
     hos_sdl_hint("SDL_GAMECONTROLLER_USE_BUTTON_LABELS", "0");
     /* (with no window nothing reads SDL's quit event: SDL's own SIGINT/SIGTERM handlers turned a timeout's or a service
        manager's SIGTERM into that event, and the run went on until SIGKILL. Without them the signals end it as usual) */
-    if (getenv("HOS_HEADLESS")) hos_sdl_hint("SDL_NO_SIGNAL_HANDLERS", "1");
+    if (env_on("HOS_HEADLESS")) hos_sdl_hint("SDL_NO_SIGNAL_HANDLERS", "1");
     if (!hos_sdl_init(HOS_SDL_GAMEPAD)) {
         hos_log("hid: SDL could not start its controller support: %s", hos_sdl_error());
         return 0;
@@ -179,7 +182,7 @@ static int hd_poll(int i, const uint8_t side[3][4], long long now) {
 static void motion_poll(int64_t now, int count) {
     int rx_option(int id, int otherwise);
     static int debug = -1;   /* (HOS_MOTION_DEBUG, read once) */
-    if (debug < 0) debug = getenv("HOS_MOTION_DEBUG") != NULL;
+    if (debug < 0) debug = env_on("HOS_MOTION_DEBUG");
     const int want = rx_option(HOS_OPT_GYRO, 1) != 0;
     int pick = -1, any = 0;
     for (int i = 0; i < MAX_PADS; i++) {
@@ -450,7 +453,7 @@ void hos_sdl_pads_pump(void) {
 int hos_sdl_pads(uint64_t *buttons, int32_t stick[4]) {
     static volatile LONG started;
     if (!started && !InterlockedExchange(&started, 1)) {
-        if (getenv("HOS_NO_SDL")) return 0;
+        if (env_on("HOS_NO_SDL")) return 0;
         if (!hos_sdl_load()) {
             hos_log("hid: no SDL beside the exe or on the system: only XInput controllers (Xbox pads) work");
             return 0;

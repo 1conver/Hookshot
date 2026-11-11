@@ -85,6 +85,7 @@ uint64_t st_retired_imports_freed = 0, st_retired_import_bytes_freed = 0;
 std::deque<std::map<uint64_t, Pool>::node_type> evicted_pools;
 void logf(const char*, ...) {}
 const char* getenv(const char*) { return nullptr; }   // (unrelated diagnostic toggle in reap_mirrors)
+bool env_on(const char* name) { const char* v = getenv(name); return v && !env_value_off(v); }   // (the switches through the stand-in)
 VkDeviceAddress vkGetBufferDeviceAddress(VkDevice, const VkBufferDeviceAddressInfo*) { return 0; }
 void destroy_buffer(VkBuffer, VmaAllocation) {}
 void vkDestroyBuffer(VkDevice, VkBuffer buffer, const VkAllocationCallbacks*) {

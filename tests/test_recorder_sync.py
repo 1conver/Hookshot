@@ -48,6 +48,9 @@ import subprocess
 import sys
 import tempfile
 
+# (env_on, the switches' rule, before the code cut out of the sources: gpu/vk/compat/hookshot_env.h)
+ENV_ON_H = str(Path(__file__).resolve().parents[1] / "gpu" / "vk" / "compat" / "hookshot_env.h")
+
 RUN_ALL_ARGS = ["--cxx", "{cxx}", "--headers", "{vulkan_headers}"]
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -259,7 +262,7 @@ def build(cxx, headers, out, recorder_text, name, extra=(), work_text=None):
     (d / "vk_work.h").write_text(work_text or (VK / "vk_work.h").read_text(encoding="utf-8"), encoding="utf-8")
     (d / "vk_recorder.h").write_text(recorder_text, encoding="utf-8")
     exe = d / "recorder_sync_test.exe"
-    cmd = [cxx, "-std=c++20", "-O2", "-Wall", "-Wextra", "-Werror", "-Wno-unused-function", "-Wno-missing-field-initializers", "-DVK_NO_PROTOTYPES",
+    cmd = [cxx, "-std=c++20", "-include", ENV_ON_H, "-O2", "-Wall", "-Wextra", "-Werror", "-Wno-unused-function", "-Wno-missing-field-initializers", "-DVK_NO_PROTOTYPES",
            "-D_CRT_SECURE_NO_WARNINGS",
            *extra, "-I" + str(d), "-I" + str(headers), str(ROOT / "tests" / "recorder_sync_test.cpp"), "-o", str(exe)]
     r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -345,7 +348,7 @@ def exit_test(cxx, headers, out, recorder_text, name):
     (d / "vk_work.h").write_text((VK / "vk_work.h").read_text(encoding="utf-8"), encoding="utf-8")
     (d / "vk_recorder.h").write_text(recorder_text, encoding="utf-8")
     src = str(ROOT / "tests" / "recorder_exit_test.cpp")
-    flags = ["-std=c++20", "-O2", "-Wall", "-Wextra", "-Werror", "-DVK_NO_PROTOTYPES", "-D_CRT_SECURE_NO_WARNINGS"]
+    flags = ["-std=c++20", "-include", ENV_ON_H, "-O2", "-Wall", "-Wextra", "-Werror", "-DVK_NO_PROTOTYPES", "-D_CRT_SECURE_NO_WARNINGS"]
     for cmd in ([cxx, *flags, "-shared", "-DRX_EXIT_DLL", "-I" + str(d), "-I" + str(headers), src, "-o", str(d / "rx_exit.dll")],
                 [cxx, *flags, src, "-o", str(d / "rx_exit.exe")]):
         r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)

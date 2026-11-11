@@ -31,8 +31,8 @@
 #include <vector>
 
 #include "shader_recompiler/backend/spirv/mma_layout.h"
-#include "shader_recompiler/ir_opt/oot_visual_workaround.h"
 #include "shader_recompiler/ir_opt/passes.h"
+#include "shader_recompiler/ir_opt/fragment_output_guard.h"
 #include "shader_recompiler/backend/bindings.h"
 #include "shader_recompiler/backend/spirv/emit_spirv.h"
 #include "shader_recompiler/environment.h"
@@ -93,6 +93,9 @@ void ptr_diag_log(uint64_t key, const char* kind) {
 }
 } // namespace
 #include "vk_shader.h"
+#ifndef HOOKSHOT_ENV_H   // (env_on: the switches' one rule)
+#include "hookshot_env.h"
+#endif
 
 namespace mkwvk {
 namespace {
@@ -457,7 +460,7 @@ public:
     u32 SharedMemorySize() const override {
         // (what the program declares, from the control section: 48 KB for every one was past an RX 9070 XT's 32 KB, and its
         // pipelines were invalid. klimovich008, Hookshot PR 91. RX_VK_SHARED_48K=1: as before)
-        static const bool old = getenv("RX_VK_SHARED_48K") != nullptr;
+        static const bool old = env_on("RX_VK_SHARED_48K");
         return old ? 48u << 10 : nvn.shared_memory;
     }
     std::array<u32, 3> WorkgroupSize() const override {
@@ -471,7 +474,7 @@ public:
     // each patch two triangles, one of them often degenerate (the triangular holes in the far terrain).
     // (RX_VK_NO_DRAW_PARAMS=1: as before)
     bool HasHLEMacroState() const override {
-        static const bool off = getenv("RX_VK_NO_DRAW_PARAMS") != nullptr;
+        static const bool off = env_on("RX_VK_NO_DRAW_PARAMS");
         return !off && (stage == Shader::Stage::VertexA || stage == Shader::Stage::VertexB);
     }
     bool HasNativeInstructions() const override { return true; }   // (lowered NVN2 programs: Lichii's passes ask)
@@ -564,7 +567,7 @@ Shader::HostTranslateInfo host_info() {
     h.support_float64 = true;
     // (RX_VK_NO_F16, a test: the game's f16 math lowered to f32, as a card without f16 shaders would need (GTX 10xx, issue 98). Eden's
     // lowering made a picture of noise of Kokiri on an RTX card, so it is not used by itself)
-    h.support_float16 = !getenv("RX_VK_NO_F16");
+    h.support_float16 = !env_on("RX_VK_NO_F16");
     h.support_int64 = true;
     h.needs_demote_reorder = false;
     h.support_snorm_render_buffer = true;
@@ -618,7 +621,7 @@ uint32_t stage_cbuf_word(const NvnState& s, const Stage& st, uint32_t index, uin
         // (as the stream's place sees it, not the game's memory now: that may be its next frames' already, and a
         // handle read from it sampled their textures, for one frame: MKW's shadows in bands. RX_VK_HANDLES_LIVE=1:
         // as before)
-        static const bool live = getenv("RX_VK_HANDLES_LIVE") != nullptr;
+        static const bool live = env_on("RX_VK_HANDLES_LIVE");
         // (EvilOOT: and a binding of no recorded size read as far as asked, as the storage buffer descriptors had it before)
         if (u.addr && (!u.size || (uint64_t)offset + 4 <= (uint64_t)u.size)) {
             if (live) host->gpu_read(u.addr + offset, &v, 4);
@@ -640,7 +643,7 @@ uint32_t stage_handle(const NvnState& s, const Stage& st, uint32_t program) {
                    const uint64_t base = stage_cbuf_word(s, st, d.cbuf_index, d.cbuf_offset) |
                                          (uint64_t)stage_cbuf_word(s, st, d.cbuf_index, d.cbuf_offset + 4) << 32;
                    uint32_t v = 0;
-                   static const bool live = getenv("RX_VK_HANDLES_LIVE") != nullptr;
+                   static const bool live = env_on("RX_VK_HANDLES_LIVE");
                    if (base) {
                        if (live) host->gpu_read(base + offset, &v, 4);
                        else ub_read(base + offset, &v, 4);
@@ -707,7 +710,7 @@ uint8_t answer_of(uint32_t handle, bool image) {
 uint8_t canonical_answer(const Program& p, const Program::Answer& a, uint8_t type) {
     static const bool strict = [] {
         const char* capture = getenv("RX_VK_CAPTURE");
-        return getenv("RX_VK_HANDLES_LIVE") || getenv("RX_VK_REGISTER_AT_ONCE") ||
+        return env_on("RX_VK_HANDLES_LIVE") || env_on("RX_VK_REGISTER_AT_ONCE") ||
                (capture && atoi(capture) == 0);
     }();
     if (strict) return type;
@@ -971,21 +974,6 @@ void dump_ir(const Program& p, const char* stage, const Shader::IR::Program& pro
 }
 
 /// Translates a program variant's stages into p (on a worker for graphics programs: s and the codes are copies)
-// (hookshot) ir_opt/oot_visual_workaround.h, on the game's programs
-void oot_visual(Shader::IR::Program& program, uint64_t key) {
-    // (EvilOOT, 11-07: off unless RX_VK_OOT_VISUAL=1. With the foliage culling, the pointer reads and the first GPU work right, the
-    // game's own fog is the soft haze with sun shafts of the console's picture at Kokiri's rock; the 0.08 factor was tuned against
-    // the white wall those bugs made, and thinned every scene's fog)
-    static const bool on = getenv("RX_VK_OOT_VISUAL") && atoi(getenv("RX_VK_OOT_VISUAL")) != 0;
-    if (!on) return;
-    static const float fog = getenv("RX_VK_OOT_FOG") ? (float)atof(getenv("RX_VK_OOT_FOG")) : 0.08f;   // (0.25, Orchid's, left a white forest once the game no longer lost its start)
-    // (1: the game's own exposure. 0.65 was for the washed-out outdoors before shaders followed pointers; with the lighting right it
-    // made scenes too dark, issue 103)
-    static const float exposure = getenv("RX_VK_OOT_EXPOSURE") ? (float)atof(getenv("RX_VK_OOT_EXPOSURE")) : 1.0f;
-    if (const size_t n = Shader::Optimization::ApplyOotVisualWorkaround(program, fog, exposure))
-        logf("vk: OoT visual workaround: %s program %016llx, %zu edits", program.stage == Shader::Stage::Compute ? "fog" : "exposure",
-             (unsigned long long)key, n);
-}
 
 // (hookshot) RX_VK_MESH_NOCULL=<task shader code key prefixes,...>, off unless set. OoT's meshlet
 // culling task shader walks every cell of a coarse depth grid its meshlet covers, reading four words a cell from c3 by a
@@ -1137,7 +1125,7 @@ uint64_t disk_stamp() {
     add(abi, sizeof abi);
     {   // (the translation's per-GPU settings, set by coopmat_init at device creation: AMD/Intel's invariant positions, the colour
         // NaN guard, the matrix layout measured on this device. Without them a cache made on one GPU was used on another (a laptop's
-        // integrated and dedicated GPUs), and RX_VK_NO_INVARIANT / RX_VK_NO_NAN_GUARD did nothing for programs already cached)
+        // integrated and dedicated GPUs), and RX_VK_NO_INVARIANT / RX_VK_NAN_GUARD did nothing for programs already cached)
         using namespace Shader::Backend::SPIRV;
         const uint32_t flags = (position_invariant ? 1u : 0u) | (frag_nan_guard ? 2u : 0u) | (mma_software ? 4u : 0u);
         add(&flags, sizeof flags);
@@ -1147,8 +1135,13 @@ uint64_t disk_stamp() {
     }
     // (RX_VK_GP_, not RX_VK_GP: that took RX_VK_GPL with it, which changes no translation, and switching the stage libraries on
     // threw the whole program cache away. What the libraries are good for is the prepare's second stamp, vk_draw.cpp warmed_stamp)
+    // (and every other switch the translation reads: the storage buffer pass's (RX_VK_NO_CBUF_LOAD_RULE, RX_VK_PTR_SPLIT_FALLBACK,
+    // RX_VK_ALL_GLOBAL_PROGS), the lowering's extended registers (RX_VK_NO_EXTREGS), the draw parameters (RX_VK_NO_DRAW_PARAMS)
+    // and the miss log's buffer and block counters (RX_VK_MISS_LOG, RX_VK_BLOCK_PROBE): without them a switch did nothing for
+    // the programs already cached. tests/test_program_stamp_knobs.py checks the translator's switches against this list)
     for (char** e = _environ; e && *e; e++)
-        for (const char* pre : {"RX_VK_OOT", "RX_VK_MMA", "RX_VK_NATIVE", "RX_VK_NAN", "RX_VK_TASK_CAP", "RX_VK_NETWORK", "RX_VK_GP_", "RX_VK_FOLLOW", "RX_VK_NO_FOLLOW", "RX_VK_NO_F16", "RX_VK_SHARED", "RX_VK_MESH", "RX_VK_NO_INVARIANT", "RX_VK_NO_NAN_GUARD", "RX_VK_MARKERS", "EDEN_"})
+        for (const char* pre : {"RX_VK_MMA", "RX_VK_NATIVE", "RX_VK_NAN", "RX_VK_TASK_CAP", "RX_VK_NETWORK", "RX_VK_GP_", "RX_VK_FOLLOW", "RX_VK_NO_FOLLOW", "RX_VK_NO_F16", "RX_VK_SHARED", "RX_VK_MESH", "RX_VK_NO_INVARIANT", "RX_VK_MARKERS",
+                                "RX_VK_NO_CBUF_LOAD_RULE", "RX_VK_PTR_SPLIT_FALLBACK", "RX_VK_ALL_GLOBAL_PROGS", "RX_VK_NO_EXTREGS", "RX_VK_NO_DRAW_PARAMS", "RX_VK_MISS_LOG", "RX_VK_BLOCK_PROBE", "EDEN_"})
             if (!strncmp(*e, pre, strlen(pre))) add(*e, strlen(*e));
     return h;
 }
@@ -1156,7 +1149,7 @@ uint64_t disk_stamp() {
 void disk_init() {
     static std::once_flag once;
     std::call_once(once, [] {
-        if (getenv("RX_VK_NO_PROGRAM_CACHE")) return;
+        if (env_on("RX_VK_NO_PROGRAM_CACHE")) return;
         char exe[MAX_PATH];
         const DWORD n = game_module_path(exe, MAX_PATH);
         std::string path(exe, n);
@@ -1584,7 +1577,6 @@ void translate_into(Program& p, const NvnState& s, const Code* vsc, const Code* 
             } reset_table;
             auto t = translate(env, false);
             questions += env.texture_questions;
-            oot_visual(t->program, csc->key);
             Shader::RuntimeInfo rt{};
             dump_ir(p, "compute", t->program);   // (before the SPIR-V: the programs it fails on are the ones to read)
             if (getenv("RX_VK_IR"))
@@ -1606,7 +1598,7 @@ void translate_into(Program& p, const NvnState& s, const Code* vsc, const Code* 
                     kept_one = !k.empty() && !strncmp(hex, k.c_str(), k.size());
                     at = e == std::string::npos ? keep.size() : e + 1;
                 }
-                if ((!kept_one && (Shader::Backend::SPIRV::mma_software || dev.props.vendorID != 0x10DE)) || getenv("RX_VK_NO_F16"))
+                if ((!kept_one && (Shader::Backend::SPIRV::mma_software || dev.props.vendorID != 0x10DE)) || env_on("RX_VK_NO_F16"))
                     throw std::runtime_error("a network left out on this card");
             }
             const std::vector<uint32_t> spirv = Shader::Backend::SPIRV::EmitSPIRV(profile_pinned(), rt, t->program, bindings);
@@ -1671,12 +1663,10 @@ void translate_into(Program& p, const NvnState& s, const Code* vsc, const Code* 
                 Env fs_env{s, *fsc, Shader::Stage::Fragment};
                 auto fs = translate(fs_env, true);
                 questions += fs_env.texture_questions;
-                oot_visual(fs->program, fsc->key);
                 Shader::RuntimeInfo frt{};
                 frt.previous_stage_stores = vs->program.info.stores;
                 for (int i = 0; i < 8; i++) frt.color_output_types[i] = static_cast<Shader::AttributeType>(color_types[i]);
-                static const bool nan_guard = !getenv("RX_VK_NAN_GUARD") || atoi(getenv("RX_VK_NAN_GUARD")) != 0;
-                if (nan_guard) {
+                if (Shader::Backend::SPIRV::frag_nan_guard) {   // (RX_VK_NAN_GUARD=0: off, vk_coopmat.cpp coopmat_init)
                     uint32_t float_targets = 0;
                     for (int i = 0; i < 8; i++)
                         if (frt.color_output_types[i] == Shader::AttributeType::Float) float_targets |= 1u << i;
@@ -2146,7 +2136,7 @@ const Program* program_for(const NvnState& s, ProgramKind kind, const uint8_t co
     // (hookshot) the pair of the last picks stood only while nothing at all was bound anew, and OoT binds a uniform buffer for nearly every
     // draw: a draw of the same program with the same textures found its program through the full pick (the key, the answers' handles, a
     // compare). It stands now while the textures its answers are read from do (answer_stage_mask). RX_VK_PICK_BIND_GEN=1: as before
-    static const bool by_bind = getenv("RX_VK_PICK_BIND_GEN") != nullptr;
+    static const bool by_bind = env_on("RX_VK_PICK_BIND_GEN");
     for (const ProgFast& f : prog_fast) {   // (the draw before this one, and the one that took turns with it)
         if (!(f.on && f.p && f.p->ready.load(std::memory_order_acquire) && !f.p->failed)) continue;
         uint64_t fbind = f.bind;
@@ -2234,7 +2224,7 @@ const Program* program_pick(const NvnState& s, ProgramKind kind, const uint8_t c
     std::memcpy(p->codes, codes, sizeof codes);
     Program* raw = p.get();
     variants.push_back(std::move(p));
-    static const bool sync = getenv("RX_VK_SYNC_SHADERS") != nullptr;
+    static const bool sync = env_on("RX_VK_SYNC_SHADERS");
     if (compute || sync) {   // (compute: dispatches are never left out, so they are translated where they are)
         translate_into(*raw, s, stage_code[0], stage_code[1], compute ? stage_code[5] : nullptr, color_types);
         return raw->failed ? nullptr : raw;

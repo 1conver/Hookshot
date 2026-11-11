@@ -33,6 +33,9 @@
 #include "shaders/fg_scale_comp_spv.h"
 #include "shaders/fg_synth_comp_spv.h"
 #include "shaders/hdr_encode_comp_spv.h"
+#ifndef HOOKSHOT_ENV_H   // (env_on: the switches' one rule)
+#include "hookshot_env.h"
+#endif
 #include "vk_work.h"   // (after the others: counts the commands that do GPU work, for full_barrier)
 
 #ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION   // (older Windows SDKs lack it: Windows 10 1803 and later take it)
@@ -619,7 +622,7 @@ VkImage framegen_scale(VkCommandBuffer cmd, VkImageView src, VkImage image, uint
     }
     pass(cmd, scale.pipe, {{src, scale.linear}, {scale.scaled.view, VK_NULL_HANDLE}, {wide.side == 1 ? scale.small.view : src, scale.linear}},
          dw, dh, &pc, sizeof pc);
-    static const bool report = getenv("RX_VK_UPSCALE_LOG") != nullptr;
+    static const bool report = env_on("RX_VK_UPSCALE_LOG");
     static bool reported = false;
     if (report && !reported) {
         reported = true;

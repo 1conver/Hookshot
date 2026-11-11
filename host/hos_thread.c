@@ -5,6 +5,9 @@
    there. TPIDRRO_EL0 (thread-local region): 0x200 bytes; the SDK's nn::os keeps the current ThreadType* at
    +0x1F8, so lifted SDK code that reads it inline finds the same thread the HLE knows. */
 #include "hos.h"
+#ifndef HOOKSHOT_ENV_H   /* (env_on: the switches' one rule) */
+#include "../gpu/vk/compat/hookshot_env.h"
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #define WIN32_LEAN_AND_MEAN
@@ -84,7 +87,7 @@ uint64_t *hos_tls_slots(HosThread *t) { return t->tls_slots; }
 static void pin_by_core(HosThread *t) {
 #if defined(_WIN32) && !defined(__EMSCRIPTEN__)
     static int on = -1;
-    if (on < 0) on = getenv("HOS_PIN_BY_CORE") != NULL;
+    if (on < 0) on = env_on("HOS_PIN_BY_CORE");
     if (on && t->handle) SetThreadAffinityMask(t->handle, (DWORD_PTR)1 << (2 * hos_thread_core(t)));
 #else
     (void)t;
@@ -99,7 +102,7 @@ uint64_t hos_thread_mask(HosThread *t) { return t->core_mask; }
 void hos_thread_boost(int level) {
 #if defined(_WIN32) && !defined(__EMSCRIPTEN__)
     static int off = -1;
-    if (off < 0) off = getenv("HOS_NO_PRIORITIES") != NULL;
+    if (off < 0) off = env_on("HOS_NO_PRIORITIES");
     if (!off) SetThreadPriority(GetCurrentThread(), level >= 2 ? THREAD_PRIORITY_HIGHEST : THREAD_PRIORITY_ABOVE_NORMAL);
 #else
     (void)level;
@@ -263,7 +266,7 @@ static int log_queue(const char *line) {
     if (log_async < 0) {
         AcquireSRWLockExclusive(&log_lock);
         if (log_async < 0) {
-            int on = !getenv("HOS_LOG_SYNC");
+            int on = !env_on("HOS_LOG_SYNC");
             if (on && !CreateThread(NULL, 0, log_main, NULL, 0, NULL)) on = 0;
             if (on) log_prev_filter = SetUnhandledExceptionFilter(log_crash_filter);
             if (on) atexit(log_flush);
@@ -490,7 +493,7 @@ static DWORD WINAPI thread_main(void *p) {
         c->x[0] = t->guest_tt;
         a64_icall(c, hook);
         if (G64(t->tlr + 0x1F0)) c->tpidr_el0 = G64(t->tlr + 0x1F0);
-        if (hos_trace || getenv("HOS_TLS_TRACE"))
+        if (hos_trace || env_on("HOS_TLS_TRACE"))
             hos_log("thread %s: TLS hook gave TP %#llx, DTV %#llx; ideal core %d mask %#llx priority %d", t->name,
                     (unsigned long long)c->tpidr_el0, (unsigned long long)G64(c->tpidr_el0 + 8), t->ideal_core,
                     (unsigned long long)t->core_mask, t->priority);
@@ -799,7 +802,7 @@ void hos_thread_pin(void *h, const char *name) {
                                   THREAD_PRIORITY_ABOVE_NORMAL, THREAD_PRIORITY_HIGHEST};
     if ((p = match_name_spec(prios, nprios, name)) && p->value >= -2 && p->value <= 2)
         SetThreadPriority(h, levels[p->value + 2]);
-    else if (strstr(name, "OptimizeChange") && !getenv("HOS_OCB_NORMAL")) {
+    else if (strstr(name, "OptimizeChange") && !env_on("HOS_OCB_NORMAL")) {
         /* (OoT's OptimizeChangeBank (guest priority 27, a background thread) walks every placed object of the
            area by name, again and again (Kokiri: ~344 names, ~250k lookups a second). On the console it only gets the
            time nothing more important wants; at the host's normal priority it took the renderer's and the driver's
@@ -851,7 +854,7 @@ static void sleep_ns(int64_t ns) {
        timed wait (a futex: Atomics.wait) to `slack` before the time, then the rest spun; slack follows how late the
        waits wake (HOS_WEB_SPIN_SLEEP=1: spun, as before). */
     static int web_spin = -1;
-    if (web_spin < 0) web_spin = getenv("HOS_WEB_SPIN_SLEEP") != NULL;
+    if (web_spin < 0) web_spin = env_on("HOS_WEB_SPIN_SLEEP");
     static _Atomic int64_t slack = 300000;
     const int64_t s = atomic_load_explicit(&slack, memory_order_relaxed);
     if (!web_spin && ns > s + 50000) {
@@ -868,7 +871,7 @@ static void sleep_ns(int64_t ns) {
     /* Under a millisecond: yielded away until the time (the timer's ~0.5 ms granularity made TOTK's 20 us waits for
        its job workers 25x longer, ~2000 a second on the frame's critical path). HOS_SHORT_SLEEP_TIMER=1: as before */
     static int short_timer = -1;
-    if (short_timer < 0) short_timer = getenv("HOS_SHORT_SLEEP_TIMER") != NULL;
+    if (short_timer < 0) short_timer = env_on("HOS_SHORT_SLEEP_TIMER");
     if (ns < 1000000 && !short_timer) {
         while (hos_now_ns() < until)
             if (!SwitchToThread()) YieldProcessor();
@@ -974,7 +977,7 @@ void hos_sleep_logged(int64_t ns, uint64_t lr) {
     }
     if (poll_cap && ns > poll_cap && ns <= 100000) ns = poll_cap;
     static int on = -1;
-    if (on < 0) on = getenv("HOS_SLEEP_LOG") != NULL;
+    if (on < 0) on = env_on("HOS_SLEEP_LOG");
     if (!on) { hos_sleep_ns(ns); return; }
     const int64_t t0 = hos_now_ns();
     hos_sleep_ns(ns);
@@ -1055,7 +1058,7 @@ static void slept_since(uint64_t lr, int64_t t0) {
 HLE(_ZN2nn2os11SleepThreadENS_8TimeSpanE) {
     const int64_t t0 = hos_fps_timing ? hos_now_ns() : 0;
     if (present_poll(c, (int64_t)ARG(0))) { slept_since(c->x[30], t0); return; }
-    if (c->x[30] == 0x80590520 && getenv("HOS_SLEEP_LOG")) {   /* (hookshot, diagnostic: OoT's present poll) */
+    if (c->x[30] == 0x80590520 && env_on("HOS_SLEEP_LOG")) {   /* (hookshot, diagnostic: OoT's present poll) */
         static int logged;
         if (logged++ < 3) {
             const char *hos_hostcall_name(uint64_t addr);
@@ -1115,7 +1118,7 @@ static void tick_log(uint64_t lr) {
 }
 HLE(_ZN2nn2os13GetSystemTickEv) {
     static int on = -1;
-    if (on < 0) on = getenv("HOS_TICK_LOG") != NULL;
+    if (on < 0) on = env_on("HOS_TICK_LOG");
     if (on) tick_log(c->x[30]);
     /* (hookshot) The graphics module: x19 at its frame-end clock read (main+0x346c770 is after the bl), for nn_vi.c's
        real-time step */
@@ -1129,7 +1132,7 @@ HLE(_ZN2nn2os22GetSystemTickFrequencyEv) { RET(HOS_TICK_HZ); }
    any of its timing through these was off by as much. HOS_TICK_CONVERT_192=1: as before */
 static int tick_convert_192(void) {
     static int on = -1;
-    if (on < 0) on = getenv("HOS_TICK_CONVERT_192") != NULL;
+    if (on < 0) on = env_on("HOS_TICK_CONVERT_192");
     return on;
 }
 HLE(_ZN2nn2os13ConvertToTickENS_8TimeSpanE) {

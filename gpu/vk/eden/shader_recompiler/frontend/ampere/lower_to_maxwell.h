@@ -13,6 +13,9 @@
 #include <string_view>
 #include <vector>
 #include "common/common_types.h"
+#ifndef HOOKSHOT_ENV_H   // (env_on: the switches' one rule)
+#include "hookshot_env.h"
+#endif
 
 namespace Shader::Ampere {
 
@@ -208,7 +211,7 @@ inline LoweredProgram LowerToMaxwellWith(std::span<const Instruction> code, u32 
         std::array<bool, 256> marker_taken{};
         std::array<bool, 256> native_occupied{};
         // (RX_VK_MARKERS_V205=1: markers avoid only the native high registers, as in v2.0.5: an A/B for the AMD stripes report)
-        static const bool markers_v205 = std::getenv("RX_VK_MARKERS_V205") != nullptr;
+        static const bool markers_v205 = env_on("RX_VK_MARKERS_V205");
         {
             const u32 renameable = RenameableFields(opcode);
             constexpr u32 bits[4]{16, 24, 32, 64};
@@ -285,7 +288,7 @@ inline LoweredProgram LowerToMaxwellWith(std::span<const Instruction> code, u32 
             }
         }
         if (!any_high) native_high = {};
-        static const bool no_extended = std::getenv("RX_VK_NO_EXTREGS") != nullptr;   // (as before them: rejected)
+        static const bool no_extended = env_on("RX_VK_NO_EXTREGS");   // (as before them: rejected)
         if (any_high && no_extended) return fail(index, "native program uses lowering scratch registers");
         std::array<bool, 256> lowering_used{};   // (the reserved numbers uniform_register gave this instruction)
         const size_t words_before = result.instructions.size();
@@ -1743,7 +1746,7 @@ inline LoweredProgram LowerToMaxwellWith(std::span<const Instruction> code, u32 
             // the rows before every lane has read them); LDSM is warp-collective, so every lane reaches both. nxnative's finding
             // (seedds/nxnative, MIT: "LDSM reads rows other lanes stored", white blotches through agl's upscaler).
             // RX_VK_MMA_NO_LDSM_BARRIER=1: none, as before
-            static const bool ldsm_barrier = std::getenv("RX_VK_MMA_NO_LDSM_BARRIER") == nullptr;
+            static const bool ldsm_barrier = !env_on("RX_VK_MMA_NO_LDSM_BARRIER");
             const auto subgroup_barrier = [&] {
                 if (ldsm_barrier) emit(0xef98000000000000ULL | predicate | (u64{1} << 20));   // (MEMBAR, bit 20: barrier_operations.cpp)
             };

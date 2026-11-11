@@ -1,4 +1,4 @@
-"""Compile the lifted game (work/gen, from `lift.py --write`) into work/build/hookshot_game.dll (or a static library).
+"""Compile the lifted game (work/gen, from `lift.py --write`) into work/build/hookshot_game.dll.
 
 The flags are a64-kit's for lifted code (its build.py, cmd_native): -O1, LoopRotate's header copies capped (most of
 the compile time in goto-dense giant functions otherwise), capture tracking past LLVM's 100 uses (the context
@@ -18,8 +18,8 @@ machine is idle, and keep --jobs low otherwise.
 both builds: the two lifts share their chunk boundaries, so every chunk without a hooked function is the same source
 and is not compiled twice.
 
-Usage:  python -I nx2/build.py [--jobs 1] [--only 0,7] [--opt O1] [--no-polls] [--dll] [--lib] [--standalone]
-  --only: just these code_NNN.c chunks (to measure); --dll: link hookshot_game.dll; --lib: archive hookshot_game.lib
+Usage:  python -I nx2/build.py [--jobs 1] [--dll] [--standalone]
+  --dll: link hookshot_game.dll (nx2/test_dll.py runs functions from it)
   --dry-run: the start-up with no lift, up to the compile; fails if a file the compile reads (the lift's aside) is missing
 
   HOOKSHOT_TIMES=<build_times.json>: make_game.py's record of the earlier builds. With it, this run says which files it
@@ -559,6 +559,7 @@ MARCH = os.environ.get("RX_MARCH") or host_march()
 if MARCH != "x86-64-v3":
     print("build: this CPU has no AVX2: the game is built for %s (a little slower)" % MARCH, flush=True)
 CPU = ["-march=" + MARCH, "-ffp-contract=off"]
+OPT = "O1"   # (the lifted code's level; code_hot.c's is RX_HOT_OPT)
 
 
 def flags(gen, rt64, opt, polls):
@@ -747,11 +748,7 @@ def main():
     kit.wait_for_quiet('the compile')
     p = argparse.ArgumentParser()
     p.add_argument("--jobs", type=int, default=1)
-    p.add_argument("--only", default="")
-    p.add_argument("--opt", default="O1")
-    p.add_argument("--no-polls", action="store_true")
     p.add_argument("--dll", action="store_true")
-    p.add_argument("--lib", action="store_true")
     p.add_argument("--standalone", action="store_true")
     # (CI: a player's build started from the tree the AppImage carries, with no game. Everything up to the compile, without the
     # lift's files; every other file the compile would read must be there, and nothing is compiled. scripts/linux/check_player_build.sh)
@@ -763,11 +760,11 @@ def main():
     obj_dir = os.path.join(out, "obj")
     gen_dir = os.path.join(out, "gen")   # (the logo and the fonts the Vulkan back end compiles in: made with it, below)
     os.makedirs(obj_dir, exist_ok=True)
-    if os.environ.get("RX_VK_ONLY") or a.dry_run:   # (the Vulkan back end needs no game: built so with no lift, as the AppImage's is)
+    if kit.env_on("RX_VK_ONLY") or a.dry_run:   # (the Vulkan back end needs no game: built so with no lift, as the AppImage's is)
         os.makedirs(gen, exist_ok=True)
     rt64 = rtgen.write(os.path.join(out, "rt64"))
     cc = toolchain.need(toolchain.find("clang"))
-    fl = flags(gen, rt64, a.opt, not a.no_polls) + (["-DA64_POLL_CTX"] if a.dll else [])   # (the shim's poll takes the context: rtgen.py)
+    fl = flags(gen, rt64, OPT, True) + (["-DA64_POLL_CTX"] if a.dll else [])   # (the shim's poll takes the context: rtgen.py)
     # (which Hookshot this is, for the log's first line and the Insert menu: given to those two files only, so a new
     # release name rebuilds them and nothing else)
     stamp_def = version.define()
@@ -778,30 +775,26 @@ def main():
     shim_deps = deps + open(os.path.join(NX2_RT, "mkw_host.h"), "rb").read()
     eden_gen, eden_out = os.path.join(kit.WORK, "gen"), os.path.join(kit.WORK, "build")
     migrate_stamps(eden_gen, os.path.join(eden_out, "obj"),
-                   flags(eden_gen, os.path.join(eden_out, "rt64"), a.opt, not a.no_polls) +
+                   flags(eden_gen, os.path.join(eden_out, "rt64"), OPT, True) +
                    (["-DA64_POLL_CTX"] if a.dll else []), deps)   # (as fl below: the flags its objects were built with)
     migrate_stamps(gen, obj_dir, fl, deps)
     chunks = sorted(f for f in os.listdir(gen) if f.startswith("code_") and f.endswith(".c"))
-    if a.only:
-        want = {"code_%03d.c" % int(n) for n in a.only.split(",")}
-        chunks = [c for c in chunks if c in want]
     srcs = [os.path.join(gen, c) for c in chunks]
     host_srcs = []
-    if not a.only:
-        srcs += [os.path.join(gen, f) for f in ("a64_table.c", "a64_hooks.c", "a64_suyu.c")] + \
-                [os.path.join(rt64, "a64_rt.c")]
-        if a.standalone:
-            srcs += [os.path.join(gen, f) for f in ("a64_stubs.c", "hos_image.c", "nvn2_exports.c")]
-            # (EvilOOT) host/rx_nowgpu.c stands in for the WebGPU renderer only when there is no wgpu-native to build it with (Linux has
-            # its own stand-ins, host/posix/linux_stubs.c)
-            have_wgpu = os.path.isfile(os.path.join(WGPU, "include", "webgpu", "webgpu.h"))
-            host_srcs = sorted(os.path.join(HOST, f) for f in os.listdir(HOST) if f.endswith(".c") and (f != "pgo_rt.c" or PGO == "gen")
-                               and not (LINUX and f in ("display.c", "mf_av1.c", "rx_nowgpu.c")) and (f != "rx_nowgpu.c" or not have_wgpu))
-            if LINUX:   # (the window on SDL2, the Win32 calls on POSIX, no Media Foundation and no WebGPU renderer)
-                host_srcs += [os.path.join(POSIX, f) for f in ("win32_posix.c", "display_sdl.c", "linux_stubs.c", "prof.c")]
-        else:
-            srcs += [os.path.join(NX2_RT, "eden_shim.c"), write_info(out)]
-    if os.environ.get("RX_VK_ONLY"):   # (no lift needed: the back end alone)
+    srcs += [os.path.join(gen, f) for f in ("a64_table.c", "a64_hooks.c", "a64_suyu.c")] + \
+            [os.path.join(rt64, "a64_rt.c")]
+    if a.standalone:
+        srcs += [os.path.join(gen, f) for f in ("a64_stubs.c", "hos_image.c", "nvn2_exports.c")]
+        # (EvilOOT) host/rx_nowgpu.c stands in for the WebGPU renderer only when there is no wgpu-native to build it with (Linux has
+        # its own stand-ins, host/posix/linux_stubs.c)
+        have_wgpu = os.path.isfile(os.path.join(WGPU, "include", "webgpu", "webgpu.h"))
+        host_srcs = sorted(os.path.join(HOST, f) for f in os.listdir(HOST) if f.endswith(".c") and (f != "pgo_rt.c" or PGO == "gen")
+                           and not (LINUX and f in ("display.c", "mf_av1.c", "rx_nowgpu.c")) and (f != "rx_nowgpu.c" or not have_wgpu))
+        if LINUX:   # (the window on SDL2, the Win32 calls on POSIX, no Media Foundation and no WebGPU renderer)
+            host_srcs += [os.path.join(POSIX, f) for f in ("win32_posix.c", "display_sdl.c", "linux_stubs.c", "prof.c")]
+    else:
+        srcs += [os.path.join(NX2_RT, "eden_shim.c"), write_info(out)]
+    if kit.env_on("RX_VK_ONLY"):   # (no lift needed: the back end alone)
         srcs = [s for s in srcs if os.path.exists(s)]
     if a.dry_run:   # (the lift's files: there is no game here)
         srcs = [s for s in srcs if os.path.dirname(s) != gen]
@@ -810,7 +803,7 @@ def main():
     srcs.sort(key=lambda s: -compile_cost(s, costs))
     # (hookshot) code_hot.c, the lift's hot functions together (A64_HOT_FUNCS + A64_HOT_CHUNK=1): at RX_HOT_OPT
     # (default O2), so the hot callees inline into their hot callers
-    hot_fl = [("-" + os.environ.get("RX_HOT_OPT", "O2")) if f == "-" + a.opt else f for f in fl]
+    hot_fl = [("-" + os.environ.get("RX_HOT_OPT", "O2")) if f == "-" + OPT else f for f in fl]
     # (hookshot) RX_PGO=gen: code_hot.c counts its branches (host/pgo_rt.c writes them; -O1 builds much sooner, and the counters are
     # placed before the optimiser, so a profile from it fits the -O2 build). RX_PGO=<merged .prof>: built with that profile
     if PGO == "gen":
@@ -842,6 +835,7 @@ def main():
         host_deps += b"".join(open(os.path.join(POSIX, f), "rb").read() for f in sorted(os.listdir(POSIX)) if f.endswith(".h"))
         host_deps += open(os.path.join(GPU, "vk", "vk_api.h"), "rb").read()
     host_deps += open(os.path.join(GPU, "vk", "dlss_math.h"), "rb").read()   # (host/rx_backend.c's DLSS jitter)
+    host_deps += open(os.path.join(GPU, "vk", "compat", "hookshot_env.h"), "rb").read()   # (env_on: the switches' one rule)
     host_deps += ffmpeg_version_key()
     jobs += [(cc, s, os.path.join(obj_dir, "host_" + os.path.basename(s)[:-2] + ".o"),
               host_fl + ["-I" + os.path.join(OPUS, "include")] +
@@ -858,8 +852,8 @@ def main():
             jobs.append((cc, os.path.join(OPUS, rel), os.path.join(obj_dir, "opus_" + rel.replace("/", "_")[:-2] + ".o"),
                          oflags, b"opus-1.5.2"))
     # the renderer (C++20, NDEBUG: no asserts in it or suyu), when a wgpu-native release is there
-    wgpu = a.standalone and not a.only and not LINUX and os.path.isfile(os.path.join(WGPU, "include", "webgpu", "webgpu.h"))
-    if a.standalone and not a.only and not wgpu and not LINUX:
+    wgpu = a.standalone and not LINUX and os.path.isfile(os.path.join(WGPU, "include", "webgpu", "webgpu.h"))
+    if a.standalone and not wgpu and not LINUX:
         print("no wgpu-native at %s (WGPU_NATIVE): building without the renderer" % WGPU)
     if wgpu:
         cxx = toolchain.need(toolchain.find("clang++"))
@@ -878,10 +872,10 @@ def main():
     vma_headers = header_package("vulkanmemoryallocator", "vk_mem_alloc.h", "HOOKSHOT_VMA_HEADERS")
     # (the AppImage's prebuilt hookshot_vk.so is built without NVIDIA's SDK: a build with HOOKSHOT_NGX_SDK compiles its own)
     vk_prebuilt = "" if NGX_SDK else os.environ.get("HOOKSHOT_VK_PREBUILT", "")
-    build_vk = a.standalone and not a.only and not vk_prebuilt and vk_headers and spirv_headers and vma_headers
-    if a.standalone and not a.only and vk_prebuilt:
+    build_vk = a.standalone and not vk_prebuilt and vk_headers and spirv_headers and vma_headers
+    if a.standalone and vk_prebuilt:
         print("the Vulkan back end: %s, as built" % vk_prebuilt)
-    elif a.standalone and not a.only and not build_vk:
+    elif a.standalone and not build_vk:
         # (was silent: the exe linked, RX_BACKEND=vulkan then fell through to WebGPU / a stub, black window)
         missing = [n for n, p in (("Vulkan", vk_headers), ("SPIR-V", spirv_headers), ("VMA", vma_headers)) if not p]
         print("no headers for %s (missing %s). Set RX_CPM to a CPM cache, or HOOKSHOT_VULKAN_HEADERS / "
@@ -992,7 +986,7 @@ def main():
             for f in ("win32_posix.c",):
                 vk_jobs.append((cc, os.path.join(POSIX, f), os.path.join(obj_dir, "vk_posix_" + f[:-2] + ".o"), cflags, pdeps))
         jobs += vk_jobs
-    vk_only = bool(os.environ.get("RX_VK_ONLY"))   # (the renderer alone, the game's objects as they are)
+    vk_only = kit.env_on("RX_VK_ONLY")   # (the renderer alone, the game's objects as they are)
     if vk_only:
         jobs = list(vk_jobs)
     if a.dry_run:   # (the compile starts here: what it would read, said and checked, and nothing compiled)
@@ -1062,11 +1056,7 @@ def main():
     objs = [j[2] for j in jobs if j[2] not in vk_objs]
     rsp = os.path.join(out, "objs.rsp")
     open(rsp, "w", encoding="utf-8").write("\n".join('"%s"' % o.replace("\\", "/") for o in objs))
-    if a.lib:
-        lib = os.path.join(out, "hookshot_game.lib")
-        subprocess.run([toolchain.lld_link(), "/lib", "/out:" + lib, "@" + rsp], check=True)
-        print("wrote %s (%d objects, %d MB)" % (lib, len(objs), os.path.getsize(lib) >> 20))
-    if a.standalone and not a.only and not vk_only and LINUX:
+    if a.standalone and not vk_only and LINUX:
         exe = os.path.join(out, EXE)   # (+ hookshot.map: crash offsets -> f_<guest address>)
         t = time.time()
         # (--export-dynamic-symbol: the window's state, which the Vulkan back end's own Win32 calls read by name)
@@ -1085,7 +1075,7 @@ def main():
         if sdl and os.path.exists(sdl):
             import shutil
             shutil.copyfile(sdl, os.path.join(out, "libSDL2-2.0.so.0"))
-    elif a.standalone and not a.only and not vk_only:
+    elif a.standalone and not vk_only:
         exe = os.path.join(out, "hookshot.exe")   # (+ hookshot.map: crash offsets -> f_<guest address>)
         t = time.time()
         r = subprocess.run([cc] + toolchain.native_target() + toolchain.native_link() +
@@ -1129,7 +1119,7 @@ def main():
         if os.path.exists(sdl3) and (not os.path.exists(sdl3_dst) or os.path.getsize(sdl3_dst) != os.path.getsize(sdl3)):
             import shutil
             shutil.copyfile(sdl3, sdl3_dst)
-    if vk_prebuilt and a.standalone and not a.only:
+    if vk_prebuilt and a.standalone:
         import shutil
         shutil.copyfile(vk_prebuilt, os.path.join(out, VK_LIB))
     if vk_jobs:   # (hookshot_vk.dll beside the exe: loaded by host/rx_backend.c with RX_BACKEND=vulkan)
@@ -1154,7 +1144,7 @@ def main():
         if LINUX and not check_vk_symbols(vdll):
             return 1
         print("linked %s: %d MB (%.0fs)" % (vdll, os.path.getsize(vdll) >> 20, time.time() - t))
-    if a.dll and not a.only:
+    if a.dll:
         dll = os.path.join(out, "hookshot_game.dll")   # (+ hookshot_game.map: crash offsets -> f_<guest address>)
         t = time.time()
         r = subprocess.run([cc] + toolchain.native_target() + toolchain.native_link() +

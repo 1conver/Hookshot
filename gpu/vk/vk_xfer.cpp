@@ -10,6 +10,9 @@
 #include "vk_draw.h"   // (end_pass: a pass cannot stay open across a transfer)
 #include "vk_texture.h"
 #include "vk_gprof.h"
+#ifndef HOOKSHOT_ENV_H   // (env_on: the switches' one rule)
+#include "hookshot_env.h"
+#endif
 #include "vk_work.h"   // (after the others: counts the commands that do GPU work, for full_barrier)
 
 namespace mkwvk {
@@ -36,7 +39,7 @@ void warn(int key, const char* what) {
 /// (RX_VK_LOG_BIG_COPY=1: copies into textures of 32 MB or more, the course maps' kind, 300 lines)
 void log_big_copy(const char* kind, const Texture* t, uint32_t level, uint32_t layer, int x, int y, uint32_t w, uint32_t h,
                   uint64_t src) {
-    static const bool on = getenv("RX_VK_LOG_BIG_COPY") != nullptr;
+    static const bool on = env_on("RX_VK_LOG_BIG_COPY");
     static const std::pair<uint64_t, uint64_t> range = [] {   // (RX_VK_WATCH_RANGE=<lo>:<hi>: copies into textures there)
         unsigned long long a = 0, b = 0;
         if (const char* e = getenv("RX_VK_WATCH_RANGE")) sscanf(e, "%llx:%llx", &a, &b);
@@ -170,7 +173,7 @@ void copy_b2t(VkCommandBuffer cmd, NvnState& st, const nvn_p_copy_bt& p, bool to
     // (ASTC blocks into a decoded image: into the texture's storage on the CPU, which uploads it again. Other formats are
     // copied on the GPU: the buffer may hold what the GPU wrote this submission (not yet in guest memory), and the image
     // it fills is kept (texture_frame: a texture the GPU filled once is not evicted). RX_VK_B2T_CPU=1: on the CPU too)
-    static const bool b2t_gpu = getenv("RX_VK_B2T_CPU") == nullptr;
+    static const bool b2t_gpu = !env_on("RX_VK_B2T_CPU");
     const bool astc = to_image && p.tex && vk_format(view_nvn_format(p.tex, p.has_view ? &p.view : nullptr)).astc;
     if (to_image && p.tex) {   // (RX_VK_LOG_BIG_COPY)
         if (Texture* t = texture_get(p.tex, false))
@@ -179,7 +182,7 @@ void copy_b2t(VkCommandBuffer cmd, NvnState& st, const nvn_p_copy_bt& p, bool to
                          p.r.yoffset, (uint32_t)std::max(0, p.r.width), (uint32_t)std::max(0, p.r.height), p.buf);
     }
     {   // (hookshot, RX_VK_LOG_B2T=1) the first 60 copies into textures 960 wide or more: where they read, and what
-        static const bool on = getenv("RX_VK_LOG_B2T") != nullptr;
+        static const bool on = env_on("RX_VK_LOG_B2T");
         static std::atomic<int> n{0};
         if (on && to_image && p.tex && p.r.width >= 960 && n.fetch_add(1) < 60) {
             uint64_t avail = 0, sum = 0, cnt = 0;
@@ -242,7 +245,7 @@ void copy_t2t(VkCommandBuffer cmd, NvnState& st, const nvn_p_copy_tt& p) {
     if (!resolve(p.src, &p.sv, p.has_sv != 0, p.sr, s, true)) return;
     if (!resolve(p.dst, &p.dv, p.has_dv != 0, p.dr, d, true)) return;
     {   // (RX_VK_LOG_COPY: the texture copies, 400 of them)
-        static const bool log_copy = getenv("RX_VK_LOG_COPY") != nullptr;
+        static const bool log_copy = env_on("RX_VK_LOG_COPY");
         static int logged;
         if (log_copy && logged++ < 400)
             logf("vk: copy #%u %#llx %ux%u NVN %#x%s level %u (%d,%d %ux%u) -> #%u %#llx %ux%u NVN %#x level %u (%d,%d "

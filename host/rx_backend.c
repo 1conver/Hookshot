@@ -1,6 +1,6 @@
 /* Which renderer the rx_* calls go to (gpu/vk/vk_api.h): the WebGPU one in the executable (gpu/render, its
-   functions renamed wgr_* by rx_wgpu_names.h) or, with RX_BACKEND=vulkan, the Vulkan one in mkw_vk.dll beside the
-   executable. Decided at rx_start, before any other rx_* call; a DLL that is missing or finds no usable Vulkan
+   functions renamed wgr_* by rx_wgpu_names.h) or, unset or RX_BACKEND=vulkan, the Vulkan one in hookshot_vk.dll
+   (hookshot_vk.so) beside the executable. Decided at rx_start, before any other rx_* call; a DLL that is missing or finds no usable Vulkan
    device leaves the WebGPU renderer in place (logged). */
 #include "hos.h"
 #include <stdlib.h>
@@ -251,7 +251,7 @@ static void flush_early(void) {
     ReleaseSRWLockExclusive(&early_lock);
 }
 
-/* dll: mkw_vk.dll (our Vulkan back end) or mkw_eden.dll (Eden's renderer driven natively, gpu/eden): one export */
+/* dll: hookshot_vk.dll (hookshot_vk.so on Linux), the Vulkan back end: one export */
 static const MkwVkRenderer *load_vulkan(const char *dll) {
     char path[MAX_PATH];
     const DWORD n = GetModuleFileNameA(NULL, path, MAX_PATH);
@@ -275,13 +275,12 @@ static const MkwVkRenderer *load_vulkan(const char *dll) {
 
 int rx_start(void *hwnd) {
     const char *b = getenv("RX_BACKEND");
-    const int eden = b && !_stricmp(b, "eden");
-    if (!b || !_stricmp(b, "vulkan") || eden) {   /* (hookshot: Vulkan unless told otherwise; a started game has no RX_BACKEND) */
-        const char *dll = eden ? "mkw_eden.dll" : "hookshot_vk.dll";
+    if (!b || !_stricmp(b, "vulkan")) {   /* (hookshot: Vulkan unless told otherwise; a started game has no RX_BACKEND) */
+        const char *dll = "hookshot_vk.dll";
         const MkwVkRenderer *r = load_vulkan(dll);
         if (r && r->start(hwnd)) {
             vk = r;
-            hos_log("rx: renderer: %s (%s)", eden ? "Eden's" : "Vulkan", dll);
+            hos_log("rx: renderer: Vulkan (%s)", dll);
             flush_early();
             return 1;
         }

@@ -36,6 +36,9 @@
 #include <xinput.h>
 #include "../gpu/vk/vk_api.h"   /* (the controls' names: HOS_SW_*, HOS_PAD_*) */
 #include "hos_motion.h"
+#ifndef HOOKSHOT_ENV_H   /* (env_on: the switches' one rule) */
+#include "../gpu/vk/compat/hookshot_env.h"
+#endif
 
 enum { B_A = 0, B_B, B_X, B_Y, B_LS, B_RS, B_L, B_R, B_ZL, B_ZR, B_PLUS, B_MINUS, B_LEFT, B_UP, B_RIGHT, B_DOWN };
 #define STATE_SIZE 0x28
@@ -204,7 +207,7 @@ static void host_drag_read(int32_t stick[4]) {
 static int invert = -1;
 static void mouse_setup(void) {   /* (once: the sensitivity kept in <user>/mouse_sens.txt, HOS_MOUSE_SENS, the inversion) */
     if (invert < 0) {
-        invert = getenv("HOS_MOUSE_INVERT_Y") != NULL;
+        invert = env_on("HOS_MOUSE_INVERT_Y");
         hos_mouse_sens = 1.0;
         char path[512];
         snprintf(path, sizeof path, "%s/mouse_sens.txt", hos_user_dir ? hos_user_dir : "user");
@@ -461,7 +464,7 @@ static void host_stick_read(int32_t stick[4]) {
     {   /* (HOS_MENU_TRACE: the stick as the game reads it, at most 4 a second) */
         static int trace = -1;
         static int64_t logged;
-        if (trace < 0) trace = getenv("HOS_MENU_TRACE") != NULL;
+        if (trace < 0) trace = env_on("HOS_MENU_TRACE");
         if (trace && hos_now_ns() - logged > 250000000)
             logged = hos_now_ns(), hos_log("hid: the host's stick %ld %ld %ld %ld read", (long)host_stick[0], (long)host_stick[1],
                                           (long)host_stick[2], (long)host_stick[3]);
@@ -644,7 +647,7 @@ static void pads_read(uint64_t *buttons, int32_t stick[4]) {
        or controller wrappers emulate an XInput controller for a pad SDL is already reading (#1480, #1583).
        Only poll XInput when SDL has no open controllers, unless HOS_XINPUT=1 is explicitly requested. */
     static int poll_xinput_env = -1;
-    if (poll_xinput_env < 0) poll_xinput_env = getenv("HOS_XINPUT") != NULL;
+    if (poll_xinput_env < 0) poll_xinput_env = env_on("HOS_XINPUT");
     if (!sdl_pads || poll_xinput_env) {
         if (!xinput_get) {
             static int64_t load_retry;
@@ -804,7 +807,7 @@ static void read_input(uint64_t *buttons, int32_t stick[4]) {
     /* (hookshot) The player's devices count during a script too (the user plays along in test runs, 2026-11-05):
        the presses add to theirs. HOS_INPUT_EXCLUSIVE=1: the script alone until 5 s after its last press, as before */
     static int exclusive = -1;
-    if (exclusive < 0) exclusive = getenv("HOS_INPUT_EXCLUSIVE") != NULL;
+    if (exclusive < 0) exclusive = env_on("HOS_INPUT_EXCLUSIVE");
     if (exclusive && npresses > 0 && script_elapsed_ms(hos_now_ns()) < script_end_ms + 5000)
         return;
     /* (hookshot, issue 389) A scripted press (HOS_INPUT_SCRIPT, HOS_INPUT_LIVE) is the test's own, not the
@@ -812,7 +815,7 @@ static void read_input(uint64_t *buttons, int32_t stick[4]) {
        monitor while the player works in the front window. HOS_INPUT_BACKGROUND still decides the pads. */
     static int scripted_background = -1;
     if (scripted_background < 0) {
-        scripted_background = getenv("HOS_INPUT_SCRIPT_BACKGROUND") != NULL;
+        scripted_background = env_on("HOS_INPUT_SCRIPT_BACKGROUND");
         if (scripted_background) hos_log("hid: scripted input runs with the game in the background (HOS_INPUT_SCRIPT_BACKGROUND)");
     }
     if (!game_in_front() && !scripted_background) {   /* (the pads alone, when the player asked for them behind other windows) */

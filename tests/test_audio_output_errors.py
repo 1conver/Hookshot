@@ -10,6 +10,9 @@ import subprocess
 import sys
 import tempfile
 
+# (env_on, the switches' rule, before the code cut out of the sources: gpu/vk/compat/hookshot_env.h)
+ENV_ON_H = str(Path(__file__).resolve().parents[1] / "gpu" / "vk" / "compat" / "hookshot_env.h")
+
 ROOT = Path(__file__).resolve().parents[1]
 CASES = ("normal", "busy", "prepare", "write", "unprepare", "open", "bounded", "stall", "surround", "fallback")
 
@@ -42,7 +45,7 @@ def main():
         assert folder.parent == Path(tempfile.gettempdir()).resolve() and folder.name.startswith("audio-output-")
         (folder / "audio_output.inc").write_text(actual, encoding="utf-8")
         executable = folder / "fixture.exe"
-        run([args.cc, "-std=c11", "-Wall", "-Wextra", "-Werror", "-I" + str(folder),
+        run([args.cc, "-std=c11", "-include", ENV_ON_H, "-Wall", "-Wextra", "-Werror", "-I" + str(folder),
              str(ROOT / "tests/audio_output_errors_test.c"), "-o", str(executable)])
         for case in ((args.case,) if args.case else CASES):
             run([str(executable), case])

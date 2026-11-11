@@ -25,6 +25,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "nx2"))
 import oot_patches  # noqa: E402
 
+# (env_on, the switches' rule, before the code cut out of the sources: gpu/vk/compat/hookshot_env.h)
+ENV_ON_H = str(Path(__file__).resolve().parents[1] / "gpu" / "vk" / "compat" / "hookshot_env.h")
+
 # (the shape of the two lifted functions: a float divide whose result goes to v8 in the frame's step and to v0 in the global one)
 DIVIDE = ("    {uint64_t _a=0,_b=0,_z,_v;memcpy(&_a,c->vreg[1],4);memcpy(&_b,c->vreg[0],4);_z=(_a^_b)&0x80000000ULL;\n"
           "    (void)_z;\n" + oot_patches.STEP_OLD + "\n")
@@ -191,7 +194,7 @@ def main():
         c = Path(tmp) / "fixture.c"
         exe = Path(tmp) / "fixture.exe"
         c.write_text(fixture, encoding="utf-8")
-        subprocess.run([a.cc, "-std=c11", "-Wall", "-Wextra", "-Werror", str(c), "-o", str(exe)], check=True)
+        subprocess.run([a.cc, "-std=c11", "-include", ENV_ON_H, "-Wall", "-Wextra", "-Werror", str(c), "-o", str(exe)], check=True)
         for mode, cap, step, index in (("cap 120", "120", None, None), ("cap 60", None, None, None), ("step off", "120", "0", None),
                                        ("no hook", "120", None, None), ("uncapped", None, None, "6"), ("uncapped", "1000", None, None),
                                        ("unknown index", None, None, "7"), ("cap 120", None, None, "2")):

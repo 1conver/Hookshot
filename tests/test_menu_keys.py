@@ -170,7 +170,7 @@ def main():
         need(block[:1500], r"if \(press\[5\]\) page = 0", "back from page %s does not return to the Debug tab" % page)
     need(menu, r'\{TAB_DEBUG, "Developer", nullptr, 0, 0, 0, nullptr, nullptr, nullptr, false, true, -1, true\}',
          "the Debug tab has no Developer heading")
-    for name in ("Descriptor reuse", "Sampler cache"):
+    for name in ("Descriptor reuse", "Sampler cache", "Robust buffers", "ASTC as RGBA8"):
         need(menu, r'\{TAB_DEBUG, "%s"' % name, name + " is not on the Debug tab")
     need(tick, r"while \(heading_at\(selected\)\)", "the selection does not step over a heading")
     # (the prompts: the buttons lit are the same ones, and the rows say what confirm does)

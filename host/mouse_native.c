@@ -28,6 +28,9 @@
 #include <string.h>
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#ifndef HOOKSHOT_ENV_H   /* (env_on: the switches' one rule) */
+#include "../gpu/vk/compat/hookshot_env.h"
+#endif
 
 int hos_mouse_take(int32_t *dx, int32_t *dy);                                   /* display.c */
 void hos_mouse_give_back(int32_t dx, int32_t dy);                               /* display.c */
@@ -55,7 +58,7 @@ static int native_on(void) {
 
 static int invert_y(void) {
     static int env = -1;
-    if (env < 0) env = getenv("HOS_MOUSE_INVERT_Y") != NULL;
+    if (env < 0) env = env_on("HOS_MOUSE_INVERT_Y");
     return env || rx_option(8, 0);   /* (the menu's Invert mouse vertical) */
 }
 
