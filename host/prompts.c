@@ -79,7 +79,8 @@ static int face_of_name(const char *name) {
     if (!name[0]) return HOS_PROMPT_SWITCH;
     if (contains(name, "dualsense") || contains(name, "ps5")) return HOS_PROMPT_PS5;
     if (contains(name, "dualshock") || contains(name, "ps4") || contains(name, "playstation")) return HOS_PROMPT_PS4;
-    if (contains(name, "steam deck")) return HOS_PROMPT_STEAMDECK;
+    /* (a Steam Controller names its buttons as the Deck does: L1/R1, View, Menu, Steam. SDL3 calls it "Steam Controller") */
+    if (contains(name, "steam deck") || contains(name, "steam controller")) return HOS_PROMPT_STEAMDECK;
     if (contains(name, "nintendo") || contains(name, "switch") || contains(name, "joy-con")) return HOS_PROMPT_SWITCH;
     return HOS_PROMPT_XBOX;   /* (Xbox pads, and the many that copy their layout) */
 }
