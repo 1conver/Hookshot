@@ -1,6 +1,6 @@
 """Every switch the shader translation reads is in the program cache's stamp.
 
-hookshot_programs.bin keeps translated programs; vk_shader.cpp disk_stamp hashes the environment variables whose names
+hookshot_programs.bin keeps translated programs; vk_shader.cpp translator_stamp hashes the environment variables whose names
 start with one of its prefixes, so changing one translates the programs again. A switch that changes the translation but
 is left out of the list does nothing for the programs already cached (RX_VK_NO_INVARIANT and the NaN guard were
 such a case once; RX_VK_NO_CBUF_LOAD_RULE, RX_VK_PTR_SPLIT_FALLBACK and others were until this check). Read every
@@ -39,11 +39,11 @@ def main():
     parser.add_argument("--source", type=Path, default=ROOT)
     args = parser.parse_args()
     shader = (args.source / "gpu" / "vk" / "vk_shader.cpp").read_text(encoding="utf-8")
-    stamp = block(shader, "uint64_t disk_stamp(")
+    stamp = block(shader, "uint64_t translator_stamp(")   # (disk_stamp before the program cache moved to vk_progcache.cpp)
     loop = stamp[stamp.index("_environ"):]
     prefixes = re.findall(r'"([A-Z0-9_]+)"', loop[:loop.index("add(*e")])
     if "EDEN_" not in prefixes:
-        raise SystemExit("disk_stamp: the list of prefixes was not found")
+        raise SystemExit("translator_stamp: the list of prefixes was not found")
 
     names = {}
     for path in sorted((args.source / "gpu" / "vk" / "eden" / "shader_recompiler").rglob("*")):
@@ -61,14 +61,14 @@ def main():
     missing = [(name, where) for name, where in sorted(names.items())
                if name not in LOG_ONLY and not any(name.startswith(p) for p in prefixes)]
     if missing:
-        raise SystemExit("switches that change the translation but not the program cache's stamp (vk_shader.cpp disk_stamp):\n" +
+        raise SystemExit("switches that change the translation but not the program cache's stamp (vk_shader.cpp translator_stamp):\n" +
                          "\n".join("  %s (%s)" % m for m in missing))
     # (nx2/bake_ds computes the same stamp offline: its copy of the list is the live one)
     bake = (args.source / "nx2" / "bake_ds" / "bake_ds.cpp").read_text(encoding="utf-8")
     bake_loop = bake[bake.index("for (char** e = environ;"):]
     bake_prefixes = re.findall(r'"([A-Z0-9_]+)"', bake_loop[:bake_loop.index("add(*e")])
     if bake_prefixes != prefixes:
-        raise SystemExit("nx2/bake_ds/bake_ds.cpp's stamp list differs from vk_shader.cpp disk_stamp's:\n  bake_ds %s\n  live    %s"
+        raise SystemExit("nx2/bake_ds/bake_ds.cpp's stamp list differs from vk_shader.cpp translator_stamp's:\n  bake_ds %s\n  live    %s"
                          % (bake_prefixes, prefixes))
     stale = [name for name in LOG_ONLY if name not in names]
     if stale:

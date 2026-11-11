@@ -56,6 +56,7 @@ bool prepare_run(void(*progress)(size_t,size_t),bool background=false,bool refre
  return fresh_seed || reuse_seed(progress,background,refresh_states);
 }
 void predict_run(void(*)(size_t,size_t)){calls.push_back(5);}
+bool predict_pending(){return false;}   // (no prediction left unfinished by a last start)
 void precompile_run(void(*progress)(size_t,size_t)){calls.push_back(2);progress(1,2);}
 void pipeline_cache_save(bool force){if(!force)std::exit(2);calls.push_back(3);}
 std::string skipped_path(){return "sentinel";}

@@ -18,8 +18,18 @@ struct PipeNote {
     uint32_t color_format[8];
     NvnState s;
 };
+/// (vk_predict.cpp) What the prediction left out: pipelines whose vertex layout or targets have types the program was not made for
+/// (no draw asks for them), and the program variants left with none; and the notes whose own types do not fit (0: else the rule
+/// that leaves them out is wrong)
+struct PredictCounts {
+    size_t vertex_types = 0, output_types = 0, variants_unfit = 0, notes_unfit = 0;
+    size_t refit = 0;   // (program variants whose signature fallback took a less common class, the most common not fitting)
+};
 /// (vk_predict.cpp) The pipelines the notes predict for the kept graphics program variants no note names (key 0: not made yet)
-std::vector<std::unique_ptr<PipeNote>> predict_pipelines(const std::vector<std::unique_ptr<PipeNote>>& notes, size_t* programs);
+std::vector<std::unique_ptr<PipeNote>> predict_pipelines(const std::vector<std::unique_ptr<PipeNote>>& notes, size_t* programs,
+                                                         PredictCounts* left_out = nullptr);
+/// The colour output types a note's targets give a program (Shader::AttributeType, as a draw's: color_types_of)
+void note_color_types(const PipeNote& n, uint8_t types[8]);
 }
 
 #include <functional>

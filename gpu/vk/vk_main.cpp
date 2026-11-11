@@ -972,7 +972,8 @@ void prepare_with_screen() {
         if (update) prep_skip[0].store(true), prep_skip[1].store(true);
         const bool prepared = !update && prepare_run(prep_progress, false);
         if (!prepared) prep_skip[0].store(true);
-        if (prepared && !prepare_stopped()) {   // (a first start only: the pipelines the notes predict, into the driver's cache)
+        // (a first start, or one after a start that did not finish them: the pipelines the notes predict, into the driver's cache)
+        if ((prepared || (!update && predict_pending())) && !prepare_stopped()) {
             prep_done.store(0), prep_total.store(0);
             prep_stage.store(1);
             predict_run(prep_progress);
@@ -1081,6 +1082,7 @@ void prepare_with_screen() {
 bool started_up() {
     if (const char* e = getenv("RX_VK_START_DELAY")) Sleep((DWORD)atoi(e) * 1000);   // (diagnosis: a long start, as the first one is)
     if (!replay_start()) return false;
+    driver_cache_log("at the start");
     if (prepare_only()) {
         // (three parts: the programs, the pipelines the notes predict, then those they name, on one bar whose total has all three
         // from the start: PrepareBar. The fixed shares it had (70%, 20%, 10%) kept the predicted pipelines' minutes in a fifth)
@@ -1107,13 +1109,14 @@ bool started_up() {
         }
         part = 0;
         const bool prepared = prepare_run(progress, false, true);
+        const bool predict = prepared || predict_pending();   // (or the last run did not finish the prediction)
         if (!prepared) {
             if (!bar.counted[0]) bar.skip(0);   // (an already prepared seed can still import pipeline states)
-            bar.skip(1);
+            if (!predict) bar.skip(1);
         }
         part = 1;
         prepare_moved(1, 0, 0);
-        if (prepared) predict_run(progress);
+        if (predict) predict_run(progress);
         part = 2;
         prepare_moved(2, 0, 0);
         bar.reach(2);
@@ -1178,7 +1181,7 @@ bool started_up() {
             WriteFile(console, line, (DWORD)n, &wrote, nullptr);
         };
         const bool update = prepare_is_update();   // (an update: what the notes name now, the rest in play)
-        if (!update && prepare_run(progress, false)) predict_run(progress);
+        if (!update && (prepare_run(progress, false) || predict_pending())) predict_run(progress);
         if (update) state_list_run();
         precompile_run(progress);
         if (update) prepare_background();

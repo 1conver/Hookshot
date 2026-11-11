@@ -66,7 +66,8 @@ BOUNDARY_OK = {
     "vk_coopmat.cpp": "the start-up probe: before any replay, its own vkCmd* direct (nothing held)",
     "vk_main.cpp": "retire_swapchain drains through device_wait_idle_locked before destroying views, semaphores and the chain. "
                    "Surface destruction follows retirement, or discards an unpublished surface without a chain.",
-    "vk_shader.cpp": "program_cache_borrow's and a dropped try's own modules and layouts, which no recorded command uses",
+    "vk_shader.cpp": "a dropped try's own modules, and those of a program already made, which no recorded command uses",
+    "vk_progcache.cpp": "program_cache_borrow's and a partial record's own modules and layouts, which no recorded command uses",
     "vk_imgui.cpp": "its own font/logo texture views, which only its direct recordings use",
 }
 # (the names a boundary has: a new one in a vk_work.h file must be in RX_REC_BOUNDARIES)

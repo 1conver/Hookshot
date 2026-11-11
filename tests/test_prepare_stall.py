@@ -61,7 +61,9 @@ PREDICT_HEAD = r'''
 #include <mutex>
 #include <string>
 #include <thread>
+#include <filesystem>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #define CHECK(c) do { if (!(c)) { std::fprintf(stderr, "CHECK failed line %d: %s\n", __LINE__, #c); std::_Exit(7); } } while (0)
 using VkPipeline = uintptr_t;
@@ -69,7 +71,19 @@ using VkPrimitiveTopology = int;
 struct NvnState { int unused = 0; };
 struct Targets {};
 struct PipeNote { uint64_t key, prog, variant; uint32_t topo; NvnState s; };
-struct Program { uint64_t key; uint64_t variant; };
+struct Program { uint64_t key; uint64_t variant; bool mesh = false, fallback = false; };
+// (the prediction's own parts, beside the stall guard: its counts, the unfinished-run marker, the sample, the driver cache's size,
+// the pool's size, and the duplicate check's key, one per note here (each note its own pipeline))
+struct PredictCounts { size_t vertex_types = 0, output_types = 0, variants_unfit = 0, notes_unfit = 0, refit = 0; };
+std::string predict_pending_path() {
+    static const std::string path = (std::filesystem::temp_directory_path() /
+                                     ("hookshot-prepare-stall-" + std::to_string((uintptr_t)&path) + ".predicting")).string();
+    return path;
+}
+void predicted_sample_write(const std::vector<std::unique_ptr<PipeNote>>&) {}
+void driver_cache_log(const char*) {}
+unsigned usable_cpus() { return std::max(1u, std::thread::hardware_concurrency()); }
+inline uint64_t mix(uint64_t h, uint64_t v) { return (h ^ v) * 0x100000001b3ull; }
 struct { uintptr_t device = 1; } dev;
 thread_local bool driver_cache_only = false;
 static bool env_on(const char* n) { const char* v = std::getenv(n); return v && *v && std::strcmp(v, "0"); }   // (a stand-in for compat/hookshot_env.h)
@@ -103,7 +117,8 @@ std::vector<std::unique_ptr<PipeNote>> pipe_notes_read() {
     v.push_back(std::make_unique<PipeNote>(PipeNote{1, 1, 0, 3, {}}));
     return v;
 }
-std::vector<std::unique_ptr<PipeNote>> predict_pipelines(const std::vector<std::unique_ptr<PipeNote>>&, size_t* programs) {
+std::vector<std::unique_ptr<PipeNote>> predict_pipelines(const std::vector<std::unique_ptr<PipeNote>>&, size_t* programs,
+                                                         PredictCounts*) {
     std::vector<std::unique_ptr<PipeNote>> v;
     for (int p = 1; p <= programs_n; p++)
         for (int k = 0; k < per_program; k++) v.push_back(std::make_unique<PipeNote>(PipeNote{0, (uint64_t)p, 0, 3, {}}));
@@ -117,6 +132,7 @@ void program_cache_borrow(uint64_t key, const std::function<void(Program&)>& fn)
 }
 void ensure_layout(Program&) {}
 Targets note_targets(const PipeNote&) { return {}; }
+uint64_t pipeline_key(const Program&, const NvnState& s, const Targets&, VkPrimitiveTopology) { return (uint64_t)(uintptr_t)&s; }
 VkPipeline build_graphics(const Program& p, const NvnState&, const Targets&, VkPrimitiveTopology) {
     CHECK(driver_cache_only);
     ++inside;
