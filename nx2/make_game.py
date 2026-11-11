@@ -460,8 +460,11 @@ def stand_in_damaged_files(out, romfs):
         return
     check_cache_paths(out, (good, checked, romfs))
     stamp = read_stamp(good)
-    if os.path.isfile(checked) and read_stamp(checked) == stamp:
-        return
+    checked_stamp = "resolved-v1\n" + stamp
+    if os.path.isfile(checked):
+        if read_stamp(checked) == checked_stamp:
+            return
+        os.remove(checked)   # Earlier checks also marked files with no replacement as checked.
     import nup
     heads = os.path.join(out, HEADS)
     known = None
@@ -478,26 +481,31 @@ def stand_in_damaged_files(out, romfs):
         done = nup.stand_in_damaged(romfs, file_progress("checked"))
     else:   # (found while the .nup was extracted: no file opened again)
         done = nup.stand_in_damaged(romfs, damaged=[os.path.normpath(os.path.join(romfs, rel)) for rel in known])
-    write_stamp(checked, stamp)
-    with contextlib.suppress(FileNotFoundError):
-        os.remove(heads)
     note = os.path.join(out, DAMAGED_NOTE)
     if not done:
         with contextlib.suppress(FileNotFoundError):   # (a whole dump unpacked over a damaged one)
             os.remove(note)
-        return
-    lines = ["Your game dump is incomplete: %d game file%s in it %s damaged (a complete dump is about 23.8 GB, an incomplete "
-             "one 23.3 GB). Each is replaced by a similar file so that the places using it are still drawn, with a different "
-             "texture there. Dump the game again for the original look:" % (len(done), "" if len(done) == 1 else "s",
-                                                                             "is" if len(done) == 1 else "are")]
-    for path, other in done:
-        lines.append("  %s: %s" % (os.path.relpath(path, romfs),
-                                   "in its place " + os.path.basename(other) if other else "nothing similar found, left as it is"))
-    for line in lines:
-        print(line, flush=True)
-    # (the build's output scrolls away, and a later build skips this check: the list stays in the game folder, #2237)
-    with open(note, "w", encoding="utf-8", newline="\n") as f:
-        f.write("\n".join(lines) + "\n")
+    else:
+        lines = ["Your game dump is incomplete: %d game file%s in it %s damaged (a complete dump is about 23.8 GB, an incomplete "
+                 "one 23.3 GB). Similar files are used where available, "
+                 "with different textures in those places. Dump the game again for the original files:" %
+                 (len(done), "" if len(done) == 1 else "s", "is" if len(done) == 1 else "are")]
+        for path, other in done:
+            lines.append("  %s: %s" % (os.path.relpath(path, romfs),
+                                       "in its place " + os.path.basename(other) if other else "no replacement found; build cannot continue"))
+        for line in lines:
+            print(line, flush=True)
+        # (#2237: keep the list even when an unresolved file stops this build, before marking a successful check)
+        with open(note, "w", encoding="utf-8", newline="\n") as f:
+            f.write("\n".join(lines) + "\n")
+        unresolved = sum(other is None for _, other in done)
+        if unresolved:
+            fail("The game dump still has %d damaged file%s with no replacement. The build stopped before compiling. "
+                 "Dump the game again and select the complete dump in Hookshot Builder. The affected files are listed above." %
+                 (unresolved, "" if unresolved == 1 else "s"))
+    write_stamp(checked, checked_stamp)
+    with contextlib.suppress(FileNotFoundError):
+        os.remove(heads)
 
 
 def check_cache_paths(out, paths):

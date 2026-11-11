@@ -42,7 +42,7 @@ Agents may add and re-score rows; a person reviews the change like any other PR.
 | 0.22 | RTX 3070 with Frame generation on: uncaught C++ exception in hookshot_vk.dll on the first FSR 3 frame-generation inputs as gameplay starts (v2.0.13) | S0 | 0.07 | 0.4 | | #1786 (closed as a duplicate of #1697, but a different crash) |
 | 0.11 | Intel GPU: black screen after loading a save (or on the Deku Tree), sound only, very low fps; three reports, no logs yet; tracked in the GitHub issue linked in #bug-reporting replies (#999) | S0 | 0.035 | 0.4 | | #bug-reporting "Intel G3E. Title and intro loads...", "intel arc b580 problems", "game gets stuck on a black screen when loading a save (intel gpu... gulp...)" |
 | 0.11 | Crash at the door after the owl intro (Navi wakes Link, 2.0.13): access violation in `igvk64.dll` at start-up; GPU: Intel UHD Graphics (i3-1115G4, 128 MB shared, no mesh shaders: the best-effort fallback, #1001); reach is Intel's 3.5% | S0 | 0.035 | 0.4 | | #bug-reporting "2.0.13 Crash after you see the owl during intro cutscene" (5 logs) |
-
+| 0.05 (provisional) | Builder continues with damaged resources that have no stand-in, then records a successful check and silently skips it on retry; stop before lift and recheck old markers. Reach is a provisional 1% planning estimate for rare severely damaged dumps, not measured prevalence; the common 23.3 GB dump with all replacements is unaffected | S1 | 0.01 | 1.0 | Arkex-ai | #2005; [claim](https://discord.com/channels/1568810484818378804/1569019786766188665/1569897037862805726); authored entry-point reproduction on Windows and Ubuntu |
 
 ## Fixed, waiting for a release
 
