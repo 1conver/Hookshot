@@ -14,7 +14,8 @@ import tempfile
 ENV_ON_H = str(Path(__file__).resolve().parents[1] / "gpu" / "vk" / "compat" / "hookshot_env.h")
 
 ROOT = Path(__file__).resolve().parents[1]
-CASES = ("normal", "busy", "prepare", "write", "unprepare", "open", "bounded", "stall", "surround", "fallback")
+CASES = ("normal", "busy", "prepare", "write", "unprepare", "open", "bounded", "stall", "surround", "fallback",
+         "lost", "gone", "service", "default")
 
 
 def main():
