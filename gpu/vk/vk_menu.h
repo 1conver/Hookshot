@@ -38,7 +38,9 @@ struct Options {
                           // device's limit at most; gpu/vk/vk_draw.cpp aniso_override, RX_VK_ANISO over it)
     int realtime = 1;     // game time follows the clock (host/nn_vi.c); 0: per frame (slower frames, slower game)
     int handheld = 0;     // the game's handheld profile: ~4 fps, softer; read once, at the start (host/nn_applet.c)
-    int ultrawide = 0;    // the camera at the monitor's shape when it is wider than 16:9; read once, at the start (host/hos_main.c)
+    int ultrawide = 1;    // the Aspect ratio row: 1 the monitor's shape (the default), 0 the game's 16:9; read once, at the start
+                          // (host/hos_main.c, as ultrawide= in the options file; an older file's 0 on a screen narrower than
+                          // 16:9 moves to 1, options_version 6: host/hos_wide_size.h hos_aspect_on)
     int wide_menus = 1;   // ultrawide: the pause, item and map menus 0 at full width (stretched), 1 in the middle 16:9 with the sides
                           // blurred, 2 with black bars (nx2/oot_wide.py, vk_framegen.cpp)
     int show_fps = 0;     // (hookshot) the FPS counter: 0 Off, 1 FPS, 2 Frame time, 3 Graph, 4 Breakdown (fps_stats.h; saved as fps_counter=, an old On is 1)

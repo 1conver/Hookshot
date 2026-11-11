@@ -98,7 +98,7 @@ def function(source, start):
 def sources():
     menu = (ROOT / "gpu" / "vk" / "vk_menu.cpp").read_text(encoding="utf-8")
     for row in ('"GPU device", &opts.gpu_device', '"Output resolution", &opts.output_res', '"Profile", &opts.handheld',
-                '"Ultrawide", &opts.ultrawide', '"Robust buffers", &opts.robust'):
+                '"Aspect ratio", &opts.ultrawide', '"Robust buffers", &opts.robust'):
         at = menu.find(row)
         if at < 0:
             raise SystemExit("vk_menu.cpp: a row that takes a restart is missing: " + row)

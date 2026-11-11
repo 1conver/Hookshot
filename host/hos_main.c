@@ -1751,15 +1751,15 @@ static int game_main(int argc, char **argv) {
     }
     hos_mem_init(hos_image_end);
     {   /* (hookshot) Widescreen and ultrawide (nx2/oot_wide.py): HOS_ASPECT=<ratio> (2.3889 for 3440x1440), else the Insert menu's
-           Ultrawide (off unless it says 1) takes the main monitor's shape. The game's picture takes that shape at its own height (the
+           Aspect ratio (on unless it says 0) takes the main monitor's shape. The game's picture takes that shape at its own height (the
            world wider at the sides on an ultrawide screen, narrower on a 16:10 or 4:3 one), its 16:9 cameras the picture's ratio.
-           A custom output wider than 32:9 takes precedence over both HOS_ASPECT and Ultrawide, matching the menu's picture. Wider
+           A custom output wider than 32:9 takes precedence over both HOS_ASPECT and the Aspect ratio, matching the menu's picture. Wider
            than 16:9 the HUD, menus and movies keep the middle 16:9; narrower they fill the picture's width. Until now the one 16:9
            constant in the game's data was changed and the 16:9 picture stretched to the window. */
         const char *e = getenv("HOS_ASPECT");
         float want = e ? (float)atof(e) : 0.0f;
         if (!e) {
-            int on = 0;
+            int saved = -1, version = 0;   /* (the Aspect ratio's ultrawide= and options_version=, -1 / 0 without them) */
             char path[MAX_PATH];
             const DWORD len = hos_game_path_a(path, MAX_PATH);
             char *slash = len ? strrchr(path, SEP) : NULL;
@@ -1769,12 +1769,15 @@ static int game_main(int argc, char **argv) {
                 if (o) {
                     char line[80];
                     while (fgets(line, sizeof line, o)) {
-                        if (!strncmp(line, "ultrawide=", 10)) on = atoi(line + 10) != 0;
+                        if (!strncmp(line, "ultrawide=", 10)) saved = atoi(line + 10) != 0;
+                        if (!strncmp(line, "options_version=", 16)) version = atoi(line + 16);
                     }
                     fclose(o);
                 }
             }
             const int sw = GetSystemMetrics(SM_CXSCREEN), sh = GetSystemMetrics(SM_CYSCREEN);
+            /* (no line: the monitor's shape; an older file's 16:9 on a screen narrower than 16:9 too: hos_aspect_on) */
+            const int on = hos_aspect_on(saved, version, sw, sh);
             if (on && sh > 0) want = (float)sw / (float)sh;
         }
         extern volatile uint64_t hos_wide_out, hos_wide_scene;

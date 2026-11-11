@@ -12,7 +12,8 @@ With it, menu_tick's Esc block, gpu/vk/vk_menu.h's real Options and the Menu sho
 options file, or one without menu_shortcut=) the shortcut is "Insert, F1 or Esc", and Esc opens a closed menu, as a PC
 game's pause menu, without that press also going back a page; open, the press is left to go back or close it. And
 menu_init's reading of hookshot_options.ini: a file from before options_version 5 wrote Insert or F1, the default then,
-whether chosen or not, and loads as Insert, F1 or Esc; F1 only stays, and a file as save() writes it now keeps each choice.
+whether chosen or not, and loads as Insert, F1 or Esc; F1 only stays, and a file from version 5 on, up to the version
+save() writes now, keeps each choice.
 
     python -I -B tests/test_menu_keys.py [--cxx g++]
 """
@@ -93,7 +94,7 @@ static bool take_key_press(int key) {
     queued_key = 0;
     return true;
 }
-static struct { bool (*take_key_press)(int); } queue_host{take_key_press}, *host;
+static struct { bool (*take_key_press)(int); float (*aspect_ratio)(); } queue_host{take_key_press, nullptr}, *host;
 
 static bool keyboard_toggle(int mode, int key, bool queued, bool has_focus = true) {
     opts.menu_shortcut = mode;
@@ -216,18 +217,20 @@ static int loaded_as(int shortcut, int version) {
 }
 
 static void test_saved() {
-    // (from before the version save() writes now (-1, no line: before 2): Insert or F1 was the default, written whether
-    // chosen or not, and moves to Insert, F1 or Esc; F1 only was chosen and stays; no line: the default. Every older
-    // version: a later bump of save()'s version must move menu_init's threshold with it)
-    for (int old = -1; old < SAVED_VERSION; old++) {
+    // (from before the version Esc came with, ESC_FROM (-1, no line: before 2): Insert or F1 was the default, written
+    // whether chosen or not, and moves to Insert, F1 or Esc; F1 only was chosen and stays; no line: the default)
+    for (int old = -1; old < ESC_FROM; old++) {
         CHECK(loaded_as(0, old) == 2);
         CHECK(loaded_as(1, old) == 1);
         CHECK(loaded_as(2, old) == 2);
         CHECK(loaded_as(-1, old) == 2);
     }
-    // (a file as save() writes it now: each choice kept, Insert or F1 too, picked after the change)
-    for (int mode = 0; mode <= 2; mode++) CHECK(loaded_as(mode, SAVED_VERSION) == mode);
-    CHECK(loaded_as(-1, SAVED_VERSION) == 2);
+    // (a file from ESC_FROM on, up to the version save() writes now: each choice kept, Insert or F1 too, picked after the
+    // change; a later bump of save()'s version for another row must not move it again)
+    for (int v = ESC_FROM; v <= SAVED_VERSION; v++) {
+        for (int mode = 0; mode <= 2; mode++) CHECK(loaded_as(mode, v) == mode);
+        CHECK(loaded_as(-1, v) == 2);
+    }
     std::puts("PASS: an older file's Insert or F1 moves to Insert, F1 or Esc; F1 only and a file saved now keep theirs");
 }
 '''
@@ -262,10 +265,16 @@ def main():
     saved_version = re.search(r'fprintf\(f, "options_version=(\d+)\\n"\);', menu[menu.index("void save() {"):])
     if not saved_version:
         raise SystemExit("FAIL: vk_menu.cpp: save() does not write options_version")
+    # (the version from which a file's Menu shortcut was chosen: menu_init moves an older file's Insert or F1)
+    esc_from = re.search(r"if \(version < (\d+) && opts\.menu_shortcut == 0\) opts\.menu_shortcut = 2;", load)
+    if not esc_from:
+        raise SystemExit("FAIL: vk_menu.cpp: menu_init does not move an older file's Insert or F1 to Insert, F1 or Esc")
+    if int(esc_from.group(1)) > int(saved_version.group(1)):
+        raise SystemExit("FAIL: vk_menu.cpp: save() writes a version below the Menu shortcut's move: a choice would move again")
     keyboard = (KEYBOARD.replace("// OPTIONS", options.group(0)).replace("// TX_MENU_SHORTCUT", tx)
                 .replace("    // KEY_POLL", key_poll).replace("    // ESC_BLOCK", esc_block)
                 .replace("// INI_KEY", ini_key).replace("    // LOAD_OPTIONS", load)
-                .replace("SAVED_VERSION", saved_version.group(1)))
+                .replace("SAVED_VERSION", saved_version.group(1)).replace("ESC_FROM", esc_from.group(1)))
     fixture = FIXTURE.replace("// KEYBOARD_FIXTURE", keyboard)
     with tempfile.TemporaryDirectory(prefix="menu-keys-") as tmp:
         cpp, exe = Path(tmp) / "fixture.cpp", Path(tmp) / "fixture"

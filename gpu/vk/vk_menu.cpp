@@ -292,7 +292,7 @@ const char* tx_percent(int v) {
     snprintf(b, sizeof b, "%d%%", v);
     return b;
 }
-/// The main screen's size, as host/hos_main.c takes its shape at the start (the Ultrawide row): false where it
+/// The main screen's size, as host/hos_main.c takes its shape at the start (the Aspect ratio row): false where it
 /// is not known (Linux: the sizes are shown as the 16:9 outputs)
 bool screen_size(uint32_t* w, uint32_t* h) {
 #ifdef _WIN32
@@ -348,7 +348,7 @@ int step_output_choice(int id, int dir) {
     return order[std::clamp(at + dir, 0, n - 1)];
 }
 /// The picture an Output resolution choice makes: a custom surround output takes its own shape;
-/// otherwise Ultrawide uses the screen's shape. Both keep at most hos_wide_max_px() pixels, matching
+/// otherwise the Aspect ratio at Monitor's shape takes the screen's. Both keep at most hos_wide_max_px() pixels, matching
 /// host/hos_main.c at startup (host/hos_wide_size.h); otherwise the
 /// 16:9 output. The game's own choice (0) as it is (its size comes from the game's graphics scale). *native: the screen's own size
 Out picture_for(int v, bool* native = nullptr) {
@@ -453,7 +453,7 @@ bool row_fixed(const int* value) {
 const char* tx_output_res(int v) {
     static char b[40];
     v = output_choice(v);
-    // (the picture this choice makes (picture_for: at the monitor's shape with Ultrawide on), "(native)"
+    // (the picture this choice makes (picture_for: at the monitor's shape when the Aspect ratio takes it), "(native)"
     // when it is the screen's own size; the game's own choice (0) keeps its name)
     bool native = false;
     const Out o = picture_for(v, &native);
@@ -476,7 +476,7 @@ const char* tx_text_size(int v) {
     if ((unsigned)v >= sizeof t / sizeof t[0]) return t[0];
     return t[v];
 }
-const char* tx_ultrawide(int v) { return v ? "Monitor's shape" : "Off (16:9)"; }
+const char* tx_ultrawide(int v) { return v ? "Monitor's shape" : "16:9"; }   // (the Aspect ratio row: a shape, not on or off)
 const char* tx_prompts(int v) {
     static const char* t[HOS_PROMPT_N + 1] = {"Auto", "Switch", "Xbox", "PlayStation 4", "PlayStation 5", "Steam Deck"};
     return t[std::min(std::max(v, 0), (int)HOS_PROMPT_N)];
@@ -843,11 +843,12 @@ Row rows[] = {
      "little GPU time. Game's is the console's own (1x or 2x).", nullptr, false, true},
     {TAB_GRAPHICS, "Profile", &opts.handheld, 0, 1, 1, tx_profile,
      "Runs the game as the console docked or handheld. Applies after a restart.", hn_handheld, true},
-    {TAB_GRAPHICS, "Ultrawide", &opts.ultrawide, 0, 1, 1, tx_ultrawide,
-     "The camera's shape on a screen wider or narrower than 16:9 (4:3, 16:10). Applies after a restart.", hn_ultrawide, true, true},
+    {TAB_GRAPHICS, "Aspect ratio", &opts.ultrawide, 0, 1, 1, tx_ultrawide,
+     "The picture's shape: your monitor's (the default: wider on an ultrawide, narrower on 4:3 or 16:10), or the game's 16:9. "
+     "Applies after a restart.", hn_ultrawide, true, true},
     {TAB_GRAPHICS, "Ultrawide menus", &opts.wide_menus, 0, 2, 1, tx_wide_menus,
-     "With Ultrawide: the pause, item and map menus, and what shows beside them. Loading screens and pre-rendered movies, "
-     "which draw no world either, get the same sides. Changes at once.", hn_wide_menus, false, true},
+     "With the Aspect ratio at the monitor's shape: the pause, item and map menus, and what shows beside them. Loading "
+     "screens and pre-rendered movies, which draw no world either, get the same sides. Changes at once.", hn_wide_menus, false, true},
     {TAB_GRAPHICS, "Mesh shaders", &opts.mesh_mode, 0, 2, 1, tx_mesh_mode,
      "How the game's mesh programs (much of the scenery) run: on the GPU's own mesh shaders, or as compute shaders, which "
      "every GPU has. Applies after a restart.", hn_mesh_mode, true, true},
@@ -1318,6 +1319,7 @@ const char* ini_key(const Row& r) {
     if (r.value == &opts.upscale) return "upscaling";
     if (r.value == &opts.dlss) return "dlss";   // (as opts.dlss and RX_VK_DLSS)
     if (r.value == &opts.handheld) return "handheld_profile";   // (the Profile row; host/nn_applet.c reads it at the start)
+    if (r.value == &opts.ultrawide) return "ultrawide";   // (the Aspect ratio row; host/hos_main.c reads it at the start)
     if (r.value == &opts.mesh_mode) return "mesh_shaders";   // (gpu/vk/vk_main.cpp reads it as the device is made)
     static char k[32];
     size_t n = 0;
@@ -1451,8 +1453,9 @@ void save() {
         fprintf(f, "memory_budget=%d\n", opts.budget);
         // (2: game_speed below 2 was only ever the old default, see menu_init; 3: the mouse's buttons are bindings, see
         // host/nn_hid.c binds_load; 4: Descriptor reuse on by default, see menu_init and vk_draw.cpp desc_slotgen_on; 5: the
-        // Menu shortcut "Insert, F1 or Esc" by default, see menu_init)
-        fprintf(f, "options_version=5\n");
+        // Menu shortcut "Insert, F1 or Esc" by default, see menu_init; 6: the Aspect ratio's 16:9 from before moves on a
+        // screen narrower than 16:9, see menu_init and host/hos_wide_size.h)
+        fprintf(f, "options_version=6\n");
         fputs(others.c_str(), f);
         if (!can_bind()) fputs(kept.c_str(), f);
         for (int i = 0; i < HOS_KEY_N && can_bind(); i++) {   // (the keys-only controls, HOS_KEY_*, have no pad_ line)
@@ -3547,6 +3550,14 @@ void menu_init() {
         // Menu shortcut 0, Insert or F1, whether chosen or not, and moves to Insert, F1 or Esc, where Insert and F1 still
         // work. F1 only was chosen: kept)
         if (version < 5 && opts.menu_shortcut == 0) opts.menu_shortcut = 2;
+        // (the Aspect ratio from options_version 6: a file from before wrote ultrawide=0, the 16:9 default then, whether
+        // chosen or not. On a screen narrower than 16:9 host/hos_main.c starts the game at the monitor's shape for it
+        // (host/hos_wide_size.h hos_aspect_on), and the row follows what the host started with: a picture narrower than
+        // 16:9 there. On Linux too, where the menu has no screen size of its own)
+        if (version < 6 && opts.ultrawide == 0 && host && host->aspect_ratio) {
+            const float started = host->aspect_ratio();
+            if (started > 1.0f && started < 16.0f / 9.0f * 0.99f) opts.ultrawide = 1;
+        }
     }
     first_start = !has_options;
     // An opt-in profile for 4 GB cards: keep existing options authoritative, but make a first run usable on

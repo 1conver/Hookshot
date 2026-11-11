@@ -308,7 +308,7 @@ HDR peak brightness show only while HDR is on, the HDR tone mapper only with HDR
 | | Sharpness | 0 to 100%, in steps of 10 | 0% |
 | | Anisotropic filtering | Game's, 2x, 4x, 8x, 16x | 16x |
 | | Profile | Docked, Handheld (after a restart) | Docked |
-| | Ultrawide | Off (16:9), Monitor's shape: wider than 16:9, or narrower down to 5:4 (after a restart) | Off (16:9) |
+| | Aspect ratio | 16:9, Monitor's shape: wider than 16:9, or narrower down to 5:4 (after a restart) | Monitor's shape |
 | Audio | Volume | 0 to 100%, in steps of 5 | 100% |
 | | Mute in background | Off, On | Off |
 | | Audio output | Auto, Stereo, 5.1 (after a restart) | Auto |
@@ -373,14 +373,16 @@ HDR peak brightness show only while HDR is on, the HDR tone mapper only with HDR
 - **Output resolution:** its rows below show the sizes for the output you chose. Docked only. On a 1920x1080 display,
   the 1920x1080 option keeps HUD and text sharp when the game fills the screen by mapping them pixel for pixel. At
   3840x2160 the game's render targets get a bigger GPU pool, so a full-size 3D fits. On a 5120x1440 (32:9) ultrawide
-  monitor, 5120x1440 gives a native frame with a sharp HUD. Set **Ultrawide** to Monitor's shape with it: it widens the
-  cameras to the frame's shape and keeps the HUD and movies in the middle 16:9; without it, the game's 16:9 picture is
-  stretched across the 32:9 output, sharp but wide. For a size the menu does not offer (3440x1440, 2560x1080, ...), set
+  monitor, 5120x1440 gives a native frame with a sharp HUD. The **Aspect ratio**'s default, Monitor's shape, widens the
+  cameras to the frame's shape and keeps the HUD and movies in the middle 16:9; at 16:9, the game's 16:9 picture is
+  stretched across the 32:9 output, sharp but wide. Options saved by an older version at 16:9, the default then, move to
+  Monitor's shape on a screen narrower than 16:9 (16:10 such as the Steam Deck's, or 4:3), where 16:9 only adds bars above
+  and below; an ultrawide keeps its 16:9. For a size the menu does not offer (3440x1440, 2560x1080, ...), set
   `output_res=<width>x<height>` in `hookshot_options.ini`: each side a multiple of 8, at least 640x360, at most 5120x2880's
   pixels, and between 5:4 and 48:9 in shape; anything else uses the game's 2048x1152. The menu then offers it as its own
-  choice. With **Ultrawide** on, a picture wider than 16:9 is kept to 5120x2160's pixels, so above that a wide size is not a
-  native frame. A custom output wider than 32:9 also sets the camera shape, even when the OS reports a single
-  16:9 primary monitor. For three 16:9 monitors, use `5760x1080` or `7680x1440` and a window or logical display
+  choice. With the **Aspect ratio** at Monitor's shape, a picture wider than 16:9 is kept to 5120x2160's pixels, so above
+  that a wide size is not a native frame. A custom output wider than 32:9 also sets the camera shape, even when the OS
+  reports a single 16:9 primary monitor. For three 16:9 monitors, use `5760x1080` or `7680x1440` and a window or logical display
   that spans all three. Both render at full size: 7680x1440 has 5120x2160's pixels, the most a wide picture takes.
   For one run, set `HOS_OUTPUT_RES` to a size, such as `HOS_OUTPUT_RES=3840x2160`.
 - **Window scaling filter** matters only when your window's size differs from the Output resolution: for the sharpest
