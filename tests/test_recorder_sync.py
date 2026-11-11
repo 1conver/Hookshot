@@ -17,7 +17,9 @@ python -I -B tests/test_recorder_sync.py --headers <Vulkan-Headers/include> [--c
    no exception out of a vkCmd*, no block lost. Run with RX_VK_RECORDER=defer (mode 2, logged once) and with RX_VK_PARALLEL=4 too
    (refused: off, logged once).
    RX_VK_RECORDER=thread (step 2): the same frame and lifecycle with every vkCmd* run by a recorder thread, the fake driver slowed
-   (1 us a call) so the recorder lags, each fake command buffer flagged in use for each call (two calls at once on one are a
+   (1 us a call) so the recorder lags, and in the ordering scenarios the recorder held (50 ms) at each point the producer must wait
+   for it (a recording's end, a submit while another command buffer records, the replay lock let go, a pool reset), so a missing
+   wait is caught on a loaded runner too, each fake command buffer flagged in use for each call (two calls at once on one are a
    violation), the caller's memory poisoned and each packet poisoned once run; a handoff under the lock; a submit while another
    command buffer's commands are in flight; a pool reset while recording; the lock let go, then the recording ended on another
    thread; an 8 KB ring (backpressure); a packet bigger than its room (made directly, in order); no memory for the ring; teardown with
