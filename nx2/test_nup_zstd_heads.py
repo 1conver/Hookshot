@@ -93,6 +93,32 @@ class Heads(unittest.TestCase):
             opened.assert_called_once()
             self.assertEqual(Path(romfs, "Model", "damaged.bntx.zs").read_bytes(), WHOLE)
 
+    def test_a_stamp_keeps_a_name_outside_the_code_page(self):
+        """#2246: "Zelda™⁚ Ocarina.nup" stopped the build with a UnicodeEncodeError where Windows' code page is cp1252"""
+        with tempfile.TemporaryDirectory() as d, mock.patch("locale.getencoding", return_value="cp1252"):
+            stamp = "unpacked by this builder: Zelda™⁚ Ocarina.nup 123\n"
+            path = os.path.join(d, ".hookshot_romfs")
+            make_game.write_stamp(path, stamp)
+            self.assertEqual(Path(path).read_bytes(), stamp.encode("utf-8"))
+            self.assertEqual(make_game.read_stamp(path), stamp)
+            # (a stamp an earlier builder wrote in the code page still reads as it was: no second unpack)
+            old = "unpacked by this builder: Zelda™ Ocarina.nup 123\r\n"
+            Path(path).write_bytes(old.encode("cp1252"))
+            self.assertEqual(make_game.read_stamp(path), old)
+            # (a byte the code page has no letter for: no stamp, not a name with a replaced letter)
+            Path(path).write_bytes(b"unpacked by this builder: authored \x81.nup 22\n")
+            self.assertEqual(make_game.read_stamp(path), "")
+
+    def test_a_stamp_that_cannot_be_read_matches_no_name(self):
+        """A letter replaced while decoding made two names equal, and the second .nup's unpack was skipped (Python's UTF-8
+        mode, where the preferred encoding is UTF-8 again)"""
+        with tempfile.TemporaryDirectory() as d, mock.patch("locale.getencoding", return_value="utf-8"), \
+                mock.patch("locale.getpreferredencoding", return_value="utf-8"):
+            path = os.path.join(d, ".hookshot_romfs")
+            Path(path).write_bytes(b"unpacked by this builder: authored \xff.nup 22\n")
+            self.assertNotEqual(make_game.read_stamp(path), "unpacked by this builder: authored �.nup 22\n")
+            self.assertEqual(make_game.read_stamp(path), "")
+
 
 if __name__ == "__main__":
     unittest.main()
