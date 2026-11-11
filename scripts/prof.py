@@ -43,7 +43,10 @@ def load_elf(path):
     for line in out.splitlines():
         parts = line.split(" ", 2)
         if len(parts) == 3 and parts[1] in ("t", "T", "w", "W") and len(parts[0]) >= 8:
-            syms.append((int(parts[0], 16), parts[2].split("(")[0]))
+            # Parentheses also occur in anonymous namespaces and operator names.
+            # Keep the complete demangled symbol so distinct hot functions and
+            # overloads do not collapse into one profile entry.
+            syms.append((int(parts[0], 16), parts[2]))
     syms.sort()
     return [a for a, _ in syms], [n for _, n in syms]
 
