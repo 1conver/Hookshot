@@ -452,7 +452,7 @@ void display_main() {
         // 5080, 60 fps), and a VRR display's refresh changed every frame (flicker on OLED). Now a set's copies go to the GPU
         // together, the first one's end is waited for, and only the presents keep their times on the line.
         static const bool ahead_env = !getenv("RX_VK_PRESENT_AHEAD") || atoi(getenv("RX_VK_PRESENT_AHEAD")) != 0;
-        const bool ahead = present_ahead_wanted(ahead_env, pace, shown, dev.swap_spare);
+        const bool ahead = present_ahead_wanted(ahead_env, pace, shown, dev.swap_spare.load(std::memory_order_relaxed));
         PendingPresent pending[kMaxMult];
         if (ahead) {
             static bool said;

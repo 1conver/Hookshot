@@ -539,9 +539,50 @@ void swap_views_make(VkImageUsageFlags usage, VkFormat format) {
     }
 }
 
+void retire_swapchain() {
+    if (!dev.swapchain) return;
+    device_wait_idle_locked();
+    reflex_swapchain_destroyed();
+    swap_views_drop();
+    for (auto semaphore : dev.swap_rendered) vkDestroySemaphore(dev.device, semaphore, nullptr);
+    vkDestroySwapchainKHR(dev.device, dev.swapchain, nullptr);
+    dev.swapchain = VK_NULL_HANDLE;
+    ++dev.swapchain_generation;
+    dev.swap_rendered.clear();
+    dev.swap_images.clear();
+    dev.swap_spare = 0;
+}
+
+bool invalidate_lost_surface(VkResult result) {
+    if (result != VK_ERROR_SURFACE_LOST_KHR) return false;
+    retire_swapchain();
+    if (dev.surface) vkDestroySurfaceKHR(dev.instance, dev.surface, nullptr);
+    dev.surface = VK_NULL_HANDLE;
+    dev.present_queue_supported = false;
+    static unsigned logged = 0;
+    if (logged++ < 8) logf("vk: presentation surface lost; will retry with a replacement");
+    return true;
+}
+
+namespace {
+bool open_window_surface(bool log_failure);
+void window_size(uint32_t* width, uint32_t* height);
+}
+
 bool create_swapchain(uint32_t width, uint32_t height) {
+    if (!dev.surface) {
+        window_size(&width, &height);
+        if (!width || !height) return false;
+        using Clock = std::chrono::steady_clock;
+        static Clock::time_point next_attempt;
+        const auto now = Clock::now();
+        if (now < next_attempt) return false;
+        next_attempt = now + std::chrono::milliseconds(250);
+        if (!open_window_surface(false)) return false;
+    }
     VkSurfaceCapabilitiesKHR caps;
     VkResult result = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(dev.physical, dev.surface, &caps);
+    if (invalidate_lost_surface(result)) return false;
     if (result != VK_SUCCESS) {
         logf("vk: querying surface capabilities failed (VkResult %d)", (int)result);
         return false;
@@ -558,12 +599,15 @@ bool create_swapchain(uint32_t width, uint32_t height) {
     if (!width || !height) return false;
     uint32_t n = 0;
     result = vkGetPhysicalDeviceSurfaceFormatsKHR(dev.physical, dev.surface, &n, nullptr);
+    if (invalidate_lost_surface(result)) return false;
     if (result != VK_SUCCESS || !n) {
         logf("vk: querying surface formats failed (VkResult %d, count %u)", (int)result, n);
         return false;
     }
     std::vector<VkSurfaceFormatKHR> formats(n);
-    vkGetPhysicalDeviceSurfaceFormatsKHR(dev.physical, dev.surface, &n, formats.data());
+    result = vkGetPhysicalDeviceSurfaceFormatsKHR(dev.physical, dev.surface, &n, formats.data());
+    if (invalidate_lost_surface(result) || result != VK_SUCCESS || !n) return false;
+    formats.resize(n);
     VkSurfaceFormatKHR fmt = formats[0];
     for (const auto& f : formats)   // (an UNORM target: the game's window textures are presented as they are)
         // (in sRGB: RADV on Wayland lists every format again with PASS_THROUGH_EXT and the compositor's colour spaces,
@@ -599,6 +643,7 @@ bool create_swapchain(uint32_t width, uint32_t height) {
         modes.resize(n);
         result = vkGetPhysicalDeviceSurfacePresentModesKHR(dev.physical, dev.surface, &n, modes.data());
     }
+    if (invalidate_lost_surface(result)) return false;
     if (result != VK_SUCCESS || modes.empty())
         logf("vk: querying present modes failed (VkResult %d, count %u); trying mandatory FIFO mode", (int)result, n);
     // (hookshot) the Insert menu's V-Sync (menu_vsync: RX_VK_FIFO=1 On, RX_VK_IMMEDIATE=1 Off for a run): On is FIFO, as on a
@@ -645,7 +690,7 @@ bool create_swapchain(uint32_t width, uint32_t height) {
     }
     ci.presentMode = mode;
     const uint32_t sharing[2] = {dev.queue_family, dev.present_family};
-    if (dev.present_queue && dev.present_family != dev.queue_family) {   // (presented from another family: no ownership moves)
+    if (dev.present_queue_supported && dev.present_family != dev.queue_family) {   // (presented from another family: no ownership moves)
         ci.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
         ci.queueFamilyIndexCount = 2;
         ci.pQueueFamilyIndices = sharing;
@@ -668,17 +713,8 @@ bool create_swapchain(uint32_t width, uint32_t height) {
     VkSwapchainKHR sc;
     result = vkCreateSwapchainKHR(dev.device, &ci, nullptr, &sc);
     // Passing oldSwapchain retires it even when creation fails. Nothing may acquire from it again.
-    if (dev.swapchain) {
-        device_wait_idle_locked();   // (the present queue's presents of the old swapchain done too)
-        reflex_swapchain_destroyed();   // (no latency sleep or markers may use the destroyed chain)
-        swap_views_drop();   // (hookshot: the overlays' views of its images, before it)
-        for (auto semaphore : dev.swap_rendered) vkDestroySemaphore(dev.device, semaphore, nullptr);
-        vkDestroySwapchainKHR(dev.device, dev.swapchain, nullptr);
-        dev.swapchain = VK_NULL_HANDLE;
-        dev.swap_rendered.clear();
-        dev.swap_images.clear();
-        dev.swap_spare = 0;
-    }
+    retire_swapchain();
+    if (invalidate_lost_surface(result)) return false;
     if (result != VK_SUCCESS) {
         logf("vk: vkCreateSwapchainKHR failed (VkResult %d, extent %ux%u, format %d, usage %#x, mode %d, images %u)",
              (int)result, width, height, (int)fmt.format, ci.imageUsage, (int)mode, ci.minImageCount);
@@ -986,14 +1022,42 @@ bool started_up() {
 }
 // (the window's surface made: the presents' own queue kept where its family can present to it, create_device)
 static void choose_present_queue() {
+    dev.present_queue_supported = false;
     if (!dev.present_queue) return;
     VkBool32 ok = VK_FALSE;
     if (vkGetPhysicalDeviceSurfaceSupportKHR(dev.physical, dev.present_family, dev.surface, &ok) != VK_SUCCESS || !ok) {
         logf("vk: queue family %u cannot present to the window: presents on the replay's queue", dev.present_family);
-        dev.present_queue = VK_NULL_HANDLE, dev.present_family = dev.queue_family;
         return;
     }
+    dev.present_queue_supported = true;
     logf("vk: presents on a queue of their own, of compute family %u (RX_VK_PRESENT_QUEUE=0: off)", dev.present_family);
+}
+
+bool open_window_surface(bool log_failure) {
+    VkSurfaceKHR surface = VK_NULL_HANDLE;
+#ifdef _WIN32
+    VkWin32SurfaceCreateInfoKHR si{VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR};
+    si.hinstance = GetModuleHandleA(nullptr);
+    si.hwnd = main_window;
+    if (!IsWindow(main_window) || vkCreateWin32SurfaceKHR(dev.instance, &si, nullptr, &surface) != VK_SUCCESS) return false;
+#else
+    const MkwVkWindow* w = prep_window;
+    if (!w || !w->create_surface(w->window, (void*)dev.instance, (void*)&surface)) {
+        if (log_failure)
+            logf("vk: SDL_Vulkan_CreateSurface failed; check SDL_VIDEODRIVER and the Vulkan window-system extensions");
+        return false;
+    }
+#endif
+    VkBool32 ok = VK_FALSE;
+    const VkResult result = vkGetPhysicalDeviceSurfaceSupportKHR(dev.physical, dev.queue_family, surface, &ok);
+    if (result != VK_SUCCESS || !ok) {
+        if (log_failure) logf("vk: queue-family present support failed (VkResult %d, supported %u)", (int)result, ok);
+        vkDestroySurfaceKHR(dev.instance, surface, nullptr);
+        return false;
+    }
+    dev.surface = surface;
+    choose_present_queue();
+    return true;
 }
 
 int start(void* hwnd) {
@@ -1008,14 +1072,7 @@ int start(void* hwnd) {
         return 1;
     }
 #ifdef _WIN32
-    VkWin32SurfaceCreateInfoKHR si{VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR};
-    si.hinstance = GetModuleHandleA(nullptr);
-    si.hwnd = (HWND)hwnd;
-    if (vkCreateWin32SurfaceKHR(dev.instance, &si, nullptr, &dev.surface) != VK_SUCCESS) return 0;
-    VkBool32 ok = VK_FALSE;
-    vkGetPhysicalDeviceSurfaceSupportKHR(dev.physical, dev.queue_family, dev.surface, &ok);
-    if (!ok) return 0;
-    choose_present_queue();
+    if (!open_window_surface(true)) return 0;
     RECT r{};
     GetClientRect((HWND)hwnd, &r);
     if (!create_swapchain((uint32_t)(r.right - r.left), (uint32_t)(r.bottom - r.top))) return 0;
@@ -1026,17 +1083,7 @@ int start(void* hwnd) {
         logf("vk: unsupported SDL window bridge version %u (expected %u)", w->version, MKWVK_WINDOW_VERSION);
         return 0;
     }
-    if (!w->create_surface(w->window, (void*)dev.instance, (void*)&dev.surface)) {
-        logf("vk: SDL_Vulkan_CreateSurface failed; check SDL_VIDEODRIVER and the Vulkan window-system extensions");
-        return 0;
-    }
-    VkBool32 ok = VK_FALSE;
-    VkResult present = vkGetPhysicalDeviceSurfaceSupportKHR(dev.physical, dev.queue_family, dev.surface, &ok);
-    if (present != VK_SUCCESS || !ok) {
-        logf("vk: queue-family present support failed (VkResult %d, supported %u)", (int)present, ok);
-        return 0;
-    }
-    choose_present_queue();
+    if (!open_window_surface(true)) return 0;
     int width = 0, height = 0;
     w->drawable_size(w->window, &width, &height);
     if (width <= 0 || height <= 0) {
