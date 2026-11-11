@@ -217,7 +217,7 @@ To go back, install the [latest release](https://github.com/NotRexed/Hookshot/re
 | Linux: the game does not start or the picture is broken | The game needs a Vulkan 1.3 driver with mesh shaders. Check with `vulkaninfo \| grep mesh`: it should list `VK_EXT_mesh_shader`. Update Mesa or the NVIDIA driver |
 | Steam Deck: the game freezes and closes in Kokiri Forest or the Great Deku Tree (`gfx_0.0.0 timeout` in `journalctl -k`) | `RX_VK_MESH_NOCULL=2c56dc1006942f74` in `hookshot_env.txt` gets past it with every model drawn (the culling pass that runs for seconds is turned off). `RX_VK_SKIP_CODE=2c56dc1006942f74` also gets past it, but the models those draws make go missing (see the [development guide](docs/development.md#switches-for-testing-and-debugging), [#817](https://github.com/NotRexed/Hookshot/issues/817)) |
 | "Your antivirus removed part of the build tools" | A false alarm on unsigned programs. Restore the files from Windows Security's Protection history, or add `%LOCALAPPDATA%\HookshotBuilder` to its exclusions, then press **Repair** |
-| Stutter the first time you see something | Normal for now: shaders are being prepared. It gets better when you pass through the same place again |
+| Stutter the first time you see something | Normal for now: shaders are being prepared. It gets better when you pass through the same place again. You can help remove it for everyone: [send your pipeline list](#send-your-pipeline-list) |
 | Windows, NVIDIA: stutter every start in places you have seen, after the shaders were prepared | The driver's shader cache is too small to keep them all (the first start builds about 2 GB of pipelines into it). In the NVIDIA Control Panel, Manage 3D settings, set **Shader Cache Size** to **Unlimited** (or 10 GB). On Linux the game raises the driver's limit itself |
 | The game is in the wrong language | Change the code in `language.txt` in the game folder. The file lists them all, and an update keeps the one you set there |
 
@@ -463,6 +463,7 @@ HDR peak brightness show only while HDR is on, the HDR tone mapper only with HDR
   creeps. `HOS_MOTION_DEBUG=1` (in `hookshot_env.txt`) logs what the game gets twice a second.
 - **Layout preset:** Nintendo has A on the right face button, Xbox / PC and Swap Face put A on the bottom one. Changing
   a button yourself sets it to Custom.
+- **Save my pipeline list** (Debug tab, under Developer): see [Send your pipeline list](#send-your-pipeline-list).
 
 ### Controls
 
@@ -832,6 +833,22 @@ More detail is in the [development guide](docs/development.md) and the [design n
 
 Testing on other graphics cards and reporting the result already helps a lot, and so does playing further into the
 game than anyone has yet.
+
+### Send your pipeline list
+
+The first time the game meets a pipeline it builds it on the spot, which stutters. Releases build a list of known
+pipelines before the title, and every player's play adds to it. To send yours:
+
+1. In the game, open the menu (Insert or F1), go to the **Debug** tab and choose **Save my pipeline list** (under Developer). Or, in
+   Hookshot Builder's launcher page for the game folder, press **Save my pipeline list**.
+2. It saves `hookshot-pipelines-<date>.zip` in your Downloads folder, copies a filled-in report to the clipboard and
+   opens the [Submit your pipelines](https://github.com/NotRexed/Hookshot/issues/2034) issue in your browser.
+3. Attach the zip to a comment there, paste the report and fill in where you played.
+
+The zip holds only `hookshot_pipeline_states.bin` (shader hashes, formats and draw state: no game code, game data or
+personal info) and the report (the version, OS, GPU and driver, output and render resolution, upscaler, frame
+generation, HDR and the mods the game loaded). Nothing is uploaded for you. If the list is missing or damaged, it says
+so and saves nothing. In a run without a window (`HOS_HEADLESS`) the menu saves the zip but opens nothing.
 
 Bigger ways to help:
 

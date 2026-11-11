@@ -81,7 +81,7 @@ screen. It costs some GPU time on cards that cull quickly, so it is off unless s
 
 | Switch | What it does |
 |---|---|
-| `HOS_HEADLESS` (set) | No window: the renderer draws offscreen, for screenshots and frame dumps |
+| `HOS_HEADLESS` (set) | No window: the renderer draws offscreen, for screenshots and frame dumps. The menu's Save my pipeline list then opens nothing (no browser, folder or clipboard) |
 | `HOS_WINDOW_SIZE=<w>x<h>` | The window's size in pixels (1280x720 by default, wider for an ultrawide picture) |
 | `HOS_WINDOW_NOACTIVATE` (set) | The window opens behind the others and does not take the focus (Windows) |
 | `HOS_FULLSCREEN=1` | Starts in fullscreen; the Insert menu's Fullscreen row is then left alone |
@@ -237,6 +237,14 @@ python -I nx2/pipeline_states.py merge --out merged.bin     # the list make_game
 
 A list depends on the settings it was recorded with: its records hold the target formats and draw state, so one recorded
 at 1440p with DLSS shares few pipelines with one recorded at 360p.
+
+Players send theirs to issue #2034 with **Save my pipeline list** (the menu's Debug tab, under Developer: `gpu/vk/pipeline_share.h` and
+`vk_menu.cpp` `share_pipeline_list`; the builders: `nx2/pipeline_share.py`, which the Linux builder imports and the Windows
+one runs with `--json`). It checks the list as `pipeline_states.py --check` does and writes
+`hookshot-pipelines-<date>.zip` to the Downloads folder with exactly two files, the list and `hookshot_pipeline_report.txt`
+(the issue's template filled in from the run or from the game folder's log and `hookshot_options.ini`), then copies the
+template, shows the folder and opens the issue; never with `HOS_HEADLESS`. `tests/test_pipeline_share.py` checks the zip,
+the template and the refusals for both. By hand: `python -I nx2/pipeline_share.py <game folder> [--out-dir <folder>]`.
 
 Refresh the tour's list before each release, and after a change to the shaders' translation or to the state a pipeline
 is made from. A record that no longer matches what play asks for builds a pipeline nothing uses, and the one play wants

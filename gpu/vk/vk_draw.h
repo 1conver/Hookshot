@@ -95,6 +95,8 @@ void pipeline_cache_save(bool force);
 // (the window closed: what play made since the last save, a few ms; the start's cache is not written there, as before)
 void pipeline_cache_close();
 void pipeline_cache_play();   // (the start-up done: what play makes goes into play files of its own)
+/// (hookshot) hookshot_pipeline_states.bin's bytes now, no record half written (the menu's Save my pipeline list); *present: it is there
+std::string state_list_snapshot(bool* present);
 
 /// The stream's uniform updates (UPDATE_UB, vk_replay.cpp) that overlap [addr, addr + n) and may not be in guest
 /// memory yet when the GPU reads it: a copy of the range with them applied, at the offset alloc returns in the

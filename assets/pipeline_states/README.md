@@ -40,6 +40,16 @@ a pipeline again, the merge keeps it once.
 
 ## Contributing a list
 
+Players without a clone send their list to the [Submit your pipelines](https://github.com/NotRexed/Hookshot/issues/2034)
+issue: **Save my pipeline list** (the game's menu, Debug tab, or the builders' launcher page; readme, *Send your
+pipeline list*) zips the game folder's `hookshot_pipeline_states.bin` with a filled-in report
+(`hookshot_pipeline_report.txt`: the version, OS, GPU and driver, settings and mods), and nothing else. A maintainer then
+adds it as below, with the report's lines as `--gpu`, `--build`, `--settings` and `--route`. The zip is made by
+`gpu/vk/pipeline_share.h` in the game and `nx2/pipeline_share.py` in the builders, after the same checks as
+`nx2/pipeline_states.py --check`.
+
+With a clone:
+
 1. Build the game from current `main`. A list from an older build may hold pipelines the current build no longer asks
    for.
 2. Move the game folder's `hookshot_pipeline_states.bin` aside if there is one. Play: every pipeline the game makes in

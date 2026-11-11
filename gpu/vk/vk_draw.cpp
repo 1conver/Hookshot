@@ -1619,6 +1619,21 @@ void state_record(const Program& p, const NvnState& s, const Targets& at, VkPrim
     if (!state_file) state_open_locked();
     if (state_file && state_seen.insert(h).second) fwrite(&r, sizeof r, 1, state_file), fflush(state_file);
 }
+/// (hookshot) The player's own state list as it is now, whole records only (state_mu held, so no record is half written): what
+/// the menu's Save my pipeline list zips (vk_menu.cpp). *present: whether there is one
+std::string state_list_bytes(bool* present) {
+    std::lock_guard lk(state_mu);
+    if (state_file) fflush(state_file);
+    std::string bytes;
+    *present = false;
+    if (FILE* f = fopen(state_list_path("hookshot_pipeline_states.bin").c_str(), "rb")) {
+        *present = true;
+        char b[1 << 16];
+        for (size_t n; (n = fread(b, 1, sizeof b, f)) > 0;) bytes.append(b, n);
+        fclose(f);
+    }
+    return bytes;
+}
 /// Every pipeline of the state lists (the player's own and the shipped one): its program translated
 /// when the program cache lacks it, then noted in hookshot_pipelines.bin for precompile_run to build. RX_VK_NO_STATE_LIST=1: off
 void state_list_prepare(void (*progress)(size_t done, size_t total), bool open_seed = false) {
@@ -3404,6 +3419,7 @@ struct Pushed {
 };
 TLS_OBJECT(pushed, std::array<Pushed, 2>)   // [graphics, compute]
 } // namespace
+std::string state_list_snapshot(bool* present) { return state_list_bytes(present); }   // (vk_draw.h: the menu's)
 /// (hookshot) A compute pipeline of the back end's own, made elsewhere (vk_fsr3.cpp), through the pipeline cache the game's are kept
 /// in across runs (mkw_vk_pipelines.bin), as theirs are: in play through the play caches (create_cached), so that it does not grow
 /// the start's cache; before the cache is loaded, with none. (Outside the unnamed namespace: vk_fsr3.cpp links to it)
