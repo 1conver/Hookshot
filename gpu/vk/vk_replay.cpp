@@ -2970,6 +2970,22 @@ void status_tick() {
     slowest_ns = 0;
 }
 
+// (RX_VK_FRAME_LOG=<file>: one CSV line a present: frame, seconds since the first, frame time in ms. Frame pacing on the
+// Steam Deck, where MangoHud's log stays empty under gamescope. Taken once the present is handed to the swapchain
+// (present_out), or without a window (HOS_HEADLESS) once the picture's offscreen copy is submitted: a headless run wrote none)
+void frame_log_present() {
+    static FILE* fl = getenv("RX_VK_FRAME_LOG") ? std::fopen(getenv("RX_VK_FRAME_LOG"), "w") : nullptr;
+    static std::chrono::steady_clock::time_point first, prev;
+    static uint64_t frames;
+    if (!fl) return;
+    const auto t = std::chrono::steady_clock::now();
+    if (!frames) first = prev = t, std::fputs("frame,time_s,frametime_ms\n", fl);
+    std::fprintf(fl, "%llu,%.4f,%.3f\n", (unsigned long long)frames, std::chrono::duration<double>(t - first).count(),
+                 std::chrono::duration<double, std::milli>(t - prev).count());
+    prev = t;
+    if (++frames % 60 == 0) std::fflush(fl);
+}
+
 // ---- (hookshot) the control bridge's shots (host/control.c, docs/control.md): a PNG of the first present after a given one,
 // asked for from another thread. Read back as RX_VK_SHOTS' are (at a later present, once the GPU reached it, and written on a
 // thread of its own), with an image and a buffer of their own: the two kinds never share a readback. Never waited for: a
@@ -3472,6 +3488,7 @@ void do_present(const nvn_tex* t, const int crop[4]) {
         }
         log_frame_stats();
     }
+    if (dev.offscreen) frame_log_present();   // (no window: the copy into the offscreen image above is its present)
     if (dev.offscreen || interpolated) return;
     present_image(src, sw, sh, crop, direct_view);
 }
@@ -3942,20 +3959,7 @@ static bool present_out(uint32_t index, std::unique_lock<std::mutex>& qk) {
         static int logged;
         if (logged++ < 8) logf("vk: present failed (VkResult %d%s)", (int)res, dev.present_queue_supported ? ", on the presents' own queue" : "");
     }
-    {   // (RX_VK_FRAME_LOG=<file>: one CSV line a present: frame, seconds since the first, frame time in ms. Frame
-        // pacing on the Steam Deck, where MangoHud's log stays empty under gamescope)
-        static FILE* fl = getenv("RX_VK_FRAME_LOG") ? std::fopen(getenv("RX_VK_FRAME_LOG"), "w") : nullptr;
-        static std::chrono::steady_clock::time_point first, prev;
-        static uint64_t frames;
-        if (fl) {
-            const auto t = std::chrono::steady_clock::now();
-            if (!frames) first = prev = t, std::fputs("frame,time_s,frametime_ms\n", fl);
-            std::fprintf(fl, "%llu,%.4f,%.3f\n", (unsigned long long)frames, std::chrono::duration<double>(t - first).count(),
-                         std::chrono::duration<double, std::milli>(t - prev).count());
-            prev = t;
-            if (++frames % 60 == 0) std::fflush(fl);
-        }
-    }
+    frame_log_present();
     if (res == VK_ERROR_OUT_OF_DATE_KHR || res == VK_SUBOPTIMAL_KHR) {
         if (!qk.owns_lock()) qk.lock();
         create_swapchain(dev.swap_extent.width, dev.swap_extent.height);
