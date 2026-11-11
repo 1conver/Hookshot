@@ -4,6 +4,8 @@ from pathlib import Path
 import subprocess
 import tempfile
 
+RUN_ALL_ARGS = ["--cxx", "{cxx}"]
+
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--source', type=Path, default=Path(__file__).resolve().parents[1])
 p.add_argument('--cxx', default='clang++')

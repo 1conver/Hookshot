@@ -10,6 +10,7 @@ import tempfile
 
 # (env_on, the switches' rule, before the code cut out of the sources: gpu/vk/compat/hookshot_env.h)
 ENV_ON_H = str(Path(__file__).resolve().parents[1] / "gpu" / "vk" / "compat" / "hookshot_env.h")
+RUN_ALL_ARGS = ["--cxx", "{cxx}"]
 
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--source', type=Path, default=Path(__file__).resolve().parents[1])
