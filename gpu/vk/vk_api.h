@@ -44,6 +44,9 @@ enum { HOS_OPT_PROMPTS = 46 };
    makes the scene buffer RGBA16F only then, so Native HDR with the row on Vanilla keeps the game's R11G11B10F and the
    temporal upscalers, which take only that scene) */
 enum { HOS_OPT_HDR_TONEMAP = 47 };
+/* Gameplay's vertical field of view, percent of the game's current angle; 100 is unchanged. */
+/* 49 and 50 are reserved for Walk mode and Walk speed (#2345). */
+enum { HOS_OPT_FOV = 51 };
 
 /* (hookshot) the controls' names (host/nn_hid.c, host/pad_sdl.c, the pad_ and key_ lines of hookshot_options.ini):
    the Switch's buttons in nn::hid's bit order, and a gamepad's inputs by position (the bottom face button first:
