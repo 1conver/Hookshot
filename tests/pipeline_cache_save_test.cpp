@@ -47,6 +47,7 @@ int pcache = 2;
 std::string pcache_path;
 std::atomic<int64_t> pcache_built_since_save{32};
 std::atomic<std::size_t> pcache_saved_size{0};
+bool pcache_no_save = false;   // (RX_VK_PCACHE_LOAD=0: pcache_init; never set here)
 // The size the driver gives for the cache's data; a case grows it for pipelines taken in between saves.
 std::atomic<std::size_t> cache_size{64};
 enum Fault { NONE, VECTOR_ALLOC, VECTOR_LENGTH, TMP_ALLOC, QUERY_FAIL, EMPTY, COPY_FAIL, SHORT_WRITE, BLOCK_COPY, REPLACE_FAIL };

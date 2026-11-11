@@ -900,6 +900,7 @@ VkResult create_cached(VkResult (*create)(VkPipelineCache, const CI*, VkPipeline
 }
 // ---- (end of the play caches) ----
 
+bool pcache_no_save = false;   // (RX_VK_PCACHE_LOAD=0: pcache_init)
 void pcache_init() {
     if (pcache) return;
     char exe[MAX_PATH];
@@ -907,7 +908,11 @@ void pcache_init() {
     std::string dir(exe, n);
     pcache_dir = dir = dir.substr(0, dir.find_last_of("\\/") + 1);
     pcache_path = dir + "mkw_vk_pipelines.bin";
-    std::vector<uint8_t> data = pcache_file_read(pcache_path);
+    // (RX_VK_PCACHE_LOAD=0, an A/B of what the file costs in memory: its 2.5 GB read whole and held by the driver. The cache
+    // starts empty and is not saved; the driver's own shader cache is all there is)
+    static const bool off = getenv("RX_VK_PCACHE_LOAD") && atoi(getenv("RX_VK_PCACHE_LOAD")) == 0;
+    pcache_no_save = off;
+    std::vector<uint8_t> data = off ? std::vector<uint8_t>{} : pcache_file_read(pcache_path);
     VkPipelineCacheCreateInfo ci{VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
     ci.initialDataSize = data.size();
     ci.pInitialData = data.empty() ? nullptr : data.data();
@@ -8521,7 +8526,7 @@ void pipeline_cache_close() {
 }
 
 void pipeline_cache_save(bool force) {
-    if (!pcache || (!force && pcache_built_since_save < 32)) return;
+    if (!pcache || pcache_no_save || (!force && pcache_built_since_save < 32)) return;
     pcache_built_since_save = 0;
     // (on a thread of its own unless forced, at exit: ~100 MB fetched and written took the replay thread 100+ ms at
     // each scene change; the cache is internally synchronized, pipelines go on being built meanwhile)
