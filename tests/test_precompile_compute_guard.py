@@ -67,6 +67,16 @@ void vkDestroyPipeline(uintptr_t device,VkPipeline made,const void*allocator){CH
 '''
 
 
+def windows_target(cxx):
+    """The target the game's own build gives this compiler (third_party/a64-kit/tools/toolchain.py native_target): an
+    llvm-mingw clang++ builds for MinGW with -fms-extensions (__try/__except), any other for the MSVC target. llvm-mingw
+    finds no Visual Studio headers, so the MSVC target alone fails there at <windows.h>."""
+    machine=subprocess.run([cxx,'-dumpmachine'],capture_output=True,text=True,timeout=30).stdout.strip()
+    if 'mingw' in machine or 'windows-gnu' in machine:
+        return ['--target=x86_64-w64-mingw32','-fms-extensions']
+    return ['--target=x86_64-pc-windows-msvc']
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source',type=Path,default=Path(__file__).resolve().parents[1])
@@ -105,7 +115,7 @@ int main(int argc,char**argv){
 '''
     with tempfile.TemporaryDirectory(prefix='precompile-seh-') as tmp:
         path=Path(tmp); unit=path/'fixture.cpp';exe=path/'fixture.exe';unit.write_text(cpp,encoding='utf-8')
-        cmd=[args.cxx,'--target=x86_64-pc-windows-msvc','-std=c++20',str(unit),'-o',str(exe),'-fuse-ld=lld']
+        cmd=[args.cxx,*windows_target(args.cxx),'-std=c++20',str(unit),'-o',str(exe),'-fuse-ld=lld']
         if args.linker:cmd+=['-B'+str(args.linker.parent)]
         subprocess.run(cmd,check=True,timeout=60)
         for case in [0,1,2,3,4]:
