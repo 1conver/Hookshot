@@ -36,7 +36,8 @@ struct HosThread {
     uint32_t kernel_handle;
     HANDLE wake;
     /* virtual cores (HOS_VCORES): the core held + 1 (0: none), the last one, a better waiter's request, queued, and
-       whether it has run without one since an escape (vc_acquire; until its next block: hos_vcore_away) */
+       whether it has run without one since an escape (vc_acquire; until its next block, hos_vcore_away, or the next
+       hos_vcore_back) */
     int vc_held, vc_last, vc_queued, vc_escaped;
     volatile int vc_kick;
     int64_t vc_since;
@@ -1519,7 +1520,12 @@ int hos_vcore_away(void) {
 }
 void hos_vcore_back(void) {
     HosThread *t = cur;
-    if (hos_vcores_on() && t && !t->vc_held) vc_acquire(t);
+    if (!hos_vcores_on() || !t) return;
+    /* after it the thread holds a core or has escaped again (vc_acquire sets the flag again): the escape the flag stood
+       for has ended, also at a back without its away (a thread's start). A flag left up while a core is held would make
+       a later inner block's away answer 1 and take a core in the middle of the outer block */
+    t->vc_escaped = 0;
+    if (!t->vc_held) vc_acquire(t);
 }
 /* Lifted code calls this from its interrupt polls with the loop's guest registers still in host registers (a64_poll_cur,
    mkw_glue.c: the poll hands over no context, so the compiler need not spill them). It, and everything it calls, must never

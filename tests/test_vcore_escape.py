@@ -3,7 +3,9 @@ core again after its next block, like every other thread (issue 1929). The actua
 virtual-core block (from vc_lock to hos_cv_sleep) are compiled with a single-threaded harness: a clock the waits advance,
 no-op locks, a log that counts escapes. Before, hos_vcore_away answered 0 for the escaped thread (it held no core to give
 up), so its `if (away) hos_vcore_back();` never ran and the thread kept running with no core, and with the core number of
-a core another thread held, for the rest of its life.
+a core another thread held, for the rest of its life. A hos_vcore_back without its away (a thread's start) ends an escape
+too: a flag left up while the thread holds a core would make an inner block's away answer 1 and take a core in the
+middle of the outer block.
 
 python -I -B tests/test_vcore_escape.py [--cxx clang++]
 """
@@ -112,6 +114,29 @@ int main(void) {
     check(!t.vc_held, "no core is taken inside the outer block");
     if (outer) hos_vcore_back();
     check(t.vc_held == 2, "the core is taken after the outer block");
+
+    thread(&t, "waiter", 16, 3), thread(&h0, "holder0", 16, 1), thread(&h1, "holder1", 16, 2);
+    memset(vc_owner, 0, sizeof vc_owner);
+    escape(&t, &h0, &h1);   /* a back without its away (as at a thread's start) takes the core: the escape is over */
+    hos_vcore_back();
+    check(t.vc_held == 2, "a back without an away gives the escaped thread the free core");
+    const int outer2 = hos_vcore_away();
+    const int inner2 = hos_vcore_away();
+    check(outer2 == 1 && inner2 == 0, "after a back without an away, a block inside a block takes no core after it");
+    if (inner2) hos_vcore_back();
+    check(!t.vc_held, "no core is taken inside the outer block after a back without an away");
+    if (outer2) hos_vcore_back();
+    check(t.vc_held == 2, "the core is taken after the outer block");
+
+    thread(&t, "waiter", 16, 3), thread(&h0, "holder0", 16, 1), thread(&h1, "holder1", 16, 2);
+    memset(vc_owner, 0, sizeof vc_owner);
+    escape(&t, &h0, &h1);   /* a back without its away that escapes again: that escape ends at the next block */
+    cur = &h1; hos_vcore_back();
+    cur = &t;
+    const int before = escapes_logged;
+    hos_vcore_back();
+    check(escapes_logged == before + 1 && !t.vc_held, "a back without an away escapes again while both cores are held");
+    check(hos_vcore_away() == 1, "and the thread still takes a core after its next block");
 
     thread(&u, "never-held", 16, 3);   /* a thread that holds no core and never escaped: nothing to take after a block */
     cur = &u;
