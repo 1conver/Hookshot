@@ -75,7 +75,7 @@ int hos_ini_option(const char *key, int otherwise) {   /* (frame_rate_cap=: the 
     return !strcmp(key, "frame_rate_cap") && e ? atoi(e) : otherwise;
 }
 volatile uint64_t hos_gfx_module = MOD;
-volatile int hos_fixed_resolution, hos_dynres_runs;
+volatile int hos_fixed_resolution, hos_dynres_runs, hos_scene_rgba16f;
 volatile uint32_t hos_fixed_scale_bits;
 volatile float hos_text_scale, hos_camera_scale;
 @OPTS@

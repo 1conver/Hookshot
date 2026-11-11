@@ -243,6 +243,9 @@ volatile float hos_camera_scale = 1.0f;   /* (the right stick's camera turn spee
 static float camera_scale(int percent) {
     return (percent >= 50 && percent <= 400 ? percent : 100) / 100.0f;
 }
+volatile int hos_scene_rgba16f = 0;   /* (the scene buffer RGBA16F, not R11G11B10F, f_80672260: nx2/oot_patches.py; HDR set to
+                                         Native with the PsychoV35 tone mapper: the temporal upscalers take only
+                                         R11G11B10F, so Vanilla keeps it) */
 volatile uint64_t hos_step_probe = 0;   /* (f_80706be0's object, set by the lifted code when the frame-time hook is in this build; its
                                             +0xd58 is the game clock in 1/60 s: nx2/oot_patches.py) */
 volatile uint32_t hos_frame_seconds_bits = 0;   /* (the frame's seconds as a float's bits for that hook, 0: the game's own step) */
@@ -332,6 +335,7 @@ static void realtime_step(int64_t now) {
         hos_text_scale = text_scale(env, rx_option(5, 0));
     }
     hos_camera_scale = camera_scale(rx_option(HOS_OPT_CAMERA_SPEED, 100));
+    hos_scene_rgba16f = rx_option(HOS_OPT_HDR_TONEMAP, 0) != 0;
     {   /* (the Insert menu's Resolution: the fixed path's scale in 1/10000, live; HOS_RES_SCALE
            below stays over it) */
         const int scale = rx_option(3, 0);

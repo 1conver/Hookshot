@@ -40,6 +40,10 @@ enum { HOS_OPT_DISABLE_CAMERA_CENTERING = 45 };
 enum { HOS_OPT_CAMERA_SPEED = 48 };
 /* (HOS_OPT_PROMPTS, 46: the Button prompts row, host/prompts.c: 0 Auto, else HOS_PROMPT_* + 1; a change shows at once) */
 enum { HOS_OPT_PROMPTS = 46 };
+/* (HOS_OPT_HDR_TONEMAP, 47: HDR set to Native with its Tone mapper row on PsychoV35, vk_menu.cpp scene_tonemap_on; host/nn_vi.c
+   makes the scene buffer RGBA16F only then, so Native HDR with the row on Vanilla keeps the game's R11G11B10F and the
+   temporal upscalers, which take only that scene) */
+enum { HOS_OPT_HDR_TONEMAP = 47 };
 
 /* (hookshot) the controls' names (host/nn_hid.c, host/pad_sdl.c, the pad_ and key_ lines of hookshot_options.ini):
    the Switch's buttons in nn::hid's bit order, and a gamepad's inputs by position (the bottom face button first:
