@@ -656,11 +656,27 @@ def zstd_start(head):
     return head == ZSTD or (len(head) == 4 and head[1:] == b"\x2a\x4d\x18" and head[0] & 0xf0 == 0x50)
 
 
+def still_in_nup_frame(f, head):
+    """Whether a .zs file that starts as zstd (head: its first 18 bytes) is the .nup's own frame round a damaged file, as
+    builders before #456 wrote them (#2361): a frame whose content is as large as the file, and that starts with zeros or
+    does not decompress. Only those are decompressed, and only their start: a game .zs file's content is larger than the
+    file, and most of them need the game's dictionary to decompress at all"""
+    if frame_content_size(head) != os.fstat(f.fileno()).st_size:
+        return False
+    import zstandard
+    f.seek(0)
+    try:
+        return not any(zstandard.ZstdDecompressor().stream_reader(f, read_size=1 << 14).read(16))
+    except zstandard.ZstdError:
+        return True
+
+
 def damaged_game_files(romfs, progress=None):
     """The romfs .zs files that do not start as zstd: in the 23.3 GB dumps three of them begin with zeros (the complete
     dump is about 23.8 GB), and the game then leaves out every model that uses one: the Water Temple's walls and floors,
-    the Great Fairy Fountain's floor (#1002, #718, #1259). progress(done, total), when given, after each file: the files
-    are listed first, then opened one by one (about 100,000, minutes where a virus scanner looks at each one)"""
+    the Great Fairy Fountain's floor (#1002, #718, #1259). Also those still in the .nup's zstd frame (still_in_nup_frame).
+    progress(done, total), when given, after each file: the files are listed first, then opened one by one (about
+    100,000, minutes where a virus scanner looks at each one)"""
     root = long_path(romfs)   # (walked and read as long paths; the paths returned are under romfs as given)
     paths = []   # (the long path read, the path under romfs as given)
     for folder, dirs, files in os.walk(root):
@@ -671,7 +687,8 @@ def damaged_game_files(romfs, progress=None):
     found = []
     for i, (path, given) in enumerate(paths):
         with open(path, "rb") as f:
-            if not zstd_start(f.read(4)):
+            head = f.read(18)
+            if not zstd_start(head[:4]) or still_in_nup_frame(f, head):
                 found.append(given)
         if progress:
             progress(i + 1, len(paths))

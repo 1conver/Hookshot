@@ -77,7 +77,7 @@ class Heads(unittest.TestCase):
             # (the damaged file now holds its stand-in: a whole one of the same kind)
             self.assertEqual(Path(romfs, "Model", "damaged.bntx.zs").read_bytes(), WHOLE)
             self.assertFalse(os.path.exists(os.path.join(out, make_game.HEADS)))
-            self.assertEqual(Path(out, ".hookshot_romfs_checked").read_text(), "resolved-v1\n" + stamp + "\n")
+            self.assertEqual(Path(out, ".hookshot_romfs_checked").read_text(), "resolved-v2\n" + stamp + "\n")
             # (#2237: the list is kept in the game folder, where the build's output is not)
             note = Path(out, make_game.DAMAGED_NOTE)
             listed = note.read_text(encoding="utf-8")
@@ -129,7 +129,7 @@ class Heads(unittest.TestCase):
                 make_game.stand_in_damaged_files(out, str(romfs))
                 make_game.stand_in_damaged_files(out, str(romfs))
             self.assertEqual(scan.call_count, 1)
-            self.assertEqual(checked.read_bytes(), ("resolved-v1\n" + stamp).encode("utf-8"))
+            self.assertEqual(checked.read_bytes(), ("resolved-v2\n" + stamp).encode("utf-8"))
 
     def test_a_stamp_that_cannot_be_read_matches_no_name(self):
         """A letter replaced while decoding made two names equal, and the second .nup's unpack was skipped (Python's UTF-8

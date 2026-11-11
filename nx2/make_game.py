@@ -460,7 +460,7 @@ def stand_in_damaged_files(out, romfs):
         return
     check_cache_paths(out, (good, checked, romfs))
     stamp = read_stamp(good)
-    checked_stamp = "resolved-v1\n" + stamp
+    checked_stamp = "resolved-v2\n" + stamp   # (v2: also files still in the .nup's zstd frame, #2361)
     if os.path.isfile(checked):
         if read_stamp(checked) == checked_stamp:
             return
