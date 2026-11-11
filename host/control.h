@@ -34,7 +34,8 @@ typedef struct HosControlGame {
     int (*shot)(const char *path, int64_t after, void (*done)(void *ctx, int64_t present, int ok), void *ctx);
     int (*setting)(int index, HosControlSetting *out);   /* the index-th settings row, to list them: 0 past the last */
     /* the row whose hookshot_options.ini key is key set to value as the menu sets it, out the row after it: 1 set, 0 no such
-       row, -1 nothing to choose on this PC (out the row as it is) */
+       row, -1 nothing to choose on this PC, -2 no step of a list row reaches value here, left as it was (out the row as it
+       is) */
     int (*setting_set)(const char *key, int value, HosControlSetting *out);
     /* guest memory, when a level is on (host/control.c reads HOS_CONTROL_MEM). region: 0 when [addr, addr + size) is not
        wholly in mapped guest memory (hos_mem_region's class otherwise). read/write copy between guest memory and a host

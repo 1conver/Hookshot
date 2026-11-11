@@ -230,9 +230,9 @@ next start; `fixed`, one with nothing to choose on this PC (the menu shows it gr
 **option_set**: `name` and `value` (a number, or `true`/`false`). The value is set through the menu's own setter, as
 Left and Right set it: cut to the row's range, the Quality preset turned to Custom unless the row is one it leaves
 alone, a restart noted for the restart question, and kept in `hookshot_options.ini`. The rows the arrows step through
-a list of their own (the Upscaler, Render resolution, the output resolution) are stepped towards the value until they
-reach it or go no further, so they land on the first step at or past it. A `fixed` row replies `failed`. The reply has
-the value it had before and the setting as it is now. The menu's lock keeps a change apart from the menu's own frame.
+a list of their own (the Upscaler, Render resolution, the output resolution) are walked in the arrows' order until they
+reach the value; one that none of their steps reach on this PC leaves them, the Quality preset and the rest as they
+were, and replies `failed`. A `fixed` row replies `failed` too. The reply has the value it had before and the setting as it is now. The menu's lock keeps a change apart from the menu's own frame.
 
 ```
 > {"id":9,"cmd":"option_set","name":"FPS counter","value":true}

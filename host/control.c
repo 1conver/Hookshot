@@ -1155,6 +1155,7 @@ static void cmd_option_set(int ci, const JDoc *d, int req, const char *id) {
     const int value = v->type == J_NUM ? (int)lround(v->num) : v->type == J_TRUE;
     memset(&now, 0, sizeof now);
     const int r = G.game->setting_set ? G.game->setting_set(s.key, value, &now) : 0;
+    if (r == -2) return reply_error(c, id, "failed", "%s: no step reaches %d on this PC (left as it was)", s.key, value);
     if (r < 0) return reply_error(c, id, "failed", "%s: nothing to choose on this PC (the menu shows it greyed)", s.key);
     if (r == 0) return reply_error(c, id, "not_found", "no setting %.100s (gone meanwhile)", name);
     ctl_log("control: setting %s %d -> %d", now.key, s.value, now.value);

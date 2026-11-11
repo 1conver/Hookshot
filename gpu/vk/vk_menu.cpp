@@ -3777,10 +3777,33 @@ int menu_setting(int index, MkwVkSetting* out) {
         if (bridge_row(i) && n++ == index) return bridge_fill(i, out), 1;
     return 0;
 }
+/// A row whose choices are not in the order of their numbers (the output sizes go by width, the Render resolution's slider by
+/// size, the Upscaler by engine), walked in the arrows' own order to the value asked for: one way, then the other, each way
+/// until at() holds, the row stops at an end (state() unchanged) or it comes round to where that way began. A value none of
+/// its steps reach here leaves the row as it was. state(): all a step changes (the Render resolution's Native moves the
+/// Upscaler, not the value); step(dir): one arrow press. Stepping towards the number stopped short: from 2048x1152, 1920x1080
+/// (3) went on to 5120x1440 (4), and from DLSS Auto any Render resolution stopped at Native, which leaves the value as it was
+template <class State, class At, class Step>
+bool walk_to(State state, At at, Step step, int limit) {
+    const auto start = state();
+    for (const int dir : {1, -1}) {
+        const auto from = state();
+        for (int k = 0; k < limit && !at(); k++) {
+            const auto was = state();
+            step(dir);
+            if (state() == was || state() == from) break;
+        }
+        if (at()) return true;
+    }
+    for (int k = 0; k < limit && state() != start; k++) step(1);   // (back where it was: an end-stopped row is at its first)
+    return false;
+}
+
 /// The settings row whose ini key is key, set to value as the menu's Left and Right set it (set_row: cut to its range, the
 /// Quality preset made Custom unless the row is exempt, a restart noted, kept in the options file). The rows the arrows step
-/// through a list of their own (the Upscaler, Render resolution, the output resolution) are stepped towards value until they
-/// reach it or go no further. out: the row as it is now. 1 set, 0 no such row, -1 nothing to choose on this PC (row_fixed)
+/// through a list of their own (the Upscaler, Render resolution, the output resolution) are walked to value: walk_to. out: the
+/// row as it is now. 1 set, 0 no such row, -1 nothing to choose on this PC (row_fixed), -2 none of a list row's steps reach
+/// value here (the row and the rest as they were)
 int menu_setting_set(const char* key, int value, MkwVkSetting* out) {
     bridge_probe_first();
     std::lock_guard lk(menu_mu);
@@ -3791,12 +3814,29 @@ int menu_setting_set(const char* key, int value, MkwVkSetting* out) {
     if (row_fixed(r.value)) return bridge_fill(i, out), -1;
     const int want = std::min(std::max(value, r.lo), r.value == &opts.pad_layout ? std::min(r.hi, 2) : r.hi);   // (3: Custom, shown only)
     if (r.value == &opts.dlss || r.value == &opts.resolution || r.value == &opts.output_res) {
-        const int dir = want >= *r.value ? 1 : -1;
-        for (int k = 0; k <= r.hi - r.lo + 1 && *r.value != want; k++) {
-            const int was = *r.value;
-            set_row(r, was + dir * r.step, dir, false);
-            if (*r.value == was || (dir > 0 ? *r.value > want : *r.value < want)) break;   // (no further, or past it)
+        // (the Render resolution's Native is a place of its own, DLAA or FSR 4's native AA, whatever the value it kept; the
+        // Upscaler that runs, as set_row steps it: a saved DLAA that cannot run here is the game's own, and its values count)
+        const auto native = [&] { return r.value == &opts.resolution && ur::full_scale(upscaler()); };
+        const int render = opts.resolution, upscaler_was = opts.dlss;
+        // (a value none of the steps reach: everything the steps on the way changed is put back, the Quality preset and the
+        // rows the environment holds too)
+        const Options opts_was = opts;
+        EnvOverride env_was[sizeof env_overrides / sizeof env_overrides[0]];
+        std::copy(std::begin(env_overrides), std::end(env_overrides), env_was);
+        const mr::State restart_was = restart_state;
+        if (!walk_to([&] { return std::pair(native() ? -1 : *r.value, opts.dlss); }, [&] { return *r.value == want && !native(); },
+                     [&](int dir) { set_row(r, *r.value + dir * r.step, dir, false); }, 64)) {
+            opts = opts_was;
+            std::copy(std::begin(env_was), std::end(env_was), env_overrides);
+            restart_state = restart_was;
+            samplers_changed();
+            menu_refresh = true;
+            bridge_fill(i, out);
+            return -2;
         }
+        // (each Upscaler on the way snapped the Render resolution to its own steps: snapped once, from where it was, as one
+        // step there would, and as it was when the Upscaler is. FSR 3.1 to DLSS through Off and the game's own took 58 % to 50 %)
+        if (r.value == &opts.dlss) opts.resolution = opts.dlss == upscaler_was ? render : ur::snap_render(upscaler(), render);
         save();
     } else if (want != *r.value) {
         set_row(r, want, want > *r.value ? 1 : -1);
