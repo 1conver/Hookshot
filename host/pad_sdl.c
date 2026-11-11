@@ -22,6 +22,7 @@
 #include "hos_sdl.h"
 #include "hd_rumble.h"
 #include "hos_motion.h"
+#include "steam_pads.h"
 #include "../gpu/vk/vk_api.h"   /* (HOS_PAD_*) */
 #ifndef HOOKSHOT_ENV_H   /* (env_on: the switches' one rule) */
 #include "../gpu/vk/compat/hookshot_env.h"
@@ -55,6 +56,9 @@ static struct {
     uint32_t serial;
     float bias[3], bias_t;
     int has_bias;
+    uint16_t vendor;      /* (hookshot) its USB vendor, and its Steam Input handle: not 0 for a Steam stand-in pad */
+    uint64_t steam;
+    int motion_only;      /* (host/steam_pads.h) a real Valve pad while a Steam stand-in pad is open: motion, no input */
 } pads[MAX_PADS];
 static uint32_t pads_opened;
 static SRWLOCK state_lock = SRWLOCK_INIT;
@@ -99,6 +103,17 @@ static int pads_start(void) {
     /* (with no window nothing reads SDL's quit event: SDL's own SIGINT/SIGTERM handlers turned a timeout's or a service
        manager's SIGTERM into that event, and the run went on until SIGKILL. Without them the signals end it as usual) */
     if (env_on("HOS_HEADLESS")) hos_sdl_hint("SDL_NO_SIGNAL_HANDLERS", "1");
+    /* (hookshot) Valve's own pads taken out of the ignore list Steam sets for the games it starts, so that their motion
+       sensors are read (host/steam_pads.h, #1897). Only with an SDL that tells Steam's stand-in pads apart: without
+       that, a real pad and its stand-in would both play. A list emptied or unset in Steam's launch options is left as
+       it is */
+    {
+        const char *list = getenv("SDL_GAMECONTROLLER_IGNORE_DEVICES");
+        char kept[4096];
+        if (list && *list && hos_sdl_knows_steam_pads() && steam_pads_without_valve(list, kept, sizeof kept) > 0 &&
+            hos_sdl_hint_override("SDL_GAMECONTROLLER_IGNORE_DEVICES", kept))
+            hos_log("hid: Valve's controllers (not the Steam Deck's) taken out of Steam's ignore list, for their motion sensors");
+    }
     if (!hos_sdl_init(HOS_SDL_GAMEPAD)) {
         hos_log("hid: SDL could not start its controller support: %s", hos_sdl_error());
         return 0;
@@ -299,6 +314,21 @@ static void motion_poll(int64_t now, int count) {
     ReleaseSRWLockExclusive(&state_lock);
 }
 
+/* (hookshot) a motion-only pad's own presses (host/steam_pads.h): they are not the game's input, but they still mark it
+   the pad used last, which motion_poll reads motion from */
+static void motion_only_used(int i, int64_t now) {
+    int rx_option(int id, int otherwise);
+    const int z = rx_option(11, 0);   /* (the menu's Stick dead zone) */
+    uint64_t sig = 0;
+    for (int k = BTN_A; k <= BTN_RIGHT; k++)
+        if (hos_sdl_pad_button(pads[i].gc, k)) sig |= 1ULL << k;
+    for (int k = 0; k < 4; k++) {
+        const int32_t a = stick_value(hos_sdl_pad_axis(pads[i].gc, AX_LX + k), 0, z);
+        sig |= (uint64_t)(a > 0 ? 1 : a < 0 ? 2 : 0) << (32 + 2 * k);
+    }
+    if (sig != pads[i].input_sig) pads[i].input_sig = sig, pads[i].used_ns = now;
+}
+
 /* one poll: controllers plugged in or gone (each second), then every open one's buttons, sticks and rumble */
 static void pads_poll(void) {
     static int64_t next_scan = 0;
@@ -341,8 +371,11 @@ static void pads_poll(void) {
                 memset(pads[slot].held, 0, sizeof pads[slot].held);
                 pads[slot].serial = ++pads_opened;
                 pads[slot].has_bias = 0;
-                hos_log("hid: controller \"%s\" connected (SDL)%s", hos_sdl_pad_name(gc),
-                        pads[slot].motion ? ", with a gyroscope" : "");
+                pads[slot].vendor = hos_sdl_pad_vendor(gc);
+                pads[slot].steam = hos_sdl_pad_steam_handle(gc);
+                pads[slot].motion_only = 0;   /* (the poll below decides, and says so) */
+                hos_log("hid: controller \"%s\" connected (SDL)%s%s", hos_sdl_pad_name(gc),
+                        pads[slot].motion ? ", with a gyroscope" : "", pads[slot].steam ? ", Steam Input's" : "");
             }
         }
         uint64_t b = 0;
@@ -366,9 +399,31 @@ static void pads_poll(void) {
             hd_rumble_merge(felt[0], felt[1], felt[2]);
             hd_rumble_encode(felt[2], strength, side[2]);
         }
+        int stand_in = 0;   /* (hookshot) a Steam stand-in pad open (host/steam_pads.h) */
+        for (int i = 0; i < MAX_PADS; i++) stand_in |= pads[i].gc && pads[i].steam;
         for (int i = 0; i < MAX_PADS; i++) {
             void *gc = pads[i].gc;
             if (!gc) continue;
+            /* (hookshot) a real Valve pad beside its Steam stand-in: its motion is read (motion_poll), its buttons and
+               sticks come through the stand-in as the player's Steam layout maps them, so they are not merged twice,
+               and its rumble goes through Steam too. Its own presses still mark it the pad used last, for motion */
+            const int motion_only = steam_pads_motion_only(pads[i].vendor, pads[i].steam, stand_in);
+            if (motion_only != pads[i].motion_only) {
+                pads[i].motion_only = motion_only;
+                /* (a real Valve pad this SDL opens with no gyroscope: an SDL with no driver for it, so the loosened
+                   list gives no motion, said once so the next person with #1897 sees why) */
+                if (motion_only && !pads[i].motion)
+                    hos_log("hid: \"%s\": no motion sensors through this SDL, so Motion controls can't read it; "
+                            "its buttons come through Steam Input's pad", hos_sdl_pad_name(gc));
+                else
+                    hos_log(motion_only ? "hid: \"%s\": motion only, its buttons come through Steam Input's pad"
+                                        : "hid: \"%s\": its buttons count again (no Steam Input pad is open)",
+                            hos_sdl_pad_name(gc));
+            }
+            if (motion_only) {
+                motion_only_used(i, now);
+                continue;
+            }
             count++;
             uint64_t sig = 0;
             for (int k = BTN_A; k <= BTN_RIGHT; k++)   /* (SDL3's gamepad buttons are in SDL2's order) */
@@ -425,7 +480,7 @@ static void pads_poll(void) {
         state_count = count;
         state_name[0] = 0;
         for (int i = 0; i < MAX_PADS; i++)
-            if (pads[i].gc) {
+            if (pads[i].gc && !pads[i].motion_only) {   /* (the stand-in's name, not its motion-only pad's) */
                 const char *name = hos_sdl_pad_name(pads[i].gc);
                 snprintf(state_name, sizeof state_name, "%s", name ? name : "");
                 break;
