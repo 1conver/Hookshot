@@ -39,6 +39,7 @@ static const char* hos_sdl_error() { return ""; }
 static int hos_sdl_desktop_size(int* w, int* h) { *w = 2560; *h = 1440; return 1; }
 static int hos_posix_window[4];
 static int sdl_ready;
+int hos_display_owns_sdl(void) { return sdl_ready; }
 
 #include "display_init_actual.inc"
 

@@ -6158,6 +6158,7 @@ void mask_stabilize(VkCommandBuffer cmd, Texture* tex, uint32_t level, uint32_t 
     static VkImageView hist_view[2] = {};
     static uint32_t hist_w = 0, hist_h = 0, cur = 0;
     static uint64_t hist_frame = 0;
+    end_pass(cmd); // History image transitions must be outside dynamic rendering.
     if (hist_w != w || hist_h != h) {
         for (int i = 0; i < 2; i++) {
             VkImageCreateInfo ic{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
@@ -6196,7 +6197,6 @@ void mask_stabilize(VkCommandBuffer cmd, Texture* tex, uint32_t level, uint32_t 
         wr[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, wr[i].pImageInfo = &infos[i];
     }
     struct { int32_t size[2]; int32_t valid, mode; float weight; int32_t radius; } pc{{(int32_t)w, (int32_t)h}, valid, 0, weight, mask_radius_env()};
-    end_pass(cmd);
     full_barrier(cmd);   // (after the pass's write of the mask)
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipe);
     vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, layout, 0, 3, wr);
@@ -6399,8 +6399,11 @@ void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d) {
         ~MaskGuard() { if (cmd) mask_stabilize(cmd, tex, level, layer, w); }
     } mask_guard;
     if (p.key == 0x3427a1dbefd5e02cull && at.n > 0 && at.color[0])
-        if (const float mw = mask_weight(); mw > 0)
-            mask_guard = {cmd, at.color[0], at.color_level[0], at.color_layer[0], mw};
+        if (const float mw = mask_weight(); mw > 0) {
+            // Assign fields without a temporary whose destructor would dispatch early.
+            mask_guard.cmd = cmd; mask_guard.tex = at.color[0];
+            mask_guard.level = at.color_level[0]; mask_guard.layer = at.color_layer[0]; mask_guard.w = mw;
+        }
     if (!record_progs().empty() && std::find(record_progs().begin(), record_progs().end(), p.key) != record_progs().end())
         record_draw(s, p, d, at);
     // (RX_VK_DUMP_EACH=<key>,...: in a dump, the pass ends after each draw of those programs, so every one of them is
