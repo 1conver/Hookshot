@@ -394,6 +394,9 @@ def patch_movie_frames(s):
 # - f_80a87e50, the pick-up indicator above Link's head (a rupee, a Deku Stick): the count it shows (+864) moves toward the
 #   wallet's (+860) by (int)(step * max(distance / 50, 1)) and the indicator fades when they meet. Cut to 0, it stayed at the old
 #   count until a door or a talk replaced it (issue 1832).
+# - f_800672e0, the water renderer: its ripple simulation runs (int)step times the water's substeps (+76 of the pass) each frame.
+#   Cut to 0, the rings Link and the actors make in water stood still above 60 fps. Found by atk3001 for Lichii (zortos293/
+#   Lichii#1152), as ported to Fritchii (Frizti/Fritchii d389685a4, 063dbb741): its remainder is kept per water object (x21).
 # hos_frame_whole carries the fractions per counter while the frames' own time is the step, so each moves at the game's rate;
 # otherwise it cuts as the game does. A site is added here once it is seen to misbehave in game. (A site's function, its code to
 # replace, and the counter's address for its remainder.)
@@ -403,6 +406,10 @@ WHOLE_SITES = (
     ("void f_80a87e50(Ctx *__restrict A64_NOESC c) {@",
      "    c->x[12]=recomp_fp_to_int(c->vreg[0][0]&UINT64_C(0xffffffff),32,32,1,3,c->fpcr,&c->fpsr);@",
      "c->x[19] + 864"),
+    # (the cut alone, the function's one)
+    ("void f_800672e0(Ctx *__restrict A64_NOESC c) {@",
+     "    c->x[9]=recomp_fp_to_int(c->vreg[0][0]&UINT64_C(0xffffffff),32,32,1,3,c->fpcr,&c->fpsr);@",
+     "c->x[21]"),
 )
 WHOLE_SITES = tuple((h.replace("@", "\n"), o.replace("@", "\n"), k) for h, o, k in WHOLE_SITES)
 WHOLE_MARK = "/* (the step's whole frames: nx2/oot_patches.py) */"

@@ -6,7 +6,9 @@ when they meet. Under a Frame rate cap above 60 the step is the frame's own
 time, under 1 (0.42 at 144 fps): cut to 0 every frame, the count never moved and the indicator stayed. With the frames' own time
 as the step (carry), hos_frame_whole adds the amount to the counter's own remainder and hands out its whole frames: 144 frames of
 60/144 are 60; an amount of 1 or more keeps its fraction too; two counters keep their own remainders; NaN and amounts below zero
-give 0. Without it, the amount is cut as the game cuts it (60 fps as before). The patch replaces the one cut of each site, once,
+give 0. Without it, the amount is cut as the game cuts it (60 fps as before). The water renderer (f_800672e0) runs its ripple
+simulation (int)step times a frame the same way, its remainder kept per water object: forty surfaces stepped in turn each still
+count their 60 frames a second. The patch replaces the one cut of each site, once,
 declares the hook, and leaves a file patched before and a function whose code differs as they are.
 
 python -I -B tests/test_frame_whole.py
@@ -44,8 +46,18 @@ int main(void) {
     CHECK(n == 5);
     CHECK(frame_whole(&w, a, bits(0.42f), 0) == 0 && frame_whole(&w, a, bits(1.5f), 0) == 1 && frame_whole(&w, a, bits(2.0f), 0) == 2);
     CHECK(frame_whole(&w, a, bits(-1.0f), 1) == 0 && frame_whole(&w, a, bits(NAN), 1) == 0 && frame_whole(&w, a, bits(0.0f), 1) == 0);
-    for (uint64_t k = 0; k < 40; k++) frame_whole(&w, 0x9000 + k, bits(0.5f), 1);   /* (more counters than slots: the oldest go) */
-    CHECK(frame_whole(&w, 0x9000 + 39, bits(0.5f), 1) == 1);   /* (a slot still held: 0.5 + 0.5) */
+    for (uint64_t k = 0; k < 100; k++) frame_whole(&w, 0x9000 + k, bits(0.5f), 1);   /* (more counters than slots: the oldest go) */
+    CHECK(frame_whole(&w, 0x9000 + 99, bits(0.5f), 1) == 1);   /* (a slot still held: 0.5 + 0.5) */
+    CHECK(frame_whole(&w, 0x9000, bits(0.5f), 1) == 0);   /* (the oldest's slot was reused: it starts again from 0) */
+    /* (a scene's water surfaces, each stepped once a frame at 144 fps: 40 of them, more than the old 16 slots, each still counts
+       its 60 frames a second) */
+    {
+        static FrameWhole water;
+        uint32_t passes[40] = {0};
+        for (int f = 0; f < 144; f++)
+            for (int k = 0; k < 40; k++) passes[k] += frame_whole(&water, 0x7000000 + (uint64_t)k * 0x400, bits(60.0f / 144.0f), 1);
+        for (int k = 0; k < 40; k++) CHECK(passes[k] == 60 || passes[k] == 59);
+    }
     if (!fails) printf("PASS\n");
     return fails != 0;
 }
