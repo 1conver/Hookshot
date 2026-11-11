@@ -153,13 +153,19 @@ def update_target(latest, tools, switch=False):
     return latest if have and out and out > have else tools
 
 
+def older_version(target, have):
+    """Known version order only: arbitrary hashes and differing nightlies cannot establish commit ancestry."""
+    old, new = release_key(have), release_key(target)
+    return bool(old and new and new < old)
+
+
 def choose_mode(game, tools, latest, source_picked, kept, switch=False):
-    """What the builder's button does. The same order as the Windows builder (MainWindow.RefreshMode): an older game
-    that still has its files is updated, a game at the newest known release is played, and an older builder updates
+    """What the builder's button does: an older game that still has its files is updated, a game at or beyond the
+    newest known release is played unless its track is explicitly switched, and an older builder updates
     itself before a new build. latest None: GitHub did not answer, so the builder's own version is the newest known.
     Newest is update_target's: a builder that is not an older release is not made to update."""
     target = update_target(latest, tools, switch)
-    if kept and game and target and game != target and not source_picked:
+    if kept and game and target and game != target and not source_picked and (switch or not older_version(target, game)):
         return "update-game"
     if game and not source_picked:
         return "up-to-date"
