@@ -154,8 +154,14 @@ def main():
     draw = (ROOT / "gpu" / "vk" / "vk_draw.cpp").read_text(encoding="utf-8")
     if "(!temporal_wanted() && !temporal_off())" not in function(draw, "bool temporal_stand_in("):
         raise SystemExit("temporal_stand_in: the game's network runs with Off")
-    if "(temporal_wanted() || temporal_off()) && temporal_rejected_network(" not in function(draw, "bool upscale_stub("):
-        raise SystemExit("upscale_stub: a network that did not translate is not stretched with Off")
+    if "(temporal_wanted() || temporal_off() || fsr3_inputs::wanted()) && temporal_rejected_network(" not in function(draw, "bool upscale_stub("):
+        raise SystemExit("upscale_stub: a network that did not translate is not stretched with Off, or not offered to FSR 3.1")
+    rejected = function(draw[draw.rindex("static bool temporal_rejected_network("):], "static bool")   # (the definition)
+    fsr3 = rejected.find("fsr3_upscale(cmd, key, false, src, in_view, dst, out_view, 0)")
+    if fsr3 < 0 or fsr3 > rejected.find("temporal_upscale(cmd, key, false"):
+        raise SystemExit("temporal_rejected_network: FSR 3.1 is not offered a network that did not translate (before the "
+                         "temporal upscaler, as fsr3_stand_in comes before temporal_stand_in): its fixed Render resolution "
+                         "steps are a plain stretch on cards that leave those networks out (issue #1829)")
     if "upscalers_available()" not in function(menu, "void set_row(") or "upscalers_available()" not in function(menu, "bool row_fixed("):
         raise SystemExit("the Upscaler row does not step over (or fix on) what runs here")
     with tempfile.TemporaryDirectory(prefix="upscaler-rows-") as tmp:

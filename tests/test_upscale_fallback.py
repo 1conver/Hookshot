@@ -133,6 +133,7 @@ void end_pass(VkCommandBuffer) {}
 // (the temporal upscaler, off here: upscale_stub offers it the frame first, vk_draw.cpp temporal_rejected_network)
 bool temporal_wanted() { return false; }
 bool temporal_off() { return false; }
+namespace fsr3_inputs { bool wanted() { return false; } }   // (FSR 3.1, off here too)
 static bool temporal_rejected_network(VkCommandBuffer, uint64_t, Texture *, const nvn_tex *, Texture *, const nvn_tex *) {
     return false;
 }
