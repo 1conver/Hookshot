@@ -57,26 +57,35 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          # Retry the entire bootstrap: even the first index refresh or the toolchain setup can fail while a mirror syncs.
-          # Every attempt refreshes the signed indexes; no stale-index or authentication checks are bypassed.
-          for try in 1 2 3; do
+          retry_packages() {
+            for try in 1 2 3; do
+              if "$@"; then return 0; else package_status=$?; fi
+              if [ "$try" = 3 ]; then return "$package_status"; fi
+              sleep 20
+            done
+          }
+          base_packages() {
+            apt-get update &&
+              apt-get install -y --no-install-recommends software-properties-common gpg-agent
+          }
+          toolchain_packages() {
+            # Enrollment can leave a source without its key after a network failure. Repair it before refreshing
+            # indexes that depend on that key; retrying the base refresh first would stop at NO_PUBKEY (#2266).
+            # --no-update only separates enrollment from the explicit, signed index refresh immediately afterward.
             # (libstdc++ 13, from the toolchain PPA: C++20 <format>; linked in statically)
-            if apt-get update &&
-              apt-get install -y --no-install-recommends software-properties-common gpg-agent &&
-              add-apt-repository -y ppa:ubuntu-toolchain-r/test &&
+            # Launchpad metadata connections can hang past the entire job's hour. Give each retry a real chance;
+            # terminate enrollment after three minutes, then kill it if termination itself stalls.
+            timeout --kill-after=5s 180s add-apt-repository -y --no-update ppa:ubuntu-toolchain-r/test &&
+              apt-get update &&
               apt-get install -y --no-install-recommends g++-13 libstdc++-13-dev &&
               apt-get install -y --no-install-recommends git ca-certificates curl xz-utils zstd file unzip python3 \
               build-essential gcc-12 g++-12 libstdc++-12-dev nasm meson ninja-build cmake pkg-config \
               libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxss-dev libxfixes-dev libxinerama-dev \
               libxkbcommon-dev libwayland-dev wayland-protocols libdecor-0-dev libegl-dev libgles-dev libdrm-dev libgbm-dev \
-              libpulse-dev libasound2-dev libpipewire-0.3-dev libudev-dev libdbus-1-dev libxft-dev libfontconfig1-dev zlib1g-dev; then
-              break
-            else
-              package_status=$?
-            fi
-            if [ "$try" = 3 ]; then exit "$package_status"; fi
-            sleep 20
-          done
+              libpulse-dev libasound2-dev libpipewire-0.3-dev libudev-dev libdbus-1-dev libxft-dev libfontconfig1-dev zlib1g-dev
+          }
+          retry_packages base_packages
+          retry_packages toolchain_packages
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
