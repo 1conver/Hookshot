@@ -21,7 +21,7 @@ using VmaAllocation = void*;
 constexpr int kMaxMult = 8;
 #define CHECK(x) do { if (!(x)) { std::fprintf(stderr, "FAIL line %d: %s\n", __LINE__, #x); std::exit(1); } } while (0)
 /* ACTUAL_STATE */
-struct { int framegen = 2, hdr_white = 200, hdr_peak = 1000; } opts;
+struct { int framegen = 2, hdr_white = 200, hdr_peak = 1000, hdr_contrast = 100; } opts;
 struct { bool push_descriptor = true; std::mutex present_mu; } dev;
 constexpr bool vkCmdPushDescriptorSetKHR = true;
 constexpr uint32_t HDR_ENCODE_COMP_SPV[] = {0};
@@ -71,7 +71,7 @@ void pass(VkCommandBuffer, const Pipe& p, std::initializer_list<std::pair<VkImag
           uint32_t, uint32_t, const void* pc = nullptr, uint32_t bytes = 0) {
     ++dispatches;
     if (&p == &fg.copy) { CHECK(bytes == sizeof copy_pc); std::memcpy(copy_pc, pc, bytes); }
-    if (&p == &hdr.pipe) { CHECK(bytes == 32); std::memcpy(hdr_uv, pc, sizeof hdr_uv); }
+    if (&p == &hdr.pipe) { CHECK(bytes == 48); std::memcpy(hdr_uv, pc, sizeof hdr_uv); }
 }
 void vkCmdCopyImage(VkCommandBuffer, VkImage, VkImageLayout, VkImage, VkImageLayout,
                     uint32_t count, const VkImageCopy* c) {
@@ -122,7 +122,7 @@ void check(uint32_t sw, uint32_t sh, const int* crop, uint32_t x, uint32_t y, ui
     // Execute the actual HDR consumer, keeping resources ready to isolate source validation.
     hdr.init = true; hdr.failed = false; hdr.w = 1920; hdr.h = 1080; hdr.out.image = 77;
     const int before = dispatches;
-    CHECK(framegen_hdr(nullptr, 1, sw, sh, crop, 1920, 1080) == (valid ? 77 : VK_NULL_HANDLE));
+    CHECK(framegen_hdr(nullptr, 1, sw, sh, crop, 1920, 1080, false) == (valid ? 77 : VK_NULL_HANDLE));
     CHECK(dispatches == before + int(valid));
     if (valid) {
         CHECK(hdr_uv[0] == x / float(sw) && hdr_uv[1] == y / float(sh));

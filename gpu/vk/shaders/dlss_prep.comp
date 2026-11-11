@@ -1,7 +1,10 @@
 #version 450
 // (hookshot) NVIDIA DLSS's inputs for OoT's gameplay upscale (vk_dlss.cpp), at the render size, in one pass:
 //  - colour: the network's input as it samples it, the square root of the scene colour (tonemapped, perceptual): DLSS
-//    takes it as LDR colour
+//    takes it as LDR colour, clamped to 0..1. With the game's native HDR the scene goes past 1, and an engine made for HDR
+//    colour (vk_temporal.h TemporalEngine::hdr) is given linear light, which an HDR feature and its auto exposure expect:
+//    vk_temporal.cpp makes this pass a second time with kSquare (constant 1) on, the colour squared, and kColorMax
+//    (constant 0) far above 1, so the highlights are not cut at the paper white (dlss_out.comp's kSquare then off)
 //  - depth: the scene's depth as a plain float image
 //  - motion: where each pixel was in the frame before, in render pixels. The game has no motion vectors: the scene depth
 //    is taken back to clip space and through the frame before's camera (pc.reproject: this frame's clip space to the
@@ -11,6 +14,8 @@
 //    then (after vk_dlss.cpp's actor motion drew into it: dlss_actor.vert)
 // The game's clip space: depth from -1 to 1 (NVN's default), y up, the picture's rows top down.
 layout(local_size_x = 8, local_size_y = 8) in;
+layout(constant_id = 0) const float kColorMax = 1.0;   // (the colour's ceiling: 1 for LDR colour)
+layout(constant_id = 1) const bool kSquare = false;    // (the colour squared: linear light, for an engine made for HDR colour)
 layout(binding = 0) uniform sampler2D scene;
 layout(binding = 1) uniform sampler2D scene_depth;
 layout(binding = 2, rgba16f) uniform writeonly image2D color;
@@ -32,8 +37,9 @@ void main() {
         imageStore(color, g, vec4(clamp(abs(m) / 16.0, 0.0, 1.0), textureLod(scene_depth, uv, 0.0).r, 1.0));
         return;
     }
-    const vec3 c = textureLod(scene, uv, 0.0).rgb;
-    imageStore(color, g, vec4(clamp(c, 0.0, 1.0), 1.0));
+    const vec3 e = max(textureLod(scene, uv, 0.0).rgb, vec3(0.0));
+    const vec3 c = kSquare ? e * e : e;
+    imageStore(color, g, vec4(min(c, vec3(kColorMax)), 1.0));
     const float d = textureLod(scene_depth, uv, 0.0).r;
     imageStore(depth, g, vec4(d));
     vec2 mv = vec2(0.0);

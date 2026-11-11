@@ -719,6 +719,8 @@ of its own downloads (`C:\ProgramData\NVIDIA\NGX\models`) before it uses the gam
 A game built with FSR 4 offers **AMD FSR 4** and **AMD FSR 4 Native AA** in the Graphics tab's **Upscaler** row: AMD's
 machine-learned temporal upscaler in place of the game's own, on the same inputs as DLSS (the scene's colour and depth, the
 camera's and the characters' motion, and the camera jitter). Native AA draws the 3D at full size and smooths its edges.
+With HDR on **Native**, it takes the game's HDR colour as linear light, so highlights above the paper white are kept
+(`RX_VK_FSR4_HDR=0`: cut at the paper white, as before).
 Unlike FSR 3.1 (above), it runs AMD's own DLLs, so it needs them beside the game. Choose it in the menu (`dlss=4` or `5`
 in `hookshot_options.ini`, `RX_VK_FSR4=1` or `2` for one run, `RX_VK_FSR4=0` to leave it out).
 

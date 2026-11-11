@@ -62,7 +62,7 @@ def main():
     # where the driver lacks them (the Upscaler and the DLSS model above), and HDR's levels while HDR is off
     shown = function(menu, "bool row_shown(int i) {")
     for call in ("v != &opts.reflex || reflex_available()", "v != &opts.antilag || antilag_available()",
-                 "(v != &opts.hdr_white && v != &opts.hdr_peak) || opts.hdr != 0"):
+                 "(v != &opts.hdr_white && v != &opts.hdr_peak && v != &opts.hdr_contrast) || opts.hdr != 0"):
         if call not in shown:
             raise SystemExit("row_shown: %s is not there (a row for what is not available here, or HDR's levels with HDR "
                              "off, would show)" % call)
