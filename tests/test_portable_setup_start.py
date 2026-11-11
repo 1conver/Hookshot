@@ -1,5 +1,6 @@
 """Execute real setup initialization/fast-launch with module/profile/process boundaries intercepted."""
 import argparse
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -59,7 +60,7 @@ static BOOL fake_close(HANDLE h) {(void)h;return TRUE;}
 #define SHGetFolderPathW fake_profile
 #define CreateProcessW fake_process
 '''
-    for marker in ("static int home_path(", "static void mkdirs(", "static int portable_prefix(", "static int init_home(",
+    for marker in ("static int builder_ready(", "static int home_path(", "static void mkdirs(", "static int portable_prefix(", "static int init_home(",
                    "static void read_small(", "static int list_name_ok("):
         code += function(source, marker) + "\n"
     # read_small must close real fixture handles; only the synthetic process handles use fake_close.
@@ -86,6 +87,10 @@ int wmain(int argc, wchar_t **argv) {
         CHECK(launch_installed(L"--update authored-game --fetched"));
         CHECK(wcsstr(started,L"--update authored-game --fetched") && wcsstr(workdir,argv[3])==workdir);
     }
+    if (mode == 5) {
+        CHECK(!launch_installed(L"--update authored-game --fetched"));
+        CHECK(!*started);
+    }
     return 0;
 }
 '''
@@ -102,14 +107,24 @@ int wmain(int argc, wchar_t **argv) {
         setup = tree / "Setup.exe"
         import os
         env = {k: v for k, v in os.environ.items() if k.upper() not in ("HOOKSHOT_SETUP_BASE", "HOOKSHOT_BUILDER_PORTABLE")}
+        count = 0
         def run(module, expected, mode, overrides=None):
+            nonlocal count
             subprocess.run([str(exe), str(module), str(profile), str(expected), str(mode)],
                            env=dict(env, **(overrides or {})), cwd=root, check=True)
+            count += 1
         run(setup, home, 1)
         installed = home / "versions/v-authored/HookshotBuilder"
         installed.mkdir(parents=True)
         (installed / "HookshotBuilder.exe").write_text("authored; never executed")
+        for name in re.findall(r'L"([^\"]+)"', function(source, "static int builder_ready(")):
+            (installed / name).write_bytes(b"authored startup component; never executed")
         (home / "versions/current.txt").write_text("v-authored\n")
+        run(setup, home, 0)
+        runtime = installed / "coreclr.dll"
+        runtime.unlink()
+        run(setup, home, 5)
+        runtime.write_bytes(b"authored startup component restored")
         run(setup, home, 0)
         run(installed / "HookshotBuilder-Setup.exe", home, 0)
         run(root / "downloaded-setup.exe", home, 0, {"HOOKSHOT_SETUP_BASE": str(home), "HOOKSHOT_BUILDER_PORTABLE": "1"})
@@ -135,7 +150,7 @@ int wmain(int argc, wchar_t **argv) {
         marker.write_text("broken")
         run(moved / "Setup.exe", home, 2)
         assert not profile.exists(), "No persistent AppData writes expected during fixture startup"
-        print("portable setup: 12 startup scenarios passed; write-protected file boundary, real roots/environment/markers, intercepted process launch")
+        print(f"portable setup: {count} startup scenarios passed; write-protected file boundary, real roots/environment/markers, intercepted process launch")
 
 
 if __name__ == "__main__":

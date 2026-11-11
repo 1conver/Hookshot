@@ -625,6 +625,34 @@ static int nightly_tag(const char *s) {
 #define HOOKSHOT_SETUP_RELEASE ""
 #endif
 
+/* The shipping Builder is a directory-based, self-contained WPF app: an EXE alone cannot start it.
+   Keep this startup contract in step with the publish format; this is not an integrity check of every assembly. */
+static int builder_ready(const wchar_t *exe) {
+    static const wchar_t *const required[] = {
+        L"HookshotBuilder.dll", L"HookshotBuilder.deps.json", L"HookshotBuilder.runtimeconfig.json",
+        L"hostfxr.dll", L"hostpolicy.dll", L"coreclr.dll", L"System.Private.CoreLib.dll",
+        L"WindowsBase.dll", L"PresentationCore.dll", L"PresentationFramework.dll",
+        L"PresentationNative_cor3.dll", L"wpfgfx_cor3.dll"
+    };
+    wchar_t path[MAX_PATH];
+    const size_t n = wcslen(exe);
+    if (n >= MAX_PATH) return 0;
+    wcscpy(path, exe);
+    wchar_t *name = wcsrchr(path, L'\\');
+    if (!name) return 0;
+    const size_t prefix = (size_t)(++name - path);
+    for (size_t i = 0; i <= sizeof required / sizeof *required; i++) {
+        if (i) {
+            if (prefix + wcslen(required[i - 1]) >= MAX_PATH) return 0;
+            wcscpy(name, required[i - 1]);
+        }
+        WIN32_FILE_ATTRIBUTE_DATA info;
+        if (!GetFileAttributesExW(path, GetFileExInfoStandard, &info) ||
+            (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || (!info.nFileSizeHigh && !info.nFileSizeLow)) return 0;
+    }
+    return 1;
+}
+
 static const char *manifest_url(void) {
     static char u[1024];
     const char *e = getenv("HOOKSHOT_SETUP_LIST");
@@ -734,7 +762,7 @@ static DWORD WINAPI work(LPVOID unused) {
     home_path(exe, L"%ls\\%ls", install, wrun);
     for (wchar_t *q = exe; *q; q++) if (*q == L'/') *q = L'\\';
 
-    if (repair || GetFileAttributesW(marker) == INVALID_FILE_ATTRIBUTES || GetFileAttributesW(exe) == INVALID_FILE_ATTRIBUTES) {
+    if (repair || GetFileAttributesW(marker) == INVALID_FILE_ATTRIBUTES || !builder_ready(exe)) {
         /* (unpacked into <tag>.part and renamed once complete: a setup stopped half way never leaves a version that looks installed) */
         home_path(install, L"%ls\\%ls.part", versions, wtag);
         rmtree(install);
@@ -841,8 +869,8 @@ static DWORD WINAPI work(LPVOID unused) {
         wchar_t staged_exe[MAX_PATH];
         home_path(staged_exe, L"%ls\\%ls", install, wrun);
         for (wchar_t *q = staged_exe; *q; q++) if (*q == L'/') *q = L'\\';
-        if (GetFileAttributesW(staged_exe) == INVALID_FILE_ATTRIBUTES)
-            fail(L"The builder is missing after unpacking (%ls). Your antivirus may have removed it: allow the folder %ls and run the setup again.", staged_exe, base);
+        if (!builder_ready(staged_exe))
+            fail(L"The Builder or its self-contained .NET runtime is incomplete after unpacking (%ls). Your antivirus may have quarantined files from %ls. Check its quarantine/history, then run the setup again. No complete installation was published.", staged_exe, install);
         if (!publish_install(install, final_dir, g_home.portable))
             fail(L"Could not finish installing into %ls. A preserved repair backup, if restoration was blocked, is beside it as .rollback-*.", final_dir);
         wcscpy(install, final_dir);
@@ -912,7 +940,7 @@ static int launch_installed(const wchar_t *args) {
     MultiByteToWideChar(CP_UTF8, 0, tag, -1, wtag, 128);
     home_path(dir, L"%ls\\versions\\%ls\\HookshotBuilder", base, wtag);
     home_path(exe, L"%ls\\HookshotBuilder.exe", dir);
-    if (GetFileAttributesW(exe) == INVALID_FILE_ATTRIBUTES) return 0;
+    if (!builder_ready(exe)) return 0;
     swprintf(cmd, 4096, L"\"%ls\" %ls", exe, args);
     STARTUPINFOW si = {sizeof si};
     PROCESS_INFORMATION pi;
