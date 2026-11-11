@@ -381,8 +381,8 @@ static void realtime_step(int64_t now) {
             memcpy(&game_clock, GP(hos_step_probe + 0xd58), 8);
             if (at_before && now > at_before) {
                 const double rate = (game_clock - clock_before) * 1e9 / (double)(now - at_before);
-                hos_log("vi: game clock %.1f: %.2f a second of wall time (speed %.3f) at %.1f fps", game_clock, rate, rate / 60.0,
-                        300e9 / (double)(now - at_before));
+                hos_log("vi: game clock %.1f: %.2f a second of wall time (speed %.3f) at %.1f fps; now_ns=%lld", game_clock, rate, rate / 60.0,
+                        300e9 / (double)(now - at_before), (long long)now);
             }
             clock_before = game_clock, at_before = now;
         }

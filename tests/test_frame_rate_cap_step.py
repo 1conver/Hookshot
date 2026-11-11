@@ -53,11 +53,22 @@ FIXTURE = r'''#define _CRT_SECURE_NO_WARNINGS
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdarg.h>
 #define CHECK(x) do { if (!(x)) { fprintf(stderr, "FAIL:%d %s\n", __LINE__, #x); exit(1); } } while (0)
 static uint8_t guest[0x4000];
 #define GP(a) ((void *)(guest + (a)))
 #define MOD 0x1000u
-static void hos_log(const char *fmt, ...) { (void)fmt; }
+static int clock_logs;
+static long long clock_now;
+static void hos_log(const char *fmt, ...) {
+    char text[256];
+    va_list args; va_start(args, fmt); vsnprintf(text, sizeof text, fmt, args); va_end(args);
+    if (!strncmp(text, "vi: game clock ", 15)) {
+        const char *stamp = strstr(text, "; now_ns=");
+        CHECK(stamp && sscanf(stamp, "; now_ns=%lld", &clock_now) == 1);
+        clock_logs++;
+    }
+}
 int rx_option(int id, int otherwise) { (void)id; return otherwise; }
 int hos_ini_option(const char *key, int otherwise) {   /* (frame_rate_cap=: the test's T_CAP_INDEX) */
     const char *e = getenv("T_CAP_INDEX");
@@ -100,7 +111,15 @@ int main(int argc, char **argv) {
     *limit = 60, *rate = 60;
     hos_step_probe = strcmp(mode, "no hook") ? 0x2000 : 0;   /* (the lifted code sets it when the hook is in the build) */
     realtime_step(now);
-    if (!strcmp(mode, "cap 120")) {
+    if (!strcmp(mode, "clock log")) {
+        CHECK(clock_logs == 0);
+        frames(299, 1.0 / 60);
+        CHECK(clock_logs == 0);
+        frames(1, 1.0 / 60);
+        CHECK(clock_logs == 1 && clock_now == now);
+        frames(1, 1.0 / 60);
+        CHECK(clock_logs == 1);
+    } else if (!strcmp(mode, "cap 120")) {
         CHECK(near(frames(72000, 1.0 / 120), 1.0 / 120) && *rate == 60 && *limit == 120);   /* (the rate stays the engine's) */
         CHECK(near(lifted_step(60.0f, (float)*rate), 0.5) && near(lifted_step(30.0f, (float)*rate), 0.25));   /* (half a 60th a frame) */
         CHECK(near(frames(10, 1.0 / 40), 1.0 / 40) && *rate == 40 && near(lifted_step(60.0f, (float)*rate), 1.5));
@@ -202,8 +221,10 @@ def main():
         subprocess.run([a.cc, "-std=c11", "-include", ENV_ON_H, "-Wall", "-Wextra", "-Werror", str(c), "-o", str(exe)], check=True)
         for mode, cap, step, index in (("cap 120", "120", None, None), ("cap 60", None, None, None), ("step off", "120", "0", None),
                                        ("no hook", "120", None, None), ("uncapped", None, None, "6"), ("uncapped", "1000", None, None),
-                                       ("unknown index", None, None, "7"), ("cap 120", None, None, "2")):
+                                       ("unknown index", None, None, "7"), ("cap 120", None, None, "2"), ("clock log", "60", None, None)):
             env = {k: v for k, v in os.environ.items() if not k.startswith("HOS_") and k != "T_CAP_INDEX"}
+            if mode == "clock log":
+                env["HOS_FPS_LOG"] = "1"
             if cap:
                 env["HOS_FPS_MAX"] = cap
             if step:

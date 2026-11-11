@@ -326,12 +326,15 @@ static void parse_script(void) {
     {
         const char *e = getenv("HOS_INPUT_FRAME_CLOCK");
         script_frame_clock = e && atoi(e) != 0;
-        if (script_frame_clock) script_frame0 = InterlockedCompareExchange64(&hos_present_count, 0, 0);
+        if (script_frame_clock) {
+            script_frame0 = InterlockedCompareExchange64(&hos_present_count, 0, 0);
+            hos_log("hid: input frame clock origin=%lld native presents; rate=60", (long long)script_frame0);
+        }
     }
     parse_presses(getenv("HOS_INPUT_SCRIPT"), 0, 0);
     if (npresses)
-        hos_log("hid: input script of %d presses (last at %.0f s; the player's devices count too)", npresses,
-                script_end_ms / 1000.0);
+        hos_log("hid: input script of %d presses (last at %.0f s; the player's devices count too); origin_ns=%lld", npresses,
+                script_end_ms / 1000.0, (long long)script_t0);
 }
 
 static void live_input(void) {
