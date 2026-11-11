@@ -7452,7 +7452,9 @@ static bool temporal_rejected_network(VkCommandBuffer cmd, uint64_t key, Texture
     std::lock_guard lk(mu);
     if (seen.size() < 32 && seen.insert(key).second)
         logf("vk: network %016llx does not translate here: %s draws its upscale (%ux%u -> %ux%u)", (unsigned long long)key,
-             fsr3 ? "FSR 3.1" : "the temporal upscaler", src->width, src->height, dst->width, dst->height);
+             fsr3 ? "FSR 3.1"
+                  : temporal_mode() == upscaler_rows::FSR3 ? "FSR 3.1 (on the temporal chain)" : "the temporal upscaler",
+             src->width, src->height, dst->width, dst->height);
     return true;
 }
 bool taau_stand_in(VkCommandBuffer cmd, const NvnState& s, const Program& p) {

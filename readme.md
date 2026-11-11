@@ -652,9 +652,11 @@ interpolation can make the frame in between with `RX_VK_FSR_FG=1` (opt-in: the g
 and FSR 3.1 has no HUD-less colour to keep it still, so the HUD smears; by default the renderer's own makes it). Both are AMD's FidelityFX
 SDK 1.1.4 shaders (`third_party/fidelityfx-sdk`, MIT), compiled into the renderer: no AMD runtime or DLL is needed, and
 the row offers FSR 3.1 on any Vulkan 1.3 GPU with push descriptors, extended storage image formats and storage writes
-without a format (`vk: fsr3: ... can run on this GPU` in the log). Its inputs are the scene's colour, its depth, motion
-from the camera, and the same camera jitter DLSS uses (`RX_VK_FSR_JITTER=0` turns it off); things that move by
-themselves can trail for now.
+without a format (`vk: fsr3: ... can run on this GPU` in the log). It upscales on the same inputs as DLSS and FSR 4: the
+scene's colour, its depth, motion from the camera with the skinned characters' own drawn over it (Link, his shield and
+the people around him keep their outline while they move), and the same camera jitter (`RX_VK_FSR_JITTER=0` turns it
+off). Things that move by themselves and are not skinned (Navi's body, props) can still trail. `RX_VK_FSR3_CHAIN=0` gives
+it the camera's motion alone, as before.
 
 </details>
 

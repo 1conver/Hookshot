@@ -28,14 +28,14 @@
 //
 // The Insert menu's Upscaler row (opts.dlss, upscaler_rows.h) chooses the engine; RX_VK_DLSS=1 / 2 (DLSS, DLAA) or
 // RX_VK_FSR4=1 / 2 (FSR 4, its native anti-aliasing) over it, and =0 takes that engine out for the run. AMD FSR 3.1
-// (vk_fsr3.cpp, the row's value 3 or RX_VK_FSR=1) has inputs of its own (vk_fsr3_inputs.cpp): while it upscales, this chain
-// stands aside.
+// (vk_fsr3.cpp, the row's value 3 or RX_VK_FSR=1) is an engine of this chain too (fsr3_engine, slot 2); with
+// RX_VK_FSR3_CHAIN=0 it has inputs of its own (vk_fsr3_inputs.cpp), and while it upscales so, this chain stands aside.
 // The row's Off (temporal_off) takes the same dispatches with no engine: the network's input, stretched to its output with
 // a linear filter and squared back to linear colour (shaders/dlss_out.comp, at the same size a copy). No camera, depth, motion
 // or jitter, nothing kept from frame to frame: the network's cost and its anti-aliasing both gone, the cheapest picture there is.
 // RX_VK_DLSS_DEBUG=motion: the motion vectors shown instead of the picture (|x|, |y| over 16 px as red and green, the actors'
 // in it); =alternate: every other frame the game's own upscale (a test's reference beside the engine's). (The names are
-// DLSS's from before FSR came: they apply to either engine.)
+// DLSS's from before FSR came: they apply to every engine of the chain, FSR 3.1 on it too.)
 #include "vk_temporal.h"
 
 #include <algorithm>
@@ -57,7 +57,8 @@
 #include "upscaler_rows.h"
 #include "vk_dlss.h"
 #include "vk_draw.h"
-#include "vk_fsr3.h"   // (fsr3_wanted: AMD FSR 3.1 upscales with inputs of its own)
+#include "fsr3_math.h"   // (hookshot: FSR 3.1's depth constants from the projection)
+#include "vk_fsr3.h"   // (fsr3_wanted: AMD FSR 3.1 upscales with inputs of its own; fsr3_engine: on this chain)
 #include "vk_fsr4.h"
 #include "vk_menu.h"
 #include "vk_texture.h"
@@ -95,9 +96,12 @@ int temporal_mode() {
     int v = opts.dlss;
     if (dlss > 0) v = dlss >= 2 ? ur::DLAA : ur::DLSS;   // (2 and up: DLAA, as RX_VK_DLSS was clamped before)
     else if (fsr4 > 0) v = fsr4 >= 2 ? ur::FSR4_AA : ur::FSR4;
-    // (FSR 3.1, the row's 3, is not an engine of this chain: the game's own as far as it is concerned. Nor anything while
-    // FSR 3.1 upscales: one upscaler at a time, and one camera jitter. A switch above goes over the row's FSR 3.1 too
-    // (fsr3_wanted asks temporal_env_chosen); RX_VK_FSR=1 goes over them)
+    // (hookshot) FSR 3.1, the row's 3 or RX_VK_FSR=1, is an engine of this chain (vk_fsr3.h fsr3_on_chain): its inputs are the
+    // chain's, the skinned draws' motion in them. A switch above goes over the row's FSR 3.1 (fsr3_chosen asks
+    // temporal_env_chosen); RX_VK_FSR=1 goes over them
+    if (fsr3_on_chain() && fsr3_chosen()) return ur::FSR3;
+    // (with RX_VK_FSR3_CHAIN=0 FSR 3.1 upscales with its own inputs, vk_fsr3_inputs.cpp: the game's own as far as this chain is
+    // concerned. Nor anything while it upscales: one upscaler at a time, and one camera jitter)
     if (!ur::is_dlss(v) && !ur::is_fsr4(v)) return ur::GAME;
     if (fsr3_wanted()) return ur::GAME;
     if (ur::is_dlss(v) && dlss_why() != DLSS_OK) return ur::GAME;
@@ -121,7 +125,7 @@ struct Image {
 
 struct Camera {
     float current[16]{};      // (its view-projection)
-    float projection[16]{};   // (its projection, jittered too: DLSS Frame Generation's camera, vk_dlss.cpp dlss_fg_inputs)
+    float projection[16]{};   // (its projection, jittered: FSR 3.1's depth constants, and DLSS Frame Generation's camera, vk_dlss.cpp dlss_fg_inputs)
     float jitter[2]{};        // (the projection's offset of the picture's centre, in clip space: nx2/oot_jitter.py)
     float near_z = 0, far_z = 0, fov_y = 0;   // (its projection's, 0 when it is not a plain perspective one)
     uint32_t width = 0, height = 0;
@@ -140,7 +144,7 @@ struct Engine {
 
 struct State {
     std::mutex mu;
-    Engine engines[2];               // (DLSS, FSR: engine_of)
+    Engine engines[3];               // (DLSS, FSR 4, FSR 3.1: engine_of)
     const TemporalEngine* drawing = nullptr;   // (the engine that drew last: another one starts a new history)
     Image color, depth, motion, output;
     VkDescriptorSetLayout prep_set = VK_NULL_HANDLE, out_set = VK_NULL_HANDLE;
@@ -223,11 +227,13 @@ void note_output(const Texture* out, uint32_t level) {
     s.out_h.store(std::max(1u, out->height >> level), std::memory_order_relaxed);
 }
 
-/// The chain's slot for the engine of an Upscaler value (DLSS and DLAA: DLSS's; FSR 4 and its native AA: FSR's)
+/// The chain's slot for the engine of an Upscaler value (DLSS and DLAA: DLSS's; FSR 4 and its native AA: FSR 4's; FSR 3.1;
+/// temporal_jitter_sample picks the same one)
 Engine& engine_of(int mode) {
     State& s = st();
-    Engine& k = s.engines[ur::is_fsr4(mode) ? 1 : 0];
-    if (!k.e) k.e = ur::is_fsr4(mode) ? fsr4_engine() : dlss_engine();
+    const int slot = ur::is_fsr4(mode) ? 1 : mode == ur::FSR3 ? 2 : 0;
+    Engine& k = s.engines[slot];
+    if (!k.e) k.e = slot == 1 ? fsr4_engine() : slot == 2 ? fsr3_engine() : dlss_engine();
     return k;
 }
 const char* name_of(int mode) {
@@ -236,6 +242,7 @@ const char* name_of(int mode) {
     case ur::DLAA: return "NVIDIA DLAA";
     case ur::FSR4: return "AMD FSR 4";
     case ur::FSR4_AA: return "AMD FSR 4 Native AA";
+    case ur::FSR3: return "AMD FSR 3.1";
     default: return "the game's own";
     }
 }
@@ -697,11 +704,12 @@ bool temporal_scene_size(uint32_t width, uint32_t height) {
 
 MkwVkJitter temporal_jitter_sample() {
     static const bool off = env_switch("RX_VK_DLSS_JITTER") == 0;
+    static const bool fsr3_off = env_switch("RX_VK_FSR_JITTER") == 0;   // (hookshot: FSR 3.1's own switch, on the chain too)
     State& s = st();
     const int mode = temporal_mode();
-    if (off || mode == ur::GAME) return {};
+    if (off || mode == ur::GAME || (mode == ur::FSR3 && fsr3_off)) return {};
     const uint64_t last = s.last_frame.load(std::memory_order_relaxed);
-    if (s.engines[ur::is_fsr4(mode) ? 1 : 0].failed.load(std::memory_order_relaxed) || !last) return {};
+    if (s.engines[ur::is_fsr4(mode) ? 1 : mode == ur::FSR3 ? 2 : 0].failed.load(std::memory_order_relaxed) || !last) return {};
     return s.jitter.read(texture_frame_no());
 }
 
@@ -938,9 +946,20 @@ bool temporal_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in
     if (!make_image(cmd, s.color, VK_FORMAT_R16G16B16A16_SFLOAT, iw, ih) ||
         !make_image(cmd, s.depth, VK_FORMAT_R32_SFLOAT, iw, ih, copied) ||
         !make_image(cmd, s.motion, VK_FORMAT_R16G16_SFLOAT, iw, ih, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | copied) ||
-        !make_image(cmd, s.output, VK_FORMAT_R16G16B16A16_SFLOAT, dw, dh))
+        !make_image(cmd, s.output, VK_FORMAT_R16G16B16A16_SFLOAT, dw, dh, VK_IMAGE_USAGE_TRANSFER_DST_BIT))   // (FSR 3.1 copies in)
         return fail("its images were not made");
 
+    // (hookshot) the projection without this frame's jitter, for an engine that makes its depth constants from it (FSR 3.1), and
+    // its depth reversed for FSR's passes where the near plane is at 0 (fsr3_math.h): bit 3 of the prep's flags
+    float projection[16];
+    std::memcpy(projection, cam.projection, sizeof projection);
+    dlss_math::unjitter(projection, cam.jitter);
+    bool fsr_flip = false;
+    if (engine.e->fsr_depth) {
+        fsr3_math::Camera fc;
+        if (!fsr3_math::camera_from_projection(projection, fc)) return fail("the scene's projection is not one FSR takes");
+        fsr_flip = fc.flip_depth;
+    }
     const uint64_t now = texture_frame_no();
     const uint64_t last = s.last_frame;
     bool reset = !last || now - last > 2;
@@ -960,7 +979,8 @@ bool temporal_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in
     const bool motion = !reset && dlss_math::reprojection(cam.current, previous, pc.reproject);
     if (!motion) reset = true;   // (without a valid reprojection, prior history has no mapping to this camera)
     pc.jitter[0] = cam.jitter[0], pc.jitter[1] = cam.jitter[1];
-    pc.size[0] = (int32_t)rw, pc.size[1] = (int32_t)rh, pc.flags = (motion ? 1 : 0) | (show_motion ? 2 : 0);
+    pc.size[0] = (int32_t)rw, pc.size[1] = (int32_t)rh;
+    pc.flags = (motion ? 1 : 0) | (show_motion ? 2 : 0) | (fsr_flip ? 8 : 0);
     // (an engine made for HDR colour, as prepare made it this frame: the game's native HDR goes past 1, and the LDR pass's
     // clamp cut every highlight at the paper white, a flat picture. It is given linear light and gives it back: the HDR pair)
     const bool hdr = engine.e->hdr && engine.e->hdr();
@@ -1002,12 +1022,19 @@ bool temporal_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in
     dlss_math::jitter_to_pixels(cam.jitter, rw, rh, f.jitter);
     f.reset = reset;
     if (cam.near_z > 0.0f) f.near_z = cam.near_z, f.far_z = cam.far_z, f.fov_y = cam.fov_y;
+    std::memcpy(f.projection, projection, sizeof f.projection);
+    f.jitter_phases = (uint32_t)dlss_jitter_phases(rw, rh, dw, dh);
+    f.depth_reversed = fsr_flip;   // (the prep wrote 1 - d: bit 3 of its flags)
     if (!s.told_camera && cam.near_z > 0.0f) {
         s.told_camera = true;
         logf("vk: upscaler: the scene's camera: near %.3f, far %.1f, vertical field of view %.1f degrees", cam.near_z,
              cam.far_z, cam.fov_y * 57.29578f);
     }
     if (!engine.e->evaluate(cmd, f)) {
+        if (engine.e->retry) {   // (hookshot: this frame only, TemporalEngine::retry; a new history next)
+            s.last_frame = 0;
+            return fail("its evaluation failed this frame");
+        }
         logf("vk: %s: its evaluation failed: the game's upscale from now on", engine.e->name);
         engine.failed = true;
         return false;   // (the network writes its output over whatever the evaluation did)

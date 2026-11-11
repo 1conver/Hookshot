@@ -90,6 +90,11 @@ def main():
     if "reactive::mask(cmd, f.width, f.height, f.width, f.height, f.color, m)) ai.reactive = m.view;" not in up or \
             up.index("reactive::mask(") > up.index("fsr3::upscale(cmd, ai)"):
         raise SystemExit("fsr3_upscale: the mask is not made before FSR's passes")
+    # (FSR 3.1 on the temporal chain, vk_fsr3.cpp's engine, its default path: the same mask DLSS gets there)
+    chain = function(fsr, "bool chain_evaluate(")
+    if "reactive::mask(cmd, f.render_w, f.render_h, f.color.width, f.color.height, f.color.view, m))" not in chain or \
+            "ai.reactive = m.view;" not in chain or chain.index("reactive::mask(") > chain.index("fsr3::upscale(cmd, ai)"):
+        raise SystemExit("vk_fsr3.cpp chain_evaluate: FSR 3.1 on the chain is not given the mask before its passes")
     dlss = (VK / "vk_dlss.cpp").read_text(encoding="utf-8")
     at = dlss.index("NVSDK_NGX_VK_DLSS_Eval_Params ep{};")
     ev = dlss[at:dlss.index("NGX_VULKAN_EVALUATE_DLSS_EXT(", at)]

@@ -546,6 +546,7 @@ struct Fg {
     float pos[3], up[3], right[3], fwd[3];
     float jitter[2]{}, near_z = 0.1f, far_z = 1000.0f, fov = 1.0f, aspect = 16.0f / 9.0f;
     bool inputs_reset = true;
+    bool depth_reversed = false;      // (the chain's depth is 1 - d: FSR 3.1 on the chain, TemporalFrame::depth_reversed)
     float last_vp[16]{};
     bool have_last = false;
     uint64_t inputs = 0, used = 0;    // (how many inputs were taken, and the last one a present used)
@@ -812,6 +813,7 @@ void dlss_fg_inputs(VkCommandBuffer cmd, const TemporalFrame& f, const float pro
         g.fwd[i] = -cam[i * 4 + 2];
     }
     g.jitter[0] = f.jitter[0], g.jitter[1] = f.jitter[1];
+    g.depth_reversed = f.depth_reversed;
     g.near_z = f.near_z > 0 ? f.near_z : 0.1f;
     g.far_z = f.far_z > g.near_z ? f.far_z : 100000.0f;
     g.fov = f.fov_y > 0 ? f.fov_y : 1.0f;
@@ -917,7 +919,7 @@ int dlss_fg_frames(VkCommandBuffer cmd, VkImage color, VkImageView color_view, u
     std::memcpy(o.cameraRight, g.right, sizeof g.right), std::memcpy(o.cameraFwd, g.fwd, sizeof g.fwd);
     o.cameraNear = g.near_z, o.cameraFar = g.far_z, o.cameraFOV = g.fov, o.cameraAspectRatio = g.aspect;
     o.colorBuffersHDR = false;
-    o.depthInverted = false;            // (the chain's depth: [0, 1], not reversed)
+    o.depthInverted = g.depth_reversed;   // (the chain's depth: [0, 1], reversed for FSR 3.1 on the chain: depth_reversed)
     o.cameraMotionIncluded = true;      // (its motion is the whole of it: camera and actors)
     // (a new history after a present NGX did not make, a cut the chain saw, or a new feature)
     o.reset = g.inputs_reset || !g.last_sequence || sequence != g.last_sequence + 1;
