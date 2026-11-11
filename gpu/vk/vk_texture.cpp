@@ -1328,16 +1328,19 @@ void watch_tex(const Texture* tex, const char* what) {
 }
 /// Whether [gpu, gpu + n) is storage the GPU's images rendered last (covered by ranges render targets took), and the
 /// generation from which the CPU's writes would count (0: not the GPU's)
+/// (hookshot) The ranges can overlap (texture_rendered drops only the ones inside a new range), so the bytes they cover are
+/// counted once each: summed, two overlapping ranges counted their overlap twice and a range with a gap the GPU never drew
+/// read as covered, and a texture over it was never uploaded
 uint32_t gpu_owned_since(uint64_t gpu, uint64_t n) {
-    uint64_t covered = 0;
+    uint64_t covered = 0, reach = gpu;   // (reach: the end of what is counted so far; the ranges come in address order)
     uint32_t since = UINT32_MAX;
     auto it = gpu_owned.upper_bound(gpu);
     if (it != gpu_owned.begin()) --it;
     for (; it != gpu_owned.end() && it->first < gpu + n; ++it) {
         const uint64_t a = std::max(it->first, gpu), b = std::min(it->second.first, gpu + n);
         if (b <= a) continue;
-        covered += b - a;
         since = std::min(since, it->second.second);
+        if (b > std::max(a, reach)) covered += b - std::max(a, reach), reach = b;
     }
     return covered >= n && since != UINT32_MAX ? std::max(since, 1u) : 0;
 }
@@ -2488,7 +2491,21 @@ Texture* texture_touch(Texture* tex, bool for_sampling) {
     // was unswizzled from that memory: 55 MB for the 3072 x 3072 x 3 shadow map, frame after frame. Not "storage
     // the write watch never saw written": the game fills memory before it makes a pool of it.)
     static const bool upload_all = env_on("RX_VK_UPLOAD_ALL");   // (A/B: such storage uploaded too)
-    uint32_t owned = !tex->uploaded && !upload_all ? gpu_owned_since(tex->gpu, tex->guest_size) : 0;
+    // (from Shakoquo/Mako ff479e988d) never for a block-compressed texture (ASTC, BC, ETC): the GPU cannot render into one, so
+    // its texels come from memory whatever render targets used that storage before. Skipped, a boss or a new enemy met for
+    // the first time (its textures loaded into the transient heaps' memory) was drawn with an empty texture, all blue, for
+    // the whole cutscene. RX_VK_SKIP_COMPRESSED_OVER_RT=1: as before
+    static const bool skip_compressed = env_on("RX_VK_SKIP_COMPRESSED_OVER_RT");
+    const bool compressed = tex->astc || tex->bc ||
+                            (tex->format >= VK_FORMAT_BC1_RGB_UNORM_BLOCK && tex->format <= VK_FORMAT_ASTC_12x12_SRGB_BLOCK);
+    uint32_t owned = !tex->uploaded && !upload_all && (skip_compressed || !compressed) ? gpu_owned_since(tex->gpu, tex->guest_size) : 0;
+    if (!tex->uploaded && !upload_all && !skip_compressed && compressed) {
+        static std::atomic<int> told{0};
+        if (told.load(std::memory_order_relaxed) < 30 && gpu_owned_since(tex->gpu, tex->guest_size) && told++ < 30)
+            logf("vk: texture #%u %#llx %ux%u x%u NVN %#x (compressed) over storage render targets took: uploaded from the game's "
+                 "memory all the same", tex->id, (unsigned long long)tex->gpu, tex->width, tex->height, tex->layers,
+                 tex->nvn_format);
+    }
     if (owned && !remade_skip_old()) {   // (one evicted that came from memory: uploaded from it again. Above)
         std::lock_guard lk(from_memory_mu);
         auto e = evicted_from_memory.find(evicted_key(tex->gpu, tex->width, tex->height, tex->nvn_format));
