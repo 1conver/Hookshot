@@ -115,11 +115,39 @@ public partial class MainWindow : Window
         if (wait > 0) await Task.Delay(wait);
         ApplySettings();
         FillDumps();
+        filesReady = true;
         ShowMain();
         if (Environment.GetEnvironmentVariable("HOOKSHOT_UI_PREVIEW") is { Length: > 0 } preview) { Preview(preview); return; }
         CheckAll();
         latestTag = Environment.GetEnvironmentVariable("HOOKSHOT_LATEST_TAG") is { Length: > 0 } fake ? (fake == "none" ? null : fake) : await Updater.LatestTag(Track);
         RefreshMode();
+    }
+
+    bool filesReady;   // (the first page has its game files and saved choices: a start with --update or --launch goes past that)
+
+    /// The first page again, from a build or an update that stopped or was cancelled. RefreshMode leaves the button alone while
+    /// an update runs, and one that stopped left it so for good: the page kept the button it had before. After a start with
+    /// --update (the game's or the setup's, once the new builder is in) that was a grey "Build the game" over a page with no
+    /// game files and no saved choices, and the Update button only came back when the app was closed and opened again (#2129).
+    /// The update is over here: the page is set up if it never was, for the update's folder, and its button says what that needs
+    async void ToFiles()
+    {
+        SetStep(0);
+        ShowPage(FilesPage);
+        if (!updating) return;
+        updating = false;
+        if (!filesReady)
+        {
+            filesReady = true;
+            var folder = OutPath.Text;   // (the update's: the saved one is the last build's)
+            dumps.AddRange(await Task.Run(Finder.FindDumps));
+            ApplySettings();
+            OutPath.Text = folder;
+            FillDumps();
+            CheckAll();
+            latestTag ??= Environment.GetEnvironmentVariable("HOOKSHOT_LATEST_TAG") is { Length: > 0 } fake ? (fake == "none" ? null : fake) : await Updater.LatestTag(Track);
+        }
+        Refresh();
     }
 
     // ================= what the button does: build, update the game, play it, or get the newer builder =================
@@ -1045,8 +1073,7 @@ public partial class MainWindow : Window
         }
         if (failure == "cancelled")
         {
-            SetStep(0);
-            ShowPage(FilesPage);
+            ToFiles();
             return;
         }
         if (current != null && rows.TryGetValue(current, out var row)) row.Stopped();
@@ -1221,11 +1248,7 @@ public partial class MainWindow : Window
         try { Clipboard.SetText(text); CopyReport.Content = "Copied"; } catch (Exception) { }
     }
 
-    void Back(object sender, RoutedEventArgs e)
-    {
-        SetStep(0);
-        ShowPage(FilesPage);
-    }
+    void Back(object sender, RoutedEventArgs e) => ToFiles();
 
     /// The setup (HookshotBuilder-Setup.exe beside this app) checks every part against its checksum and downloads the missing ones
     void Repair(object sender, RoutedEventArgs e)
