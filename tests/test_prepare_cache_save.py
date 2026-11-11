@@ -59,6 +59,11 @@ void predict_run(void(*)(size_t,size_t)){calls.push_back(5);}
 void precompile_run(void(*progress)(size_t,size_t)){calls.push_back(2);progress(1,2);}
 void pipeline_cache_save(bool force){if(!force)std::exit(2);calls.push_back(3);}
 std::string skipped_path(){return "sentinel";}
+void prepare_watchdog(){}   // (vk_main.cpp: the run's watchdog, tests/test_prepare_stall.py)
+void prepare_moved(int,size_t,size_t){}
+bool prepare_left_workers(){return false;}
+int driver_faults(){return 0;}
+[[noreturn]] void prepare_end(int){std::exit(12);}
 void prepare_guess(size_t out[3]){out[0]=out[1]=out[2]=1;}
 int fake_remove(const char*){calls.push_back(4);return 0;}
 #define remove fake_remove

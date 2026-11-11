@@ -1125,6 +1125,8 @@ def prepare_shaders(cmd, folder=None, silence=PREPARE_SILENCE):
         not_prepared("the game printed nothing for %s and was stopped" % span(silence))
     elif code == 3:
         not_prepared("no usable Vulkan here")
+    elif code == 4:   # (gpu/vk/vk_main.cpp prepare_watchdog: nothing moved for minutes, the driver stuck after a fault in it)
+        not_prepared("the GPU driver stopped responding")
     elif code:
         not_prepared("the game stopped with exit status %d" % code)
     return code

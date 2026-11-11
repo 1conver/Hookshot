@@ -50,6 +50,7 @@ struct Program {struct Stage{uintptr_t module;};std::vector<Stage>stages{{0x2468
 struct Pre {std::mutex mu;bool abandoned=false;};
 int mode=0,calls=0,destroys=0,logged=0; bool completed=false;
 void logf(const char*,...){++logged;}
+int faults_noted=0; void note_driver_fault(){++faults_noted;}
 #define CHECK(c) do {if(!(c)){std::fprintf(stderr,"CHECK failed line %d: %s\n",__LINE__,#c);std::exit(7);}}while(0)
 const VkComputePipelineCreateInfo* expected_ci=nullptr; VkPipeline* expected_out=nullptr;
 void pin_subgroup(decltype(VkComputePipelineCreateInfo::stage)&stage,unsigned x){CHECK(x==32);CHECK(stage.stage==12);}
@@ -102,7 +103,7 @@ int main(int argc,char**argv){
  if(which==4){
   mode=1;VkComputePipelineCreateInfo ci{10};ci.stage={11,12,0x2468,"main"};ci.layout=0x1357;VkPipeline out=0;
   expected_ci=&ci;expected_out=&out;
-  CHECK(guarded_compute(pcache,&ci,&out)==-77);CHECK(calls==1&&out==0&&logged==1);return 0;
+  CHECK(guarded_compute(pcache,&ci,&out)==-77);CHECK(calls==1&&out==0&&logged==1&&faults_noted==1);return 0;
  }
  mode=which==1?1:which==2?2:0;pre.abandoned=which==3;
  std::thread worker([&]{actual_arm(program,&pre);});worker.join();
