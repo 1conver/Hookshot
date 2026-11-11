@@ -301,6 +301,11 @@ void hos_log(const char *fmt, ...) {
     vsnprintf(buf, sizeof buf, fmt, ap);
     va_end(ap);
     snprintf(line, sizeof line, "[hos %s] %s\n", cur ? cur->name : "host", buf);
+    extern volatile int hos_control_on;   /* (control.c: log lines for its subscribers) */
+    if (hos_control_on) {
+        void hos_control_log(const char *line);
+        hos_control_log(line);
+    }
     if (log_queue(line)) return;
     fputs(line, stderr);
     fflush(stderr);

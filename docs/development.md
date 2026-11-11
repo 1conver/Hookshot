@@ -256,6 +256,10 @@ The other rows are 0 Off and 1 On. Some are read at the start, before the menu e
 `handheld_profile` and `output_res` (`host/nn_applet.c`), `ultrawide` (`host/hos_main.c`), `robust_buffers`
 (`gpu/vk/vk_main.cpp`) and the controls (`host/nn_hid.c`).
 
+`HOS_CONTROL=<socket path>` turns on the control bridge: a local socket a tool or coding agent drives the running game
+through (inputs timed in frames, screenshots, waits for the game's state, the Insert menu's settings, quit), with
+`scripts/hookshot_ctl.py` as its client. Off unless set; see [control.md](control.md).
+
 ## Layout
 
 | Path | What |

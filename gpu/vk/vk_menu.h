@@ -96,6 +96,8 @@ bool menu_is_open();
 bool resolution_auto();       // (the game's dynamic resolution: Resolution Auto)
 int resolution_scale();       // (the fixed path's scale in 1/10000: the Resolution row's, as a twelfth of the output)
 void menu_option_set(int id, int value);   // (from the game's side: 7 the mouse's sensitivity, the - and = keys)
+int menu_setting(int index, MkwVkSetting* out);   // (the control bridge, host/control.c: the rows with a value)
+int menu_setting_set(const char* key, int value, MkwVkSetting* out);
 int menu_heart_protection();
 int menu_player_flight();
 int menu_free_camera();

@@ -1274,6 +1274,9 @@ void mic_chosen() {
     mic_tell_host();
 }
 void save() {
+    // (one writer at a time: the present's thread, the game's (menu_option_set) and the control bridge's, menu_setting_set)
+    static std::mutex save_mu;
+    std::lock_guard lk(save_mu);
     // (hookshot) the lines that are not the menu's are kept: the controls, pad_ and key_ (host/nn_hid.c)
     // (and every other line the menu does not write, such as discord_app_id=: they were dropped at the next save)
     std::string kept, others;
@@ -3030,6 +3033,10 @@ bool fps_take(int64_t now, int64_t shown, int64_t game, int64_t* next, int64_t* 
     return have;
 }
 
+// (hookshot) the rows' values and the options file, kept apart between menu_tick (the present's thread), menu_option_set
+// (the game's) and the control bridge's menu_setting and menu_setting_set (its own thread). Recursive: a setter reached from
+// inside menu_tick's frame on the same thread does not lock itself out
+std::recursive_mutex menu_mu;
 void menu_option_set(int id, int value) {
     if (id == OOT_CHEAT_AGE_ID) {   // (Link's age: the Switch age row shows it)
         if (link_age.exchange(value, std::memory_order_relaxed) != value && page == 0 && cur_tab == TAB_DEBUG) menu_refresh = true;
@@ -3048,8 +3055,67 @@ void menu_option_set(int id, int value) {
         return;
     }
     if (id != 7) return;
+    std::lock_guard lk(menu_mu);   // (the counts above are atomics: the game's thread waits for no menu frame for them)
     opts.mouse_sens = std::min(std::max(value, 10), 500);   // (the keys work while the menu is closed: it shows it when opened)
     save();
+}
+
+// ---- (hookshot) the control bridge's option_get and option_set (host/control.c, docs/control.md) ----
+// The settings rows (a value, not a heading or a debug tool, shown on this PC: row_shown), found by their key in
+// hookshot_options.ini (ini_key), which stays the same while rows come and go or are renamed. The bridge calls these from
+// its own thread: menu_mu keeps them apart from menu_tick (the present's thread) and from menu_option_set (the game's)
+bool bridge_row(int i) { return rows[i].value && !rows[i].heading && rows[i].cheat < 0 && row_shown(i); }
+void bridge_fill(int i, MkwVkSetting* out) {
+    static const char* const tabs[] = {"graphics", "audio", "gameplay", "controls", "debug", "motion", "controls"};
+    static_assert(sizeof tabs / sizeof tabs[0] == TAB_PAGE + 1, "a name for each MenuTab");
+    const Row& r = rows[i];
+    *out = MkwVkSetting{};
+    snprintf(out->key, sizeof out->key, "%s", ini_key(r));
+    snprintf(out->name, sizeof out->name, "%s", r.name);
+    snprintf(out->tab, sizeof out->tab, "%s", r.tab >= 0 && r.tab <= TAB_PAGE ? tabs[r.tab] : "");
+    out->value = *r.value, out->lo = r.lo, out->hi = r.hi, out->step = r.step;
+    out->restart = r.restart, out->fixed = row_fixed(r.value);
+    snprintf(out->text, sizeof out->text, "%s", r.text ? r.text(out->value) : "");
+}
+// (the Upscaler row's questions, asked before menu_mu is taken: row_shown and row_fixed ask upscalers_available(), which
+// waits for the start-up probe (NGX's start, ~3 s) while it runs. Under menu_mu that held menu_tick, and the present with
+// it; this way only the bridge's thread waits, and once answered the questions return at once)
+static void bridge_probe_first() { (void)upscalers_available(), (void)dlss_why(); }
+/// The index-th settings row (an enumeration, for listing them; the index is not a name: rows come and go). 0: past the last
+int menu_setting(int index, MkwVkSetting* out) {
+    bridge_probe_first();
+    std::lock_guard lk(menu_mu);
+    for (int i = 0, n = 0; i < kRows; i++)
+        if (bridge_row(i) && n++ == index) return bridge_fill(i, out), 1;
+    return 0;
+}
+/// The settings row whose ini key is key, set to value as the menu's Left and Right set it (set_row: cut to its range, the
+/// Quality preset made Custom unless the row is exempt, a restart noted, kept in the options file). The rows the arrows step
+/// through a list of their own (the Upscaler, Render resolution, the output resolution) are stepped towards value until they
+/// reach it or go no further. out: the row as it is now. 1 set, 0 no such row, -1 nothing to choose on this PC (row_fixed)
+int menu_setting_set(const char* key, int value, MkwVkSetting* out) {
+    bridge_probe_first();
+    std::lock_guard lk(menu_mu);
+    int i = 0;
+    while (i < kRows && !(bridge_row(i) && !strcmp(ini_key(rows[i]), key))) i++;
+    if (i == kRows) return 0;
+    Row& r = rows[i];
+    if (row_fixed(r.value)) return bridge_fill(i, out), -1;
+    const int want = std::min(std::max(value, r.lo), r.value == &opts.pad_layout ? std::min(r.hi, 2) : r.hi);   // (3: Custom, shown only)
+    if (r.value == &opts.dlss || r.value == &opts.resolution || r.value == &opts.output_res) {
+        const int dir = want >= *r.value ? 1 : -1;
+        for (int k = 0; k <= r.hi - r.lo + 1 && *r.value != want; k++) {
+            const int was = *r.value;
+            set_row(r, was + dir * r.step, dir, false);
+            if (*r.value == was || (dir > 0 ? *r.value > want : *r.value < want)) break;   // (no further, or past it)
+        }
+        save();
+    } else if (want != *r.value) {
+        set_row(r, want, want > *r.value ? 1 : -1);
+    }
+    menu_refresh = true;
+    bridge_fill(i, out);
+    return 1;
 }
 
 /// (hookshot) the mouse on the inventory: a section tab chooses it, a card the item (a click selects it, it does not edit),
@@ -3137,6 +3203,7 @@ void cheat_press(int i, const bool* press, bool& changed) {
 }
 
 void menu_tick() {
+    std::lock_guard lk(menu_mu);   // (the control bridge's settings: menu_setting_set)
     fullscreen_tick();
     enum { K_N = 17 };
     static bool held[K_N];

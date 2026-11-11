@@ -2943,6 +2943,106 @@ void status_tick() {
 }
 
 std::atomic<bool> present_native_pq{false};   // (do_present: the game's picture is already HDR10)
+// ---- (hookshot) the control bridge's shots (host/control.c, docs/control.md): a PNG of the first present after a given one,
+// asked for from another thread. Read back as RX_VK_SHOTS' are (at a later present, once the GPU reached it, and written on a
+// thread of its own), with an image and a buffer of their own: the two kinds never share a readback. Never waited for: a
+// present looks at the readback once its value is completed() and moves on otherwise ----
+struct ShotAsk {
+    std::string path;
+    int64_t after = -1;
+    void (*done)(void* ctx, int64_t present, int ok) = nullptr;
+    void* ctx = nullptr;
+};
+std::mutex shot_ask_mu;
+std::deque<ShotAsk> shot_asks;   // (shot_ask_mu)
+struct { bool on; uint64_t value; int64_t present; ShotAsk ask; } shot_asked{};   // (replay_mu: the one being read back)
+VkImage ask_image = VK_NULL_HANDLE;
+VmaAllocation ask_image_alloc = nullptr, ask_buf_alloc = nullptr;
+VkBuffer ask_buf = VK_NULL_HANDLE;
+void* ask_map = nullptr;
+
+int shot_ask(const char* path, int64_t after, void (*done)(void*, int64_t, int), void* ctx) {
+    if (!path || !*path || !done) return 0;
+    std::lock_guard lk(shot_ask_mu);
+    if (shot_asks.size() >= 16) return 0;
+    shot_asks.push_back({path, after, done, ctx});
+    return 1;
+}
+bool shot_ask_init() {
+    if (ask_image) return true;
+    if (!shot_dimensions_ready()) return false;   // (RX_VK_SHOT_W/H out of bounds: no shots of either kind)
+    VkImage image = VK_NULL_HANDLE;
+    VmaAllocation image_alloc = nullptr, buf_alloc = nullptr;
+    VkBuffer buf = VK_NULL_HANDLE;
+    void* map = nullptr;
+    VkImageCreateInfo ci{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    ci.imageType = VK_IMAGE_TYPE_2D;
+    ci.format = VK_FORMAT_R8G8B8A8_UNORM;
+    ci.extent = {kShotW, kShotH, 1};
+    ci.mipLevels = ci.arrayLayers = 1;
+    ci.samples = VK_SAMPLE_COUNT_1_BIT;
+    ci.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    if (!create_image(ci, image, image_alloc)) return false;
+    if (!create_buffer((uint64_t)kShotW * kShotH * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT, true, buf, buf_alloc, &map)) {
+        destroy_image(image, image_alloc);
+        return false;
+    }
+    ask_image = image, ask_image_alloc = image_alloc, ask_buf = buf, ask_buf_alloc = buf_alloc, ask_map = map;
+    return true;
+}
+/// (do_present, replay_mu) the copy of this present for the first shot asked for before it, unless one is being read back
+void shot_ask_record(VkCommandBuffer cmd, VkImage src, uint32_t sw, uint32_t sh, const int crop[4], uint64_t value) {
+    if (shot_asked.on || !src) return;
+    ShotAsk a;
+    {
+        std::lock_guard lk(shot_ask_mu);
+        if (shot_asks.empty() || shot_asks.front().after >= presents) return;
+        a = std::move(shot_asks.front());
+        shot_asks.pop_front();
+    }
+    if (!shot_ask_init()) {
+        a.done(a.ctx, presents, 0);
+        return;
+    }
+    image_barrier(cmd, ask_image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    blit_crop(cmd, src, sw, sh, crop, ask_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, kShotW, kShotH);
+    image_barrier(cmd, ask_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    const VkBufferImageCopy c{0, 0, 0, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {0, 0, 0}, {kShotW, kShotH, 1}};
+    vkCmdCopyImageToBuffer(cmd, ask_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, ask_buf, 1, &c);
+    capture_host_read_barrier(cmd, ask_buf, (VkDeviceSize)kShotW * kShotH * 4);
+    shot_asked.on = true, shot_asked.value = value, shot_asked.present = presents, shot_asked.ask = std::move(a);
+}
+/// (do_present, replay_mu) the shot being read back, once the GPU is past it: never waited for
+void shot_ask_take() {
+    if (!shot_asked.on || completed() < shot_asked.value) return;
+    invalidate_mapped(ask_buf_alloc, (uint64_t)kShotW * kShotH * 4);   // (non-coherent host memory: what the GPU wrote)
+    auto px = std::make_shared<std::vector<uint8_t>>((const uint8_t*)ask_map, (const uint8_t*)ask_map + (size_t)kShotW * kShotH * 4);
+    ShotAsk a = std::move(shot_asked.ask);
+    const int64_t at = shot_asked.present;
+    shot_asked.on = false;
+    std::thread([px, a, at] {
+        // (through a file of its own and a rename: whoever is told the path never reads half a picture)
+        const std::string part = a.path + ".part";
+        bool ok = write_png(part.c_str(), px->data(), kShotW, kShotH);
+        if (ok) {
+            std::remove(a.path.c_str());
+            ok = std::rename(part.c_str(), a.path.c_str()) == 0;
+        }
+        if (!ok) std::remove(part.c_str());
+        logf("vk: present %lld %s %s (the control bridge)", (long long)at, ok ? "written to" : "could not be written to",
+             a.path.c_str());
+        a.done(a.ctx, at, ok ? 1 : 0);
+    }).detach();
+}
+void frame_info(int64_t* replayed, int64_t* draws, int* width, int* height) {
+    int64_t v[4] = {0, 0, 0, 0};
+    draw_stats(&v[0], &v[1], &v[2], &v[3]);   // (counters the replay's thread writes: read as they are, a sample)
+    if (replayed) *replayed = __atomic_load_n(&presents_now, __ATOMIC_RELAXED);
+    if (draws) *draws = v[0];
+    if (width) *width = (int)dev.swap_extent.width;
+    if (height) *height = (int)dev.swap_extent.height;
+}
+
 uint64_t present_value = 0;   // (the present job's value, handed out as it came; 0: the next one)
 struct PendingShot {
     bool on = false;
@@ -3092,11 +3192,13 @@ void do_present(const nvn_tex* t, const int crop[4]) {
                 capture_host_read_barrier(r.cmd, shot_bufs[presents & 1], (VkDeviceSize)kShotW * kShotH * 4);
             }
         }
+        shot_ask_record(r.cmd, src, sw, sh, crop, value);   // (the control bridge's, host/control.c)
         memory_end_submission(r.cmd);
         full_barrier(r.cmd);
         submit_recording(r);   // (nothing is stopped at a present: drain)
         if (pushed.load() < value) pushed = value;
         done_max = std::max(done_max, value), signaled = std::max(signaled, value);
+        shot_ask_take();   // (an earlier present's, when the GPU is past it)
         if (fg_after) {
             // (its slot is free again once the next submit's value is reached: that one comes after it)
             Recording& g = begin_recording(value + 1);
@@ -4326,6 +4428,10 @@ void fill_replay_table(MkwVkRenderer& t) {
     };
     t.option_set = menu_option_set;
     t.jitter_sample = jitter_sample;
+    t.frame_info = frame_info;
+    t.shot = shot_ask;
+    t.setting = menu_setting;
+    t.setting_set = menu_setting_set;
     t.nvn_register_sampler = register_sampler_queued;
     t.nvn_set_texture_pool_size = set_texture_pool_size;
     t.nvn_texture_released = texture_released_of;

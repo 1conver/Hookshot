@@ -33,6 +33,7 @@ static unsigned char *memory;
 static char last_log[256];
 volatile int64_t hos_hid_last_read;
 volatile int hos_nvn_sync_log_on;
+int hos_control_input(uint64_t *buttons, int32_t stick[4]) { (void)buttons; (void)stick; return 0; }   /* (host/control.c: off) */
 static void *at(uint64_t address) { CHECK(address <= 512 - 8); return memory + address; }
 #define GP(a) at(a)
 #define G32(a) (*(uint32_t *)at(a))

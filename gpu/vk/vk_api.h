@@ -15,7 +15,7 @@
 extern "C" {
 #endif
 
-#define MKWVK_API_VERSION 15
+#define MKWVK_API_VERSION 16
 enum { HOS_OPT_CHEAT_HEARTS = 32, HOS_OPT_CHEAT_FLIGHT, HOS_OPT_CHEAT_ACTION, HOS_OPT_CHEAT_CAMERA, HOS_OPT_CHEAT_SPEED };
 /* (hookshot) the Gameplay tab's Text size (host/oot_text_size.c): 0 the game's, 1 110%, 2 125%, 3 150%, 4 175% */
 enum { HOS_OPT_TEXT_SIZE = 10 };
@@ -65,6 +65,14 @@ typedef struct MkwVkPointer {
     uint32_t held, pressed;
     int32_t wheel;
 } MkwVkPointer;
+
+/* (hookshot) one of the Insert menu's settings, for the control bridge (MkwVkRenderer setting): key is its line in
+   hookshot_options.ini, name the row's, text how the menu shows the value */
+typedef struct MkwVkSetting {
+    char key[32], name[48], text[64], tab[16];
+    int value, lo, hi, step;
+    int restart, fixed;   /* the change applies at the next start; nothing to choose on this PC (the menu shows it greyed) */
+} MkwVkSetting;
 
 /* what the executable gives the back end */
 typedef struct MkwVkHost {
@@ -208,6 +216,20 @@ typedef struct MkwVkRenderer {
     void (*option_set)(int id, int value);
     /* (version 14) one coherent camera-jitter sample, without per-axis queries */
     void (*jitter_sample)(MkwVkJitter *out);
+    /* (version 16, hookshot) the control bridge (host/control.c, docs/control.md) */
+    /* the presents replayed so far, the draws recorded since the start, and the picture's size (the window's swapchain, or
+       the offscreen image's) */
+    void (*frame_info)(int64_t *presents, int64_t *draws, int *width, int *height);
+    /* a PNG of the first present replayed after present `after` (-1: the next one), RX_VK_SHOTS' size, written to
+       path on a thread of its own, which then calls done(ctx, the present, 1 when the file was written). 0: not taken
+       (too many waiting) */
+    int (*shot)(const char *path, int64_t after, void (*done)(void *ctx, int64_t present, int ok), void *ctx);
+    /* the Insert menu's settings rows (shown on this PC; not the headings or the debug tools): the index-th, to list them (0:
+       past the last; an index is no name, rows come and go), and the one whose hookshot_options.ini key is key set to value
+       as the menu's Left and Right set it, kept in the options file, out the row after it (1 set, 0 no such row, -1 nothing
+       to choose on this PC) */
+    int (*setting)(int index, MkwVkSetting *out);
+    int (*setting_set)(const char *key, int value, MkwVkSetting *out);
 } MkwVkRenderer;
 
 /* the DLL's one export: null when Vulkan is not usable (the executable then falls back to WebGPU) */
