@@ -64,6 +64,8 @@ void apply_pad_layout(int) {}
 void apply_preset(int) { presets++; }
 void sync_preset_budgets(int) {}
 void env_release(const int*) {}   // (the environment's hold on a row: none here)
+void vram_budget_sync() {}
+constexpr int kVramMinimumOnly = 1;
 /* (stand-ins for the rest of set_row, which the Rumble strength row never reaches: the Upscaler's rows, the restart offer) */
 bool row_fixed(const int*) { return false; }
 int upscaler() { return 0; }

@@ -569,15 +569,33 @@ const char* tx_preset(int v) {
     static const char* t[] = {"Custom", "Minimum (4GB)", "Low (6GB)", "Balanced (8GB)", "High (12GB)", "Ultra (16GB+)"};
     return t[std::min(std::max(v, 0), 5)];
 }
+// (hookshot) The VRAM budget row's choices: the texture and mirror budgets in MB (0: Auto, the renderer's own rule). The presets'
+// budgets are among them (preset_vram_budget), so a preset sets the row, and the row can also be chosen on its own (null and
+// Gummi, #dev-work 2026-11-10: the presets were the only way to set a limit)
+constexpr int kVramBudgets = 8;
+constexpr int kVramMinimumOnly = 1;   // (2.2 GB: set by the Minimum (4GB) preset only; the row's own steps go past it)
+constexpr int kVramTextureMb[kVramBudgets] = {0, 2200, 3600, 4800, 6144, 7500, 9216, 11000};
+constexpr int kVramMirrorMb[kVramBudgets] = {0, 256, 512, 1024, 1536, 2048, 2560, 3072};
+int preset_vram_budget(int p) {
+    static const int of[] = {0, 1, 2, 3, 5, 7};   // (none: Auto; Minimum 2.2 GB, Low 3.6, Balanced 4.8, High 7.5, Ultra 11)
+    return of[std::min(std::max(p, 0), 5)];
+}
+void vram_budget_sync() {
+    const int b = std::min(std::max(opts.vram_budget, 0), kVramBudgets - 1);
+    opts.vram_mb = kVramTextureMb[b];
+    opts.mirror_mb = kVramMirrorMb[b];
+}
+const char* tx_vram_budget(int v) {
+    static const char* t[kVramBudgets] = {"Auto", "2.2 GB (4GB preset)", "3.6 GB", "4.8 GB", "6 GB", "7.5 GB", "9 GB", "11 GB"};
+    return t[std::min(std::max(v, 0), kVramBudgets - 1)];
+}
+MENU_HINTS(hn_vram_budget, 0, "Set from what the driver allows: 70% of it, 45% on cards of 8 GB or less, at most 6 GB.",
+           "For 4 GB cards.", "For 6 GB cards.", "For 8 GB cards.", "The most Auto ever sets.", "For 12 GB cards.", nullptr,
+           "For 16 GB cards.")
+/// a preset's budgets (0: none, Auto): the VRAM budget row set to them
 void sync_preset_budgets(int p) {
-    switch (p) {
-    case 1: opts.vram_mb = 2200;  opts.mirror_mb = 256;  break;
-    case 2: opts.vram_mb = 3600;  opts.mirror_mb = 512;  break;
-    case 3: opts.vram_mb = 4800;  opts.mirror_mb = 1024; break;
-    case 4: opts.vram_mb = 7500;  opts.mirror_mb = 2048; break;
-    case 5: opts.vram_mb = 11000; opts.mirror_mb = 3072; break;
-    default: opts.vram_mb = 0;    opts.mirror_mb = 0;    break;
-    }
+    opts.vram_budget = preset_vram_budget(p);
+    vram_budget_sync();
 }
 // (Sharpness: tuned for the window pass's neighbours one picture pixel apart, each about the old setting's sharpening on a
 // 3840 x 2160 window at that preset's picture, 2048 x 1152 or the handheld profile's 1536 x 864: same frame, mean |Laplacian|
@@ -619,7 +637,7 @@ void apply_preset(int p) {
     sync_preset_budgets(p);
 }
 
-MENU_HINTS(hn_preset, 0, "Each row as you set it. Changing most rows yourself comes back to Custom, with the preset's memory caps kept.",
+MENU_HINTS(hn_preset, 0, "Each row as you set it. Changing most rows yourself comes back to Custom; the VRAM budget row keeps its value.",
            "Resolution 50% (with DLSS its nearest mode), Lanczos, Sharpness 30%, the Handheld Profile.",
            "Resolution 75% (with DLSS its nearest mode), Lanczos, Sharpness 30%, the Handheld Profile.",
            "Resolution 100% (with DLSS its nearest mode), Catmull-Rom, Sharpness 30%.",
@@ -780,6 +798,9 @@ Row rows[] = {
      hn_upscaler},
     {TAB_GRAPHICS, "DLSS model", &opts.dlss_model, 0, ur::kModels - 1, 1, tx_dlss_model,
      "Which of NVIDIA's DLSS networks draws the picture.", hn_dlss_model, false, true},
+    {TAB_GRAPHICS, "VRAM budget", &opts.vram_budget, 0, kVramBudgets - 1, 1, tx_vram_budget,
+     "How much video memory the game's textures may use, and its copies of game memory with them. Lower it if the game "
+     "stutters after a while of play; a preset sets it.", hn_vram_budget, false, true},
     {TAB_GRAPHICS, "Render resolution", &opts.resolution, 0, ur::kValues - 1, 1, tx_resolution,
      "The share of the output the 3D is drawn at; the Upscaler fills in the rest.", hn_resolution},
     // (frame generation beside the Upscaler: the frames it makes come from the same picture, and DLSS Frame Generation from
@@ -1387,7 +1408,9 @@ void save() {
             }
         }
         if (!mic_want.empty()) fprintf(f, "microphone_device=%s\n", mic_want.c_str());   // (hookshot: also while it is unplugged)
-        if (opts.budget > 0) fprintf(f, "memory_budget=%d\n", opts.budget);   // (not a row: the budgets Custom keeps)
+        // (not a row: the budgets Custom keeps. 0 too: with a preset on, the VRAM budget row chosen by the player, which the next
+        // start must not take back to the preset's)
+        fprintf(f, "memory_budget=%d\n", opts.budget);
         // (2: game_speed below 2 was only ever the old default, see menu_init; 3: the mouse's buttons are bindings, see
         // host/nn_hid.c binds_load; 4: Descriptor reuse on by default, see menu_init and vk_draw.cpp desc_slotgen_on)
         fprintf(f, "options_version=4\n");
@@ -1427,6 +1450,10 @@ void set_row(Row& r, int v, int dir, bool keep = true) {
         v = step_output_choice(*r.value, dir);
         if (v == *r.value) return;
     }
+    // (hookshot) the VRAM budget row steps past 2.2 GB: the Minimum (4GB) preset's, too few textures on a bigger card (a 12 GB
+    // card's walk made 2-3 times as many textures again as at Auto, 1% lows of 5-7 fps; hckrman101, #dev-work). The preset still
+    // sets it, and the row shows it then
+    if (r.value == &opts.vram_budget && v == kVramMinimumOnly) v += dir;
     if (stops_at_ends(r)) v = std::min(std::max(v, r.lo), r.hi);   // (a scale: it stops at its ends)
     if (r.value == &opts.pad_layout) {
         if (v > 2) v = dir > 0 ? 0 : 2;
@@ -1442,6 +1469,10 @@ void set_row(Row& r, int v, int dir, bool keep = true) {
         if (r.value == &opts.dlss) {   // (a slider stop kept)
             opts.resolution = ur::snap_render(upscaler(), opts.resolution);
             env_release(&opts.resolution);
+        }
+        if (r.value == &opts.vram_budget) {   // (hookshot: set on the row, the budget is the player's, on any card)
+            opts.budget = 0;
+            vram_budget_sync();
         }
         if (!r.preset_exempt) {   // (rows no preset sets: the controls, the window, the counter...)
             // (Custom, with the memory budgets of the preset it came from: they went with it, and Low (6GB) then a Resolution
@@ -2927,6 +2958,8 @@ void menu_init() {
     done = true;
     for (auto& count : item_counts) count.store(-1, std::memory_order_relaxed);
     bool has_options = false;
+    bool has_vram_budget = false;   // (hookshot: a file from before the VRAM budget row: its preset's, memory_budget's)
+    bool has_memory_budget = false;   // (a file from before memory_budget: its preset's)
     const char* cheats = getenv("HOS_OOT_CHEATS");
     cheats_env = cheats && !strcmp(cheats, "1");
     if (cheats_env) {
@@ -2955,7 +2988,8 @@ void menu_init() {
             if (!strcmp(line, "options_version")) version = atoi(eq + 1);
             if (!strcmp(line, "dynamic_resolution")) old_dynres = atoi(eq + 1);
             if (!strcmp(line, "menu_size") && atoi(eq + 1) == 0) menu_auto = true;
-            if (!strcmp(line, "memory_budget")) opts.budget = std::min(std::max(atoi(eq + 1), 0), 5);
+            if (!strcmp(line, "memory_budget")) opts.budget = std::min(std::max(atoi(eq + 1), 0), 5), has_memory_budget = true;
+            has_vram_budget |= !strcmp(line, "vram_budget");
             if (!strcmp(line, "microphone_device")) {   // (hookshot: the microphone, by its name)
                 mic_want = mic_key(eq + 1);
                 while (!mic_want.empty() && (mic_want.back() == '\n' || mic_want.back() == '\r')) mic_want.pop_back();
@@ -2987,8 +3021,9 @@ void menu_init() {
         opts.upscale = 0;
         opts.sharpness = 0;
     }
-    if (opts.preset > 0) opts.budget = opts.preset;   // (a file from before memory_budget: its preset's)
-    sync_preset_budgets(opts.budget);
+    if (opts.preset > 0 && !has_memory_budget) opts.budget = opts.preset;   // (a file from before memory_budget: its preset's)
+    if (!has_vram_budget) opts.vram_budget = preset_vram_budget(opts.budget);   // (a file from before the row)
+    vram_budget_sync();
     fps_cap_started = opts.fps_cap;   // (the FPS counter's graph: the cap applies from the start, host/nn_vi.c)
     fps_level_now.store(fps_stats::level_of(opts.show_fps), std::memory_order_relaxed);
     // (the environment over the saved rows, for this run only: env_override, save)
