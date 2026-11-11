@@ -30,6 +30,7 @@
 #include "vk_paths.h"
 #include "vk_menu.h"
 #include "vk_menu_hit.h"
+#include "vk_fps.h"    // (the FPS counter's levels and numbers)
 #include "vk_draw.h"   // (pipeline_cache_save: Restart now keeps what was built)
 #include "oot_cheat_items.h"
 #include "vk_progress.h"   // (StartupView, version_text: the start-up screen)
@@ -51,6 +52,7 @@
 #endif
 
 namespace mkwvk {
+int display_refresh_mhz();   // (vk_main.cpp: the window's display, asked once a second at most: the FPS counter's V-Sync target)
 HWND app_window();
 
 Options opts;
@@ -99,6 +101,8 @@ const char* tx_framegen(int v) {
     return t[v];
 }
 const char* tx_onoff(int v) { return v ? "On" : "Off"; }
+const char* tx_fps_level(int v) { return fps_stats::level_name(v); }
+const char* tx_fps_corner(int v) { return fps_stats::corner_name(v); }   // (the FPS counter row: Off, FPS, Frame time, Graph, Breakdown)
 const char* tx_profile(int v) { return v ? "Handheld" : "Docked"; }   // (opts.handheld: the Profile row)
 const char* tx_menu_shortcut(int v) {
     // (F1 is never turned off: the menu is always one key away. Esc as well, as a PC game's pause menu)
@@ -685,7 +689,11 @@ MENU_HINTS(hn_robust, 0, "On, on every card.", "Can be faster on some NVIDIA car
 MENU_HINTS(hn_mesh_mode, 0, "The GPU's own mesh shaders where it has them, the compute path where it has not.",
            "The GPU's own mesh shaders for every draw. A GPU without them still uses the compute path.",
            "The compute path on every GPU: try it if your card crashes or leaves objects out. Usually a little slower.")
-MENU_HINTS(hn_fps, 0, nullptr, "With frame generation on, the game's own rate too.")
+MENU_HINTS(hn_fps, 0, nullptr, "The frame rate. With frame generation on, the game's own rate too.",
+           "And the game's frame time, with its 1% low: the rate of its slowest 1% of frames over the last 10 seconds.",
+           "And a graph of the last 4 seconds' frame times, with a line at the Game frame rate cap's.",
+           "And where each frame's time goes: the game, the renderer, waiting for the GPU, waiting for its turn (frame pacing, "
+           "vsync); the GPU's own time; red marks where shaders were built or draws left out.")
 MENU_HINTS(hn_menu_size, 1, "Smaller, for a desk.", "The usual size.", "Larger, for a TV across the room.")
 MENU_HINTS(hn_speed, 0, "A step each frame: the game slows down whenever it runs below 60 fps.",
            "Normal speed down to 15 fps, by taking longer steps.")
@@ -784,8 +792,10 @@ Row rows[] = {
      "The speakers the game mixes its sound for. Applies after a restart.", hn_audio_output, true, true},
 
     // Gameplay
-    {TAB_GAMEPLAY, "FPS counter", &opts.show_fps, 0, 1, 1, tx_onoff, "Frames per second in the top right corner.", hn_fps,
-     false, true},
+    {TAB_GAMEPLAY, "FPS counter", &opts.show_fps, 0, fps_stats::kLevels - 1, 1, tx_fps_level,
+     "Frames per second in the top right corner, and as much more as you choose.", hn_fps, false, true},
+    {TAB_GAMEPLAY, "FPS counter position", &opts.fps_corner, 0, 3, 1, tx_fps_corner,
+     "The corner the FPS counter shows in. While this menu is open it shows at the top right.", nullptr, false, true},
     {TAB_GAMEPLAY, "Menu size", &opts.menu_size, 1, 3, 1, tx_menu_size,
      "How large this menu, the FPS counter and the start-up screen are drawn.", hn_menu_size, false, true},
     {TAB_GAMEPLAY, "Game speed", &opts.realtime, 0, 1, 1, tx_speed, "How the game keeps time when it runs below 60 fps.",
@@ -1480,6 +1490,22 @@ std::atomic<float> startup_fade{0};   // (the start-up screen's fade to black at
 std::atomic<int64_t> game_frames{0}, shown_frames{0};
 char fps_text[48] = "";
 char fps_sub[32] = "";
+// (the FPS counter's levels past the number, written every half second by menu_tick: the frame time and its 1% low; the
+// Breakdown's parts, the GPU's time, the shaders built and draws left out over the graph's 4 s)
+char fps_ms_text[24] = "", fps_low_text[24] = "";
+double fps_ms_now = 0, fps_parts_now[fps_stats::kParts];   // (the frame time and the parts, for their colour and the bar)
+double fps_rate_now = 0;   // (the number's rate, the game's own with frame generation: its colour)
+char fps_part_text[fps_stats::kParts][24];
+char fps_gpu_text[24] = "";
+char fps_built_text[16] = "", fps_left_text[16] = "";
+int fps_cap_started = 0;   // (the Game frame rate cap the game started with: the graph's line)
+/// The FPS counter's target frame time, ms: the cap the game started with (HOS_FPS_MAX over it, as host/nn_vi.c), or the
+/// display's refresh with V-Sync On and no frame generation when that is slower; 0 for none (Uncapped without V-Sync)
+double fps_target_ms() {
+    static const int cap = fps_stats::cap_rate(fps_cap_started, getenv("HOS_FPS_MAX") ? atoi(getenv("HOS_FPS_MAX")) : 0);
+    const bool fifo = menu_vsync() == 1 && opts.framegen == 0;
+    return fps_stats::target_ms_for(cap, fifo, fifo ? (display_refresh_mhz() + 500) / 1000 : 0);
+}
 menu_hit::Map hits;      // (the menu's controls as last drawn: the mouse's, menu_tick)
 float scroll_at[TAB_MOTION + 2];   // (the first row shown, eased toward the selection: the options' tabs and the Motion page, then
                                    // the Controls page: kControlsSlot)
@@ -2454,23 +2480,244 @@ void outlined_right(ui::Ctx& c, ImFont* font, float px, float right, float top, 
     c.d->AddText(font, px, ImVec2(x, top), col, t);
 }
 
-/// The FPS counter in the safe area's top right corner (under the banner while the menu is open): green outlined text, the
-/// number large and "FPS" beside it small, the frame generation line under them, and no plate. (hookshot) As the counter
-/// looked before the menu was drawn with Dear ImGui (v2.0.14's paint_fps: RGB 72 255 110, bold 28 and 13 px a scale step);
-/// the plate and the warm colours that came with the new menu were not wanted for it.
+/// (the FPS counter's lines past the number) Text with a soft shadow: a thin dark outline, lighter than the number's, and a
+/// darker copy a step down, so it reads over sand and sky as over a dungeon. Digits on even steps (tabular: the widest
+/// digit's advance), so a changing value does not shift
+struct Tab {
+    ImFont* font;
+    float px, digit;
+    Tab(ImFont* f, float size) : font(f), px(size), digit(0) {
+        char d[2] = {0, 0};
+        for (char k = '0'; k <= '9'; k++) d[0] = k, digit = std::max(digit, ui::size_of(f, size, d).x);
+    }
+    static bool dig(char c) { return c >= '0' && c <= '9'; }
+    /// Each piece of t: a digit alone (in its even cell), or a run of what is not one (drawn whole). fn(begin, end, x, width)
+    template <class Fn>
+    float pieces(const char* t, float x, Fn fn) const {
+        const float x0 = x;
+        for (const char* q = t; *q;) {
+            const char* e = q + 1;
+            if (!dig(*q))
+                while (*e && !dig(*e)) e++;
+            const float w = dig(*q) ? digit : font->CalcTextSizeA(px, FLT_MAX, 0, q, e).x;
+            fn(q, e, x, w);
+            x += w, q = e;
+        }
+        return x - x0;
+    }
+    float width(const char* t) const { return pieces(t, 0, [](const char*, const char*, float, float) {}); }
+    /// Each piece five times under itself (a faint copy at each diagonal step, a darker one a step down) and once in col: a
+    /// dozen strings make a few hundred quads' worth of glyphs, not a glyph each ten times
+    void draw(ImDrawList* d, float x, float y, ImU32 col, const char* t, float s) const {
+        const float o = std::max(1.0f, s);
+        const int a = std::max(200, (int)((col >> IM_COL32_A_SHIFT) & 0xff));
+        const ImU32 shade = ui::rgba(0, 0, 0, a * 210 / 255), faint = ui::rgba(0, 0, 0, a * 160 / 255);
+        pieces(t, x, [&](const char* q, const char* e, float px0, float w) {
+            if (*q == ' ' && e == q + 1) return;
+            const float gx = px0 + (dig(*q) ? (w - font->CalcTextSizeA(px, FLT_MAX, 0, q, e).x) * 0.5f : 0);
+            static const float dx[4] = {-1, 1, -1, 1}, dy[4] = {-1, -1, 1, 1};
+            for (int k = 0; k < 4; k++) d->AddText(font, px, ImVec2(gx + dx[k] * o * 0.8f, y + dy[k] * o * 0.8f), faint, q, e);
+            d->AddText(font, px, ImVec2(gx, y + o), shade, q, e);
+            d->AddText(font, px, ImVec2(gx, y), col, q, e);
+        });
+    }
+};
+
+/// The FPS counter, in the corner the FPS counter position row chooses (the safe area's; under the banner at the top right
+/// while the menu is open, unless it fits beside the menu's column on a very wide window). The number as it always looked:
+/// green outlined bold, "FPS" small beside it, the frame generation line under them, no plate (#1957, v2.0.14's paint_fps).
+/// Past FPS (the row's levels, fps_stats.h), a tidy column under it, aligned to the same edge, with the same soft-shadowed
+/// text and no plate either: the frame time (green, amber or red against the cap's) and the 1% low; the graph of the last
+/// 4 s, a thin line over a soft fill, one column a frame span with its slowest frame (a stutter never falls between two), a
+/// faint dashed line at the cap's frame time, red ticks over frames past twice it; the Breakdown's bar of where the time
+/// goes, its legend with the values, the GPU's time and the stutters' causes (their columns get a red tick too).
 void draw_fps(ui::Ctx& c, bool under_banner) {
-    const float s = c.s, big = 28 * s, small = 13 * s;
-    const ImU32 green = ui::rgba(72, 255, 110);
-    const float nw = ui::size_of(c.f.strong, big, fps_text).x, lw = ui::size_of(c.f.strong, small, "FPS").x;
-    const float sw = fps_sub[0] ? ui::size_of(c.f.strong, small, fps_sub).x : 0;
-    const float bw = std::max(nw + 4 * s + lw, sw);
-    // (the window's top right corner, where it is in play; under the banner while the menu is open, unless the window is so
-    // much wider than 16:9 that the counter fits beside the centred column's banner, in the corner)
-    const bool beside = menu_ox >= bw + 2 * c.safe;
-    const float right = c.w - c.safe, top = under_banner && page != 5 && !beside ? banner_h(c) + 10 * s : c.safe;
-    outlined_right(c, c.f.strong, small, right, top + 14 * s, green, "FPS");
-    outlined_right(c, c.f.strong, big, right - lw - 4 * s, top, green, fps_text);
-    if (fps_sub[0]) outlined_right(c, c.f.strong, small, right, top + 32 * s, ui::rgba(226, 232, 226), fps_sub);
+    namespace fs = fps_stats;
+    int level = fs::level_of(opts.show_fps);
+    const float s = c.s, big = 28 * s, small = 13 * s, label = 12 * s;
+    const ImU32 green = ui::rgba(72, 255, 110), ink = ui::kInkBright, dim = ui::kSoft, soft = ui::kInk;
+    const Tab num(c.f.strong, big), tab(c.f.strong, small), lab(c.f.strong, label);
+    const float nw = num.width(fps_text), lw = ui::size_of(c.f.strong, small, "FPS").x;
+    const float sw = fps_sub[0] ? tab.width(fps_sub) : 0;
+    const float gw = 208 * s;   // (the column's width from the graph on)
+    // (while the menu is open: the top right under the banner, the number and the frame time only, unless the window is so much
+    // wider than 16:9 that the column fits beside the menu's, in its own corner)
+    const bool beside = menu_ox >= (level >= fs::kGraph ? gw : nw + lw) + 2 * c.safe + 8 * s;
+    int corner = std::clamp(opts.fps_corner, 0, 3);
+    if (under_banner && !beside) corner = 0, level = std::min(level, (int)fs::kFrameTime);
+    const bool left = corner & 1, bottom = corner >= 2;
+    // (the column's height, to anchor it at the bottom)
+    const float row = 17 * s, gh = 50 * s, lh = 16 * s;
+    float h = 32 * s + (fps_sub[0] ? row : 0);
+    if (level >= fs::kFrameTime && fps_ms_text[0]) h += row;
+    if (level >= fs::kGraph) h += 8 * s + gh + 4 * s;
+    if (level >= fs::kBreakdown) h += 10 * s + 6 * s + 4 * lh + 6 * s + 3 * lh;
+    const float edge = left ? c.safe : c.w - c.safe;
+    const float top = bottom ? c.h - c.safe - h : under_banner && page != 5 && !beside ? banner_h(c) + 10 * s : c.safe;
+    // (x for a width at the column's edge)
+    const auto at = [&](float w) { return left ? edge : edge - w; };
+    // (the number's colour: at FPS the classic green whatever the rate, the counter as it always was (#1957); from Frame time on
+    // green at the cap's rate, amber under it, red under two thirds of it, as the frame time beside it)
+    const double target = fps_target_ms();   // (0: none, Uncapped: the colours against the console's 60, no line)
+    const ImU32 grade_col[3] = {green, ui::rgba(255, 200, 60), ui::rgba(255, 95, 80)};
+    const ImU32 num_col = level >= fs::kFrameTime && fps_rate_now > 0 ? grade_col[fs::rate_grade(fps_rate_now, target)] : green;
+    {   // (the number and "FPS", as they always looked: outlined, the number's digits on even steps)
+        const float x = at(nw + 4 * s + lw), o = std::max(1.0f, s);
+        for (int dy = -1; dy <= 1; dy++)
+            for (int dx = -1; dx <= 1; dx++)
+                if (dx || dy) {
+                    float gx = x;
+                    char one[2] = {0, 0};
+                    for (const char* q = fps_text; *q; q++) {
+                        one[0] = *q;
+                        const float adv = ui::size_of(c.f.strong, big, one).x;
+                        c.d->AddText(c.f.strong, big, ImVec2(gx + (num.digit - adv) * 0.5f + dx * o, top + dy * o), ui::rgba(0, 0, 0, 230), one);
+                        gx += num.digit;
+                    }
+                    c.d->AddText(c.f.strong, small, ImVec2(x + nw + 4 * s + dx * o, top + 14 * s + dy * o), ui::rgba(0, 0, 0, 230), "FPS");
+                }
+        float gx = x;
+        char one[2] = {0, 0};
+        for (const char* q = fps_text; *q; q++) {
+            one[0] = *q;
+            const float adv = ui::size_of(c.f.strong, big, one).x;
+            c.d->AddText(c.f.strong, big, ImVec2(gx + (num.digit - adv) * 0.5f, top), num_col, one);
+            gx += num.digit;
+        }
+        c.d->AddText(c.f.strong, small, ImVec2(x + nw + 4 * s, top + 14 * s), num_col, "FPS");
+    }
+    float y = top + 32 * s;
+    if (fps_sub[0]) tab.draw(c.d, at(sw), y, soft, fps_sub, s), y += row;
+    if (level < fs::kFrameTime) return;
+    if (fps_ms_text[0]) {   // ("16.7 ms" in the colour of its distance from the cap's frame time, "1% low 58" beside it)
+        const ImU32 ms_col = grade_col[fps_ms_now > 0 ? fs::rate_grade(1000.0 / fps_ms_now, target) : 0];
+        const float mw = tab.width(fps_ms_text), gap = 10 * s, low_w = tab.width(fps_low_text);
+        const float x = at(mw + gap + low_w);
+        tab.draw(c.d, x, y, ms_col, fps_ms_text, s);
+        tab.draw(c.d, x + mw + gap, y, soft, fps_low_text, s);
+        y += row;
+    }
+    if (level < fs::kGraph) return;
+    // (the graph)
+    constexpr int kCols = 104;
+    static fs::Frame col[kCols];
+    static bool mark[kCols];
+    // (the columns from the ring at most 60 times a second: at the cap Uncapped's 1000 fps, 4 s of frames each present cost
+    // more than the drawing; a 4 s graph moves a column every 40 ms)
+    static double topms = 0;
+    static int64_t graph_at = 0;
+    if (const int64_t now = fps_clock(); now - graph_at >= fs::kSecond / 60 || now < graph_at) {
+        graph_at = now;
+        (void)fps_graph(now, kCols, col, mark);
+        static float ms[kCols];   // (the scale from the usual frame, not the slowest: a spike past the top is drawn at it, and marked)
+        int k = 0;
+        for (int i = 0; i < kCols; i++)
+            if (col[i].ms > 0) ms[k++] = col[i].ms;
+        topms = fs::graph_top(target, fs::typical_ms(ms, k));
+    }
+    const bool parts = level >= fs::kBreakdown;
+    const float x0 = at(gw), x1 = x0 + gw, gy0 = y + 8 * s, gy1 = gy0 + gh;
+    const float cw = gw / kCols, py = (float)(gh / topms);
+    const float thin = std::max(1.0f, 1.75f * s);
+    const ImU32 line_col = ui::rgba(130, 240, 150), fill_top = ui::rgba(120, 225, 140, 80), fill_bot = ui::rgba(120, 225, 140, 0);
+    // (the floor: a faint line; the cap's frame time: a dashed one, its value at the inner end)
+    c.d->AddLine(ImVec2(x0, std::floor(gy1) + 0.5f), ImVec2(x1, std::floor(gy1) + 0.5f), ui::rgba(255, 255, 255, 60), std::max(1.0f, s));
+    {
+        // (the scale's two values outside the graph, on its inner side: the cap's frame time at its line, the top at the top)
+        char t[16];
+        if (target > 0) {   // (Uncapped without V-Sync: no line)
+            const float ty = std::floor(gy1 - (float)target * py) + 0.5f, dash = 4 * s, gap = 3 * s;
+            for (float x = x0; x < x1; x += dash + gap)
+                c.d->AddLine(ImVec2(x, ty), ImVec2(std::min(x + dash, x1), ty), ui::rgba(255, 255, 255, 110), std::max(1.0f, s));
+            snprintf(t, sizeof t, "%.1f", target);
+            lab.draw(c.d, left ? x1 + 5 * s : x0 - 5 * s - lab.width(t), ty - label * 0.55f, ui::rgba(235, 235, 235), t, s);
+        }
+        snprintf(t, sizeof t, topms < 10 ? "%.1f" : "%.0f", topms);
+        lab.draw(c.d, left ? x1 + 5 * s : x0 - 5 * s - lab.width(t), gy0 - label * 0.55f, ui::rgba(200, 200, 200), t, s);
+    }
+    // (the soft fill: a column each, fading down; then the line over it, broken where a column had no frame, a faint dark line
+    // under it for the bright scenes)
+    static ImVec2 pts[kCols];
+    const auto yv = [&](float ms) { return std::max(gy0, gy1 - ms * py); };
+    // (the columns with a frame, joined across those without: a slow stretch has fewer frames than columns)
+    int n = 0;
+    for (int i = 0; i < kCols; i++)
+        if (col[i].ms > 0) pts[n++] = ImVec2(x0 + (i + 0.5f) * cw, yv(col[i].ms));
+    if (n >= 2) {   // (the fill: a quad under each segment, its colour at the line fading to nothing at the floor)
+        const ImVec2 uv = ImGui::GetFontTexUvWhitePixel();
+        c.d->PrimReserve((n - 1) * 6, (n - 1) * 4);
+        for (int k = 0; k + 1 < n; k++) {
+            const ImDrawIdx i0 = (ImDrawIdx)c.d->_VtxCurrentIdx;
+            c.d->PrimWriteVtx(pts[k], uv, fill_top);
+            c.d->PrimWriteVtx(pts[k + 1], uv, fill_top);
+            c.d->PrimWriteVtx(ImVec2(pts[k + 1].x, gy1), uv, fill_bot);
+            c.d->PrimWriteVtx(ImVec2(pts[k].x, gy1), uv, fill_bot);
+            c.d->PrimWriteIdx(i0), c.d->PrimWriteIdx((ImDrawIdx)(i0 + 1)), c.d->PrimWriteIdx((ImDrawIdx)(i0 + 2));
+            c.d->PrimWriteIdx(i0), c.d->PrimWriteIdx((ImDrawIdx)(i0 + 2)), c.d->PrimWriteIdx((ImDrawIdx)(i0 + 3));
+        }
+    }
+    if (n == 1) pts[n++] = ImVec2(pts[0].x + 1, pts[0].y);
+    if (n >= 2) {
+        static ImVec2 under[kCols];
+        for (int k = 0; k < n; k++) under[k] = ImVec2(pts[k].x, pts[k].y + std::max(1.0f, s));
+        c.d->AddPolyline(under, n, ui::rgba(0, 0, 0, 150), ImDrawFlags_None, thin + std::max(1.0f, s));
+        c.d->AddPolyline(pts, n, line_col, ImDrawFlags_None, thin);
+    }
+    // (red ticks: spikes, frames past twice the cap's and half again the graph's usual (a steady slow stretch is not a row of
+    // them), and with the Breakdown the frames that built shaders or left draws out)
+    float usual = 0;
+    {
+        int k = 0;
+        for (int i = 0; i < kCols; i++)
+            if (col[i].ms > 0) usual += col[i].ms, k++;
+        usual = k ? usual / k : 0;
+    }
+    for (int i = 0; i < kCols; i++)
+        if ((col[i].ms > 2 * target && col[i].ms > 1.5f * usual) || col[i].ms > topms || (parts && mark[i])) {   // (no target: past half again the usual)
+            const float cx = x0 + (i + 0.5f) * cw;
+            c.d->AddCircleFilled(ImVec2(cx, gy0 - 3 * s), 2.2f * s, ui::rgba(0, 0, 0, 120));
+            c.d->AddCircleFilled(ImVec2(cx, gy0 - 3 * s), 1.6f * s, ui::rgba(240, 100, 85));
+        }
+    if (!parts) return;
+    // (the Breakdown: where the half second's frame time went, as a bar, then a legend with the values, then the rest)
+    static const ImU32 part_col[fs::kParts] = {ui::rgba(110, 170, 230), ui::rgba(180, 140, 225), ui::rgba(226, 160, 80),
+                                                ui::rgba(130, 128, 118)};
+    static const char* const names[fs::kParts] = {"Game", "Renderer", "GPU wait", "Pacing"};
+    float by = gy1 + 10 * s;
+    {
+        const float bh = 6 * s, r = 3 * s;
+        double sum = 0;
+        for (double v : fps_parts_now) sum += v;
+        c.d->AddRectFilled(ImVec2(x0 - 1, by - 1), ImVec2(x1 + 1, by + bh + 1), ui::rgba(0, 0, 0, 90), r);
+        float x = x0;
+        for (int p = 0; p < fs::kParts && sum > 0; p++) {
+            const float w = (float)(gw * fps_parts_now[p] / sum);
+            if (w <= 0) continue;
+            const ImDrawFlags round = (x <= x0 + 0.5f ? ImDrawFlags_RoundCornersLeft : 0) |
+                                      (x + w >= x1 - 0.5f ? ImDrawFlags_RoundCornersRight : 0);
+            c.d->AddRectFilled(ImVec2(x, by), ImVec2(std::min(x + w, x1), by + bh), part_col[p], round ? r : 0, round ? round : ImDrawFlags_RoundCornersNone);
+            x += w;
+        }
+        by += bh + 6 * s;
+    }
+    const auto line = [&](ImU32 dot, const char* name, const char* value, ImU32 value_col) {
+        float nx = x0;
+        if (dot) {
+            c.d->AddCircleFilled(ImVec2(x0 + 4 * s, by + lh * 0.5f), 3.2f * s, ui::rgba(0, 0, 0, 110));
+            c.d->AddCircleFilled(ImVec2(x0 + 4 * s, by + lh * 0.5f), 2.6f * s, dot);
+            nx += 12 * s;
+        }
+        lab.draw(c.d, nx, by + 1 * s, soft, name, s);
+        tab.draw(c.d, x1 - tab.width(value), by, value_col, value, s);
+        by += lh;
+    };
+    for (int p = 0; p < fs::kParts; p++) line(part_col[p], names[p], fps_part_text[p], ink);
+    c.d->AddLine(ImVec2(x0, std::floor(by + 3 * s) + 0.5f), ImVec2(x1, std::floor(by + 3 * s) + 0.5f), ui::rgba(255, 255, 255, 40), std::max(1.0f, s));
+    by += 6 * s;
+    line(0, "GPU time", fps_gpu_text, ink);
+    const ImU32 red = ui::rgba(240, 100, 85);
+    line(0, "Shaders built (4 s)", fps_built_text, strcmp(fps_built_text, "0") ? red : dim);
+    line(0, "Draws left out (4 s)", fps_left_text, strcmp(fps_left_text, "0") ? red : dim);
 }
 
 /// The start-up screen: the logo, the wordmark, what the start is doing, a bar, on a warm dark. A little below the middle; what
@@ -2647,6 +2894,8 @@ void menu_init() {
     if (const char* e = getenv("HOS_REALTIME_STEP")) opts.realtime = atoi(e) != 0;
     if (const char* e = getenv("HOS_DYNRES")) opts.resolution = atoi(e) != 0 ? 0 : 1;
     if (const char* e = getenv("HOS_OUTPUT_RES")) opts.output_res = parse_output(e);
+    fps_cap_started = opts.fps_cap;   // (the FPS counter's graph: the cap applies from the start, host/nn_vi.c)
+    fps_level_now.store(fps_stats::level_of(opts.show_fps), std::memory_order_relaxed);
     restart_init();   // (what this run started with: the rows that take a restart differ from it once changed)
 }
 
@@ -2741,6 +2990,27 @@ void fullscreen_tick() {
         menu_refresh = true;
         save();
     }
+}
+
+/// The FPS counter's lines past the number, four times a second: the game's frame time over the last half second and
+/// the 1% low over 10 s; the Breakdown's parts and the GPU's time over the half second, the shaders built and the draws left
+/// out over the graph's 4 s
+void fps_texts(int64_t now) {
+    namespace fs = fps_stats;
+    const int level = fs::level_of(opts.show_fps);
+    if (level < fs::kFrameTime) return;
+    const fs::Summary half = fps_summary(now, fs::kSecond / 2, fs::kLowWindow);
+    fs::frame_time_text(fps_ms_text, sizeof fps_ms_text, half.avg_ms);
+    fs::low_text(fps_low_text, sizeof fps_low_text, half.low_fps);
+    if (!half.frames) fps_ms_text[0] = 0;
+    fps_ms_now = half.avg_ms;
+    for (int p = 0; p < fs::kParts; p++) fps_parts_now[p] = half.part[p];
+    if (level < fs::kBreakdown) return;
+    for (int p = 0; p < fs::kParts; p++) fs::frame_time_text(fps_part_text[p], sizeof fps_part_text[p], half.part[p]);
+    fs::frame_time_text(fps_gpu_text, sizeof fps_gpu_text, half.gpu_ms);
+    const fs::Summary graph = fps_summary(now, fs::kGraphWindow, 0);
+    snprintf(fps_built_text, sizeof fps_built_text, "%d", graph.pipelines);
+    snprintf(fps_left_text, sizeof fps_left_text, "%d", graph.left_out);
 }
 
 /// A rate over the half-second that just ended. The first call only starts that interval: the frames since launch,
@@ -3269,15 +3539,19 @@ void menu_tick() {
             PostMessageA(app_window(), WM_APP + 8, (WPARAM)now_open, (LPARAM)(now_open && esc_opens));
         }
     }
+    fps_level_now.store(fps_stats::level_of(opts.show_fps), std::memory_order_relaxed);   // (what vk_fps.cpp measures)
     if (opts.show_fps) {
         static int64_t next = 0, last_game = 0, last_shown = 0;
         const int64_t now = prof_now();
         double shown = 0, game = 0;
         if (fps_take(now, shown_frames.load(), game_frames.load(), &next, &last_shown, &last_game, &shown, &game)) {
             snprintf(fps_text, sizeof fps_text, "%.0f", shown);
+            fps_rate_now = opts.framegen >= 1 ? game : shown;   // (the game's own against its cap, with frame generation too)
             if (opts.framegen >= 1) snprintf(fps_sub, sizeof fps_sub, "game %.0f", game);
             else fps_sub[0] = 0;
         }
+        static int64_t texts_next = 0;   // (the lines past the number: four times a second, each over the last half second)
+        if (now >= texts_next) texts_next = now + fps_stats::kSecond / 4, fps_texts(now);
     }
 }
 

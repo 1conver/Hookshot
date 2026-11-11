@@ -15,7 +15,7 @@
 extern "C" {
 #endif
 
-#define MKWVK_API_VERSION 14
+#define MKWVK_API_VERSION 15
 enum { HOS_OPT_CHEAT_HEARTS = 32, HOS_OPT_CHEAT_FLIGHT, HOS_OPT_CHEAT_ACTION, HOS_OPT_CHEAT_CAMERA, HOS_OPT_CHEAT_SPEED };
 /* (hookshot) the Gameplay tab's Text size (host/oot_text_size.c): 0 the game's, 1 110%, 2 125%, 3 150%, 4 175% */
 enum { HOS_OPT_TEXT_SIZE = 10 };
@@ -146,6 +146,12 @@ typedef struct MkwVkHost {
        (a bit each; HOS_WIDE_KEEP=<hex> over it); returns the margin of the middle 16:9 at either side, a fraction of the
        picture's width (0: the picture is 16:9) */
     float (*wide_menus)(uint32_t keep_mask);
+    /* (version 15, hookshot) the FPS counter's Breakdown (gpu/vk/vk_fps.cpp): time asleep so far, in ns (host/hos_thread.c):
+       [0] OoT's present poll, waiting for its frame's GPU work; [1] the window's acquire pacing the frames (both whichever
+       thread they are on), and the calling thread's other guest sleeps. Asked by the thread that presents, at its present */
+    void (*slept_ns)(int64_t out[2]);
+    /* (version 15, hookshot) whether the host times those sleeps: 1 while the Breakdown shows, 0 (the default) costs nothing */
+    void (*fps_timing)(int on);
 } MkwVkHost;
 
 /* One completed temporal-upscale sample; all zero while inactive. */

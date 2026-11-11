@@ -167,7 +167,12 @@ void hos_vi_native_acquire(int active) {
         until = frame >= 0 && frame < n ? shown_at[frame & 15] : 0;
     }
     const int64_t now = hos_now_ns();
-    if (until > now) hos_sleep_ns(until - now);
+    if (until > now) {
+        extern volatile int64_t hos_acquire_slept_ns;   /* (host/hos_thread.c: the FPS counter's Breakdown, its pacing) */
+        extern volatile int hos_fps_timing;
+        hos_sleep_ns(until - now);
+        if (hos_fps_timing) InterlockedAdd64(&hos_acquire_slept_ns, hos_now_ns() - now);
+    }
 }
 /* (mkw-recomp) MKW's frame pacer (0x806bcbb0, x19 when it sets the interval: nvn_native.c): its measured frame time
    (+0x128, ticks), its running excess (+0x218) and interval (+0x214), logged with the frame rate */
