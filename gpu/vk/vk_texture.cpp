@@ -4089,7 +4089,7 @@ void texture_frame(uint64_t completed) {
     }
     uint64_t longest = 0;
     for (const Texture* t : by_start) longest = std::max(longest, t->guest_size);
-    std::vector<Texture*> gone;
+    std::unordered_set<Texture*> gone;
     // (over the budget, what goes has gone unused for RX_VK_EVICT_MIN_UNUSED frames, 60 by default; it was 8. On an
     // 8 GB laptop card the VRAM sits at the driver's limit, the budget shrinks and this runs every 10 frames: with 8,
     // ~300 textures in a few minutes of Kokiri Forest were evicted and made again, all of them within 60 frames (200
@@ -4318,16 +4318,11 @@ void texture_frame(uint64_t completed) {
         }
         destroy_later(*tex);
         forget_gpu(tex);
-        gone.push_back(tex);
+        gone.insert(tex);
     }
     for (auto it = textures.begin(); it != textures.end() && !gone.empty();) {
-        auto g = std::find(gone.begin(), gone.end(), it->second.get());
-        if (g != gone.end()) {
-            gone.erase(g);
-            it = textures.erase(it);
-        } else {
-            ++it;
-        }
+        if (gone.erase(it->second.get())) it = textures.erase(it);
+        else ++it;
     }
     if (n_dead && frame_no >= dead_logged_at + 600) {   // (the dead transient targets let go so far, every 600 presents)
         dead_logged_at = frame_no;

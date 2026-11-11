@@ -2322,9 +2322,10 @@ void mirror_sync(Pool& p) {
     std::vector<VkBufferCopy> runs;   // (from guest memory)
     std::map<VkBuffer, std::vector<VkBufferCopy>> cap_runs;   // (from the captures' copies)
     uint64_t run_lo = 0, run_hi = 0;
-    for (uint64_t page = p.lo >> kPageShift; page < (p.hi + 4095) >> kPageShift;) {
-        if (page % kRegionPages == 0 && region_gen[page / kRegionPages] <= p.synced_gen) {
-            page += kRegionPages;   // (a clean 2 MB region)
+    const uint64_t end_page = (p.hi + 4095) >> kPageShift;
+    for (uint64_t page = p.lo >> kPageShift; page < end_page;) {
+        if (region_gen[page / kRegionPages] <= p.synced_gen) {   // (a clean 2 MB region, or its rest when the pool starts in it)
+            page = std::min(end_page, (page / kRegionPages + 1) * kRegionPages);
             continue;
         }
         const uint32_t pg = page_gen(page);
