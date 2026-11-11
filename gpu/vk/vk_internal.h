@@ -298,6 +298,8 @@ void vma_log_image_blocks();   // (the image pools' blocks: what they hold, and 
 PFN_vkGetInstanceProcAddr instance_proc();   // vk_main.cpp
 
 bool create_swapchain(uint32_t width, uint32_t height);
+int swapchain_framegen();   // (vk_main.cpp: frame generation's fixed multiplier as the swapchain is made for it, 0 none)
+bool swapchain_dlssg();     // (vk_main.cpp: and DLSS-G makes its sets: V-Sync Auto's FIFO)
 void retire_swapchain();   // (dev.present_mu held)
 bool invalidate_lost_surface(VkResult result);   // (dev.present_mu held)
 bool replay_start();                          // vk_replay.cpp

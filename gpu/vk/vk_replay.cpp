@@ -39,6 +39,7 @@
 #include "vk_paths.h"   // (game_module_path: the frame trace beside the game)
 #include "vk_gprof.h"
 #include "vk_framegen.h"
+#include "vk_dlss.h"   // (hookshot: dlss_fg_idle)
 #include "vk_fps.h"
 #include "vk_menu.h"
 #include "vk_jobs.h"
@@ -3216,7 +3217,12 @@ void do_present(const nvn_tex* t, const int crop[4]) {
                                            sw, sh, crop);
             submit_recording(g, false);
         }
-        if (interpolated) framegen_queue(value);
+        // (frame generation at Off or Auto, where DLSS-G is not asked: its feature, if made, let go, vk_dlss.cpp)
+        if (swapchain_framegen() < 2) dlss_fg_idle();
+        if (interpolated) {   // (NVIDIA Reflex: the game frame's rendering is submitted; the display thread presents it later)
+            reflex_game_submitted();
+            framegen_queue(value);
+        }
         else menu_note_frame(true);   // (the FPS counter's, as frame generation's thread counts what it shows)
         {   // (RX_VK_WAIT_GPU=<frames>: the replay no further ahead of the GPU than that)
             static uint64_t values[8];
@@ -3633,8 +3639,11 @@ void present_image(VkImage src, uint32_t sw, uint32_t sh, const int crop[4], VkI
     const bool hdr_changed = hdr_was >= 0 && hdr_was != opts.hdr;   // (turned on or off: the swapchain's format)
     if (hdr_was < 0) hdr_was = opts.hdr;
     static int vsync_was = -1;   // (the V-Sync row as the swapchain was made for it: its present mode)
-    const bool vsync_changed = vsync_was >= 0 && vsync_was != menu_vsync();
-    if (vsync_was < 0) vsync_was = menu_vsync();
+    // (and frame generation's multiplier, swapchain_framegen: a spare image a frame; and swapchain_dlssg: FIFO under V-Sync
+    // Auto with DLSS Frame Generation)
+    const int vsync_now = menu_vsync() * 16 + swapchain_framegen() * 2 + (swapchain_dlssg() ? 1 : 0);
+    const bool vsync_changed = vsync_was >= 0 && vsync_was != vsync_now;
+    if (vsync_was < 0) vsync_was = vsync_now;
     const uint64_t want = dev.swap_resize.exchange(0, std::memory_order_acquire);
     if (want || !dev.swapchain || reflex_swapchain_stale() || hdr_changed || vsync_changed) {   // (resized, gone, Reflex, HDR or V-Sync changed)
         std::lock_guard qk(dev.present_mu);
@@ -3647,7 +3656,7 @@ void present_image(VkImage src, uint32_t sw, uint32_t sh, const int crop[4], VkI
                                                    std::memory_order_release, std::memory_order_relaxed);
             return;   // (the old swapchain may already be retired; do not acquire or reset a frame fence)
         }
-        hdr_was = opts.hdr, vsync_was = menu_vsync();
+        hdr_was = opts.hdr, vsync_was = vsync_now;
     }
     // Resize or surface recovery can replace the chain after the display thread chose present-ahead.
     // A deferred pair needs two spare images before either one can be presented.
@@ -3832,6 +3841,7 @@ void present_image(VkImage src, uint32_t sw, uint32_t sh, const int crop[4], VkI
         present_defer_into->index = index;
         present_defer_into->done = f.done;
         present_defer_into->swapchain = dev.swapchain;
+        present_defer_into->reflex_frame = reflex_present_frame;   // (NVIDIA Reflex: the frame it shows, at its present)
         present_defer_into->swapchain_generation = dev.swapchain_generation;
         return;
     }
@@ -3842,8 +3852,12 @@ bool present_commit(const PendingPresent& p) {
     if (!p.used) return false;
     std::lock_guard lk(present_image_mu);
     std::unique_lock qk(dev.present_mu);
-    if (p.swapchain != dev.swapchain || p.swapchain_generation != dev.swapchain_generation) return false;
-    return present_out(p.index, qk);
+    if (p.swapchain != dev.swapchain || p.swapchain_generation != dev.swapchain_generation) return false;   // (made again since the copy)
+    const uint64_t was = reflex_present_frame;
+    reflex_present_frame = p.reflex_frame;   // (NVIDIA Reflex: the frame this present shows, as at its copy)
+    const bool shown = present_out(p.index, qk);
+    reflex_present_frame = was;
+    return shown;
 }
 
 // The present of a swapchain image whose copy is submitted, as present_image ended before; qk holds dev.present_mu

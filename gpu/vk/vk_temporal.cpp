@@ -120,6 +120,7 @@ struct Image {
 
 struct Camera {
     float current[16]{};      // (its view-projection)
+    float projection[16]{};   // (its projection, jittered too: DLSS Frame Generation's camera, vk_dlss.cpp dlss_fg_inputs)
     float jitter[2]{};        // (the projection's offset of the picture's centre, in clip space: nx2/oot_jitter.py)
     float near_z = 0, far_z = 0, fov_y = 0;   // (its projection's, 0 when it is not a plain perspective one)
     uint32_t width = 0, height = 0;
@@ -647,6 +648,7 @@ void temporal_note_scene_draw(const Texture* color0, uint32_t width, uint32_t he
         return;
     Camera& k = s.cam;
     std::memcpy(k.current, c + 0x30 / 4, sizeof k.current);
+    std::memcpy(k.projection, c + 0x70 / 4, sizeof k.projection);   // (the block's projection, after the view-projection)
     // (the offset sead's projection gave the frustum, in its third column: 2 * offset, which moves the picture by -that)
     k.jitter[0] = -c[0x78 / 4], k.jitter[1] = -c[0x88 / 4];
     // (its planes and field of view, for an engine that wants them (FSR's depth heuristics): an OpenGL-style projection, depth
@@ -903,9 +905,12 @@ bool temporal_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in
     }
     if (ready == 0) return fail(why ? why : "not this frame");
     if (ready == 2) s.engines_made++, s.last_frame = 0;   // (made just now: a new history)
+    // (NVIDIA DLSS Frame Generation through NGX copies the depth and the motion each frame, vk_dlss.cpp dlss_fg_inputs: a
+    // transfer's source too, always, so the Frame generation by row can turn it on at any time)
+    const VkImageUsageFlags copied = VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     if (!make_image(cmd, s.color, VK_FORMAT_R16G16B16A16_SFLOAT, iw, ih) ||
-        !make_image(cmd, s.depth, VK_FORMAT_R32_SFLOAT, iw, ih) ||
-        !make_image(cmd, s.motion, VK_FORMAT_R16G16_SFLOAT, iw, ih, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) ||
+        !make_image(cmd, s.depth, VK_FORMAT_R32_SFLOAT, iw, ih, copied) ||
+        !make_image(cmd, s.motion, VK_FORMAT_R16G16_SFLOAT, iw, ih, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | copied) ||
         !make_image(cmd, s.output, VK_FORMAT_R16G16B16A16_SFLOAT, dw, dh))
         return fail("its images were not made");
 
@@ -990,6 +995,9 @@ bool temporal_upscale(VkCommandBuffer cmd, uint64_t key, bool known, Texture* in
         vkCmdPushConstants(cmd, s.out_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof opc, opc);
         vkCmdDispatch(cmd, (ow + 7) / 8, (oh + 7) / 8, 1);
     }
+    // (NVIDIA DLSS Frame Generation through NGX, vk_dlss.cpp: this frame's depth, motion and camera for the present's made
+    // frames. Nothing unless the run asked for it)
+    dlss_fg_inputs(cmd, f, cam.projection, cam.current, cam.jitter, motion);
     s.last_frame = now;
     s.last_jitter[0] = cam.jitter[0], s.last_jitter[1] = cam.jitter[1];
     // (for the status line, temporal_status: the jitter the engine was given, in render pixels)

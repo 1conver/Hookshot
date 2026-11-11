@@ -20,6 +20,8 @@
 #include <cmath>
 
 #include "vk_framegen.h"
+#include "vk_dlss.h"   // (NVIDIA DLSS Frame Generation through NGX: dlss_fg_frames)
+#include "vk_reflex.h"   // (NVIDIA Reflex: which game frame a set shows, reflex_frame / reflex_present_frame)
 #include "vk_fsr3_inputs.h"   // (AMD FSR 3.1 frame interpolation's depth and motion)
 #include "vk_fsr3fi.h"
 #include "vk_menu.h"
@@ -63,6 +65,7 @@ struct OutSet {
     int shown = -1;
     int64_t due[kMaxMult] = {};
     bool game[kMaxMult] = {};
+    uint64_t reflex_id = 0;   // (NVIDIA Reflex: the game frame it was made at, 0 none: its game frame is presented with it)
 };
 struct Job {
     OutSet* set;
@@ -407,7 +410,10 @@ void wait_until_near(int64_t ns) {
 /// swapchain images acquired at once, so only where the swapchain has two to spare (an acquire past them has to time out,
 /// the Vulkan spec). Larger sets present one at a time, as before
 static bool present_ahead_wanted(bool env_on, bool pace, int shown, uint32_t spare) {
-    return env_on && pace && shown == 2 && spare >= 2;
+    // (each frame of the set holds a swapchain image from its copy to its present: as many spare images as frames. 2x was
+    // the only one at first; at 3x and 4x the made frames' copies queued behind the game's next frame the same way, so their
+    // presents reached the screen unevenly. vk_main.cpp asks for the images 3x and 4x need)
+    return env_on && pace && shown >= 2 && spare >= (uint32_t)shown;
 }
 
 void display_main() {
@@ -459,6 +465,7 @@ void display_main() {
             if (!said) said = true, logf("vk: present ahead: a set's copies submitted at once, its presents on time (RX_VK_PRESENT_AHEAD=0: off)");
             for (int k = 0; k < shown; k++) {
                 present_kind.store(timed ? (j.set->game[k] ? 0 : 1) : k < j.set->made ? 1 : 0);
+                reflex_present_frame = (timed ? j.set->game[k] : k == j.set->made) ? j.set->reflex_id : 0;
                 present_defer_into = &pending[k];
                 present_image(j.set->frame[k].image, fg.w, fg.h, nullptr, j.set->frame[k].view);
                 present_defer_into = nullptr;
@@ -481,6 +488,8 @@ void display_main() {
                 }
             } else {
                 present_kind.store(timed ? (j.set->game[k] ? 0 : 1) : k < j.set->made ? 1 : 0);
+                // (NVIDIA Reflex: the set's game frame is presented as the game frame it was made at, made frames as none)
+                reflex_present_frame = (timed ? j.set->game[k] : k == j.set->made) ? j.set->reflex_id : 0;
                 present_image(j.set->frame[k].image, fg.w, fg.h, nullptr, j.set->frame[k].view);
             }
             menu_note_frame(!timed && k == j.set->made);
@@ -744,6 +753,7 @@ bool framegen_record(VkCommandBuffer cmd, VkImageView src, uint32_t sw, uint32_t
     }
     const int cur = fg.cur, prev = cur ^ 1, m = multiplier();
     const bool blend = fg.have_prev && !gap;
+    set->reflex_id = reflex_frame();   // (NVIDIA Reflex: the game frame this set shows, vk_reflex.cpp)
     static uint64_t sequence = 0;
     sequence++;
     const uint32_t uw = (uint32_t)w, uh = (uint32_t)h;
@@ -795,9 +805,18 @@ bool framegen_record(VkCommandBuffer cmd, VkImageView src, uint32_t sw, uint32_t
         fg.recorded_at = now;
         return true;
     }
+    // (hookshot) NVIDIA DLSS Frame Generation through NGX where it runs and the Frame generation by row asks for it (vk_dlss.cpp):
+    // every made frame of the set, from the scene's own depth, motion and camera. A set it does not make goes on below as before
+    // (asked every present: turned off, it lets its feature go)
+    if (m > 1) {
+        VkImage outs[kMaxMult];
+        VkImageView views[kMaxMult];
+        for (int k = 0; k < m - 1; k++) outs[k] = set->frame[k].image, views[k] = set->frame[k].view;
+        set->made = dlss_fg_frames(cmd, fg.frames[cur].image, fg.frames[cur].view, uw, uh, m - 1, outs, views, blend, sequence);
+    }
     // (hookshot) At 2x, AMD FSR 3.1's frame interpolation where it runs; it makes the midpoint only, so 3x and more (and Auto,
     // above) stay with the interpolation below, as does any present it does not take
-    if (blend && m == 2 && fsr3fi::frames_wanted()) set->made = fsr3fi_frame(cmd, *set, cur, uw, uh, sequence);
+    if (set->made == 0 && blend && m == 2 && fsr3fi::frames_wanted()) set->made = fsr3fi_frame(cmd, *set, cur, uw, uh, sequence);
     if (set->made == 0 && blend && m > 1) {
         pass(cmd, fg.flow, {{fg.lumas[prev].view, fg.nearest}, {fg.lumas[cur].view, fg.nearest},
                             {fg.flows[0].view, VK_NULL_HANDLE}}, cw, ch);

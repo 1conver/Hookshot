@@ -288,6 +288,7 @@ bool create_device() {
     optional(VK_KHR_COOPERATIVE_MATRIX_EXTENSION_NAME, dev.coop_matrix);
     optional(VK_KHR_SWAPCHAIN_MUTABLE_FORMAT_EXTENSION_NAME, dev.swap_mutable);   // (hookshot: the overlays, vk_imgui.cpp)
     dlss_device_extensions(want, exts);   // (hookshot: NVIDIA DLSS's, vk_dlss.cpp)
+    dlss_fg_device_extensions(want, exts);   // (hookshot: NVIDIA DLSS Frame Generation's through NGX, asked of NGX)
     bool fsr_descriptor_buffer = false;   // (hookshot, linux: only with a Vulkan FSR 4 library beside the game, vk_fsr4.cpp)
     if (fsr4_wants_descriptor_buffer()) optional(VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME, fsr_descriptor_buffer);
     reflex_device_extensions(want, exts);   // (hookshot: NVIDIA Reflex's, vk_reflex.cpp)
@@ -545,6 +546,17 @@ void swap_views_make(VkImageUsageFlags usage, VkFormat format) {
     }
 }
 
+/// (hookshot) Frame generation as the swapchain is made for it: the fixed multiplier, 2 to 4 (more takes no more images), or 0
+/// for off and Auto. Its present mode under V-Sync Auto and its spare images follow it; present_image makes the swapchain
+/// again when it changes
+int swapchain_framegen() { return opts.framegen >= 2 ? std::min(opts.framegen, 4) : 0; }
+
+/// (hookshot) Whether the swapchain is made for NVIDIA DLSS Frame Generation: a fixed multiplier, and DLSS-G making the sets
+/// (vk_dlss.cpp dlss_fg_runs: asked for, on a device it runs on). V-Sync Auto is FIFO for it, where it was measured; the
+/// renderer's own methods and other GPUs keep Auto's mailbox (or immediate). present_image makes the swapchain again when it
+/// changes
+bool swapchain_dlssg() { return swapchain_framegen() >= 2 && dlss_fg_runs(); }
+
 void retire_swapchain() {
     if (!dev.swapchain) return;
     device_wait_idle_locked();
@@ -656,15 +668,22 @@ bool create_swapchain(uint32_t width, uint32_t height) {
     // card or driver with vsync forced; Auto and Off as below. FIFO is the one mode every driver has
     VkPresentModeKHR mode = VK_PRESENT_MODE_FIFO_KHR;
     const int vsync = menu_vsync();
+    // (hookshot) V-Sync Auto with DLSS Frame Generation at 2x and up: FIFO. Mailbox, NVIDIA's Fast Sync, puts the made frames on
+    // the refresh grid whenever they come slower than the display (DLSS Frame Gen 3x: ~135 shown on a 165 Hz screen), so evenly
+    // timed presents still reached the screen unevenly; FIFO on a VRR display shows each one when it is presented. Only where
+    // that was measured (swapchain_dlssg): the renderer's own frame generation and other GPUs keep Auto as it was
+    const bool fg_fifo = vsync == 0 && swapchain_dlssg();
+    if (fg_fifo) logf("vk: V-Sync Auto with DLSS Frame Generation at %dx: FIFO", swapchain_framegen());
     if (vsync != 1) {
-        for (auto m : modes)
-            if (m == VK_PRESENT_MODE_MAILBOX_KHR) mode = m;
+        if (!fg_fifo)
+            for (auto m : modes)
+                if (m == VK_PRESENT_MODE_MAILBOX_KHR) mode = m;
         // (Windows, no mailbox: AMD's driver has none, and FIFO held anything under 60 fps at 30.
         //  Linux: immediate on NVIDIA's X11 path turns vblank off for every output, so the other
         //  monitor and other programs tear: Auto leaves it to V-Sync Off, which asks for it.)
         const bool want_immediate = vsync == 2;
 #ifdef _WIN32
-        if (want_immediate || mode == VK_PRESENT_MODE_FIFO_KHR)
+        if (want_immediate || (mode == VK_PRESENT_MODE_FIFO_KHR && !fg_fifo))
 #else
         if (want_immediate)
 #endif
@@ -674,6 +693,11 @@ bool create_swapchain(uint32_t width, uint32_t height) {
     VkSwapchainCreateInfoKHR ci{VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR};
     ci.surface = dev.surface;
     ci.minImageCount = std::max(caps.minImageCount, 4u);   // (hookshot: mailbox with frame interpolation: an image always free)
+    // (hookshot) A fixed frame generation multiplier's set is presented ahead (vk_framegen.cpp present_ahead_wanted): each
+    // of its frames holds an image from the copy to its present, so the set needs as many spare images as it has frames. 3x
+    // and 4x ask for that many over the surface's least (an NVIDIA surface: 5 and 6 images); a set the chain cannot hold is
+    // shown one at a time as before
+    if (swapchain_framegen() >= 3) ci.minImageCount = std::max(ci.minImageCount, caps.minImageCount + (uint32_t)swapchain_framegen());
     if (caps.maxImageCount) ci.minImageCount = std::min(ci.minImageCount, caps.maxImageCount);
     ci.imageFormat = fmt.format;
     ci.imageColorSpace = fmt.colorSpace;
@@ -1275,10 +1299,12 @@ __attribute__((visibility("default")))
 void mkwvk_close_asked(void) {
     using namespace mkwvk;
     pipeline_cache_close();   // (in play: the pipelines made since the last save, kept for the next start)
-    if (!prep_running.load() || prepare_stopped()) return;
-    logf("vk: the window was closed while the shaders were prepared: stopping, what is done is kept");
-    prepare_stop();
-    if (WaitForSingleObject(prep_ended, 10000) != WAIT_OBJECT_0) logf("vk: the preparation did not stop within 10 s: closing anyway");
+    if (prep_running.load() && !prepare_stopped()) {
+        logf("vk: the window was closed while the shaders were prepared: stopping, what is done is kept");
+        prepare_stop();
+        if (WaitForSingleObject(prep_ended, 10000) != WAIT_OBJECT_0) logf("vk: the preparation did not stop within 10 s: closing anyway");
+    }
+    dlss_fg_close();   // (NVIDIA DLSS Frame Generation through NGX: its feature let go before the process exits, vk_dlss.cpp)
 }
 
 extern "C"

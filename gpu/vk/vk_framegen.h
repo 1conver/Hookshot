@@ -23,6 +23,7 @@ struct PendingPresent {
     uint32_t index = 0;
     VkFence done = VK_NULL_HANDLE;           // (the copy's fence)
     VkSwapchainKHR swapchain = VK_NULL_HANDLE;
+    uint64_t reflex_frame = ~0ull;           // (NVIDIA Reflex: the frame it shows, vk_reflex.h reflex_present_frame)
     uint64_t swapchain_generation = 0;
 };
 extern thread_local PendingPresent* present_defer_into;

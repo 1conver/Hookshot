@@ -8,6 +8,8 @@ namespace mkwvk {
 // (out of the box every feature is off: what the game does on its own. The ini beside the executable keeps a player's choices)
 struct Options {
     int framegen = 0;     // made frames: 0 off, 1 Auto (to the display's refresh), or 2 to 8 times the game's frames
+    int framegen_by = 0;  // (hookshot) who makes them at 2x and up: 0 Auto (NVIDIA DLSS Frame Generation where it runs, else the
+                          // renderer's own), 1 the renderer's own (vk_framegen.cpp; vk_dlss.cpp dlss_fg_wanted)
     int pace = 0;         // frames shown on an even line (vk_framegen.cpp)
     int vsync = 0;        // (hookshot) V-Sync, the swapchain's present mode (vk_main.cpp create_swapchain, made again at once): 0 Auto
                           // (mailbox where the driver has it), 1 On (FIFO), 2 Off (immediate). RX_VK_FIFO / RX_VK_IMMEDIATE over it

@@ -28,10 +28,11 @@ def main():
     parser.add_argument("--cxx", default="g++")
     args = parser.parse_args()
     menu = (ROOT / "gpu" / "vk" / "vk_menu.cpp").read_text(encoding="utf-8")
-    # the picture's way, top to bottom; Reflex with the frame rows
-    order = ['"Frame generation", &opts.framegen', '"Frame pacing", &opts.pace', '"NVIDIA Reflex", &opts.reflex',
-             '"Output resolution", &opts.output_res', '"Upscaler", &opts.dlss', '"DLSS model", &opts.dlss_model',
-             '"Render resolution", &opts.resolution',
+    # the picture's way, top to bottom: the output, what fills it, the 3D's size, the frames made between the game's (beside
+    # the Upscaler: DLSS Frame Generation takes its depth and motion), then the window
+    order = ['"Output resolution", &opts.output_res', '"Upscaler", &opts.dlss', '"DLSS model", &opts.dlss_model',
+             '"Render resolution", &opts.resolution', '"Frame generation", &opts.framegen',
+             '"Frame generation by", &opts.framegen_by', '"Frame pacing", &opts.pace',
              '"Window scaling filter", &opts.upscale', '"Sharpness", &opts.sharpness']
     at = [menu.find(row) for row in order]
     if -1 in at:

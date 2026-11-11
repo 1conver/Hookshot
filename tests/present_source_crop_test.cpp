@@ -36,6 +36,11 @@ float hdr_uv[4]{};
 int blits = 0, clears = 0, initializations = 0, sizes = 0, dispatches = 0, copies = 0;
 uint32_t allocated_w = 0, allocated_h = 0;
 namespace fsr3fi { bool wanted = false; bool frames_wanted() { return wanted; } }
+// (NVIDIA DLSS Frame Generation through NGX, vk_dlss.cpp: not asked for here, so the sets are the renderer's own)
+bool dlss_fg_wanted() { return false; }
+int dlss_fg_frames(VkCommandBuffer, VkImage, VkImageView, uint32_t, uint32_t, int, const VkImage*, const VkImageView*, bool,
+                   uint64_t) { return 0; }   // (asked every present at 2x and up: makes none here)
+uint64_t reflex_frame() { return 0; }   // (vk_reflex.cpp: NVIDIA Reflex not on here)
 int fsr_calls = 0, fsr_result = 1;
 int fsr3fi_frame(VkCommandBuffer, OutSet&, int, uint32_t w, uint32_t h, uint64_t sequence) {
     CHECK(w == allocated_w && h == allocated_h && sequence > 0);
