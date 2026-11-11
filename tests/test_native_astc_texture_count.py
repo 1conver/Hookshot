@@ -18,6 +18,7 @@ RUN_ALL_ARGS = ["--cxx", "{cxx}"]
 ROOT = Path(__file__).resolve().parents[1]
 
 FIXTURE = r"""
+#define _CRT_SECURE_NO_WARNINGS   // (the Windows CRT marks scanf deprecated: an error under -Werror)
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
