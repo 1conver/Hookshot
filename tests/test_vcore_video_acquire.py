@@ -181,6 +181,8 @@ def main():
                        through(src, "typedef struct {\n    int w, h, format, count;", "} Pool;"),
                        through(src, "typedef struct { uint8_t *rgba, *nv12;", "} Picture;"),
                        through(src, "typedef struct Pending {", "} Pending;"),
+                       through(src, "typedef void (*mf_av1_picture_fn)", "int64_t pts);"),
+                       through(src, "typedef struct {\n    const char *name;", "} Av1Decoder;"),
                        through(src, "typedef struct {\n    AVCodecContext *ctx;", "} Dec;"),
                        "static volatile LONG64 submissions;"))
     fixture = HARNESS.replace("@TYPES@", types).replace("@ACQUIRE@", block(src, "static void dec_acquire(Ctx *c) {"))

@@ -18,7 +18,7 @@ no arguments and its own defaults.
     RUN_ALL_SKIP = {"windows": "needs spirv-val: checked on Linux"}       # OS ("linux", "windows") -> why it is skipped
 
 {name} in an argument is a tool or folder find_tools looks for (cxx, vulkan_headers, spirv_headers, spirv_val, glslang,
-dotnet); a check whose tool, compiler (the word after --cc or --cxx) or module is missing here is skipped, or fails
+dotnet, dav1d); a check whose tool, compiler (the word after --cc or --cxx) or module is missing here is skipped, or fails
 with --strict. A check skipped on both OSes (a GPU, the game) names both. A declaration that is not a plain literal of
 that shape, names an unknown placeholder or OS, or any other RUN_ALL_ name, stops the run with the file and line; so
 does one set or changed anywhere but its own top-level line (inside an if or a try, .append(...), +=, a subscript).
@@ -87,8 +87,24 @@ def header_dir(env, cpm_name, probe):
     return None
 
 
+def dav1d_prefix():
+    """A dav1d to build against (its include/dav1d/dav1d.h, and lib/libdav1d.a or the system's -ldav1d): HOOKSHOT_DAV1D, else
+    the CPM cache's (scripts/windows/dav1d.sh), the Linux dependencies' (scripts/linux/deps.sh), the system's"""
+    roots = [os.environ.get("HOOKSHOT_DAV1D")]
+    for cpm in (os.environ.get("RX_CPM"), os.path.join(ROOT, "build-linux", "deps", "cpm")):
+        d = os.path.join(cpm or "", "dav1d")
+        if cpm and os.path.isdir(d) and os.listdir(d):
+            roots.append(os.path.join(d, sorted(os.listdir(d))[-1]))
+    roots += [os.path.join(ROOT, "build-linux", "deps", "ffmpeg"), "/usr"]
+    for r in roots:
+        if r and os.path.exists(os.path.join(r, "include", "dav1d", "dav1d.h")):
+            return r
+    return None
+
+
 def find_tools():
     return {
+        "dav1d": None if WINDOWS else dav1d_prefix(),
         "spirv_headers": header_dir("HOOKSHOT_SPIRV_HEADERS", "spirv-headers", os.path.join("spirv", "unified1", "spirv.h")),
         "vulkan_headers": header_dir("HOOKSHOT_VULKAN_HEADERS", "vulkanheaders", os.path.join("vulkan", "vulkan.h")),
         "spirv_val": which("spirv-val"),

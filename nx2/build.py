@@ -520,6 +520,17 @@ FFMPEG = next((os.path.join(d, n) for d in [os.path.join(r, "ffmpeg") for r in c
 FFMPEG_LIBS = ("avcodec", "swscale", "swresample", "avutil")
 
 
+def dav1d_windows():
+    """(windows, llvm-mingw) dav1d in the CPM cache (scripts/windows/dav1d.sh): the AV1 movies' decoder (host/dav1d_av1.c,
+    issue 2316), as the CPM cache's FFmpeg has none. None without it, or on the Visual Studio route (a MinGW library):
+    Media Foundation decodes them then, as before"""
+    d = cpm_package("dav1d")
+    if LINUX or not toolchain.mingw() or not d:
+        return None
+    return d if os.path.exists(os.path.join(d, "lib", "libdav1d.a")) and \
+        os.path.exists(os.path.join(d, "include", "dav1d", "dav1d.h")) else None
+
+
 def ffmpeg_linux():
     """(linux) FFmpeg's compile and link flags: HOOKSHOT_FFMPEG=<prefix> with static libraries (the AppImage's, with
     dav1d for OoT's AV1 movies), else the system's through pkg-config; None without either"""
@@ -813,7 +824,8 @@ def main():
         # its own stand-ins, host/posix/linux_stubs.c)
         have_wgpu = os.path.isfile(os.path.join(WGPU, "include", "webgpu", "webgpu.h"))
         host_srcs = sorted(os.path.join(HOST, f) for f in os.listdir(HOST) if f.endswith(".c") and (f != "pgo_rt.c" or PGO == "gen")
-                           and not (LINUX and f in ("display.c", "mf_av1.c", "rx_nowgpu.c")) and (f != "rx_nowgpu.c" or not have_wgpu))
+                           and not (LINUX and f in ("display.c", "mf_av1.c", "rx_nowgpu.c")) and (f != "rx_nowgpu.c" or not have_wgpu)
+                           and (f != "dav1d_av1.c" or dav1d_windows()))
         if LINUX:   # (the window on SDL2, the Win32 calls on POSIX, no Media Foundation and no WebGPU renderer)
             host_srcs += [os.path.join(POSIX, f) for f in ("win32_posix.c", "display_sdl.c", "linux_stubs.c", "prof.c")]
     else:
@@ -861,13 +873,19 @@ def main():
     host_deps += open(os.path.join(GPU, "vk", "dlss_math.h"), "rb").read()   # (host/rx_backend.c's DLSS jitter)
     host_deps += open(os.path.join(GPU, "vk", "compat", "hookshot_env.h"), "rb").read()   # (env_on: the switches' one rule)
     host_deps += ffmpeg_version_key()
+    dav1d = dav1d_windows() if host_srcs else None
+    dav1d_fl = ["-DHOOKSHOT_DAV1D", "-I" + os.path.join(dav1d, "include")] if dav1d else []
+    if dav1d:
+        host_deps += open(os.path.join(dav1d, "include", "dav1d", "version.h"), "rb").read()
+        print("AV1 movies: dav1d (%s)" % dav1d, flush=True)
     zstd_api = b"".join(open(os.path.join(ZSTD, f), "rb").read() for f in sorted(os.listdir(ZSTD)) if f.endswith(".h"))   # (prompts.c's)
     jobs += [(cc, s, os.path.join(obj_dir, "host_" + os.path.basename(s)[:-2] + ".o"),
               host_fl + ["-I" + os.path.join(OPUS, "include")] +
               (["-I" + os.path.join(FFMPEG, "include")] if FFMPEG else []) +
               (FFMPEG_LX[0] if LINUX and FFMPEG_LX else []) +
               ([stamp_def] if os.path.basename(s) == "hos_main.c" else []) +
-              (["-I" + ZSTD] if os.path.basename(s) == "prompts.c" else []),
+              (["-I" + ZSTD] if os.path.basename(s) == "prompts.c" else []) +
+              (dav1d_fl if os.path.basename(s) in ("nn_video.c", "dav1d_av1.c") else []),
               host_deps + (zstd_api if os.path.basename(s) == "prompts.c" else b"")) for s in host_srcs]
     # libopus 1.5.2 (third_party/opus, from TOTKPort): nn::codec's hardware Opus decoder (host/nn_codec.c)
     # (hookshot: built for the same CPU target as the rest (CPU), so its float code can be vectorized where the target has
@@ -1112,6 +1130,7 @@ def main():
                            ([os.path.join(WGPU, "lib", "wgpu_native.dll.lib")] if wgpu else []) +
                            ([os.path.join(FFMPEG, "lib", l + ".lib") for l in ("avcodec", "swscale", "swresample", "avutil")] +
                             ["-lbcrypt", "-lmfplat", "-lmfuuid", "-lstrmiids", "-lole32"] if FFMPEG else []) +
+                           ([os.path.join(dav1d_windows(), "lib", "libdav1d.a")] if dav1d_windows() else []) +
                            (["-lc++", "-lunwind"] if toolchain.mingw() else []),   # (llvm-mingw: the C++ parts' runtime, linked in; MSVC's comes by itself)
                            capture_output=True, text=True)
         undefined = sorted({l.strip() for l in (r.stdout + r.stderr).splitlines() if "undefined symbol" in l})
