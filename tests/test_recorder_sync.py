@@ -22,16 +22,17 @@ python -I -B tests/test_recorder_sync.py --headers <Vulkan-Headers/include> [--c
    wait is caught on a loaded runner too, each fake command buffer flagged in use for each call (two calls at once on one are a
    violation), the caller's memory poisoned and each packet poisoned once run; a handoff under the lock; a submit while another
    command buffer's commands are in flight; a pool reset while recording; the lock let go, then the recording ended on another
-   thread; an 8 KB ring (backpressure); a packet bigger than its room (made directly, in order); no memory for the ring; teardown with
-   work queued (stop, join, lazy restart, vkDestroyDevice); par_active; >= 1e6 packets through a 16 KB ring, twice, hashed against
-   the direct stream. --throw: a driver call that throws on the recorder thread ends the process (exit code 3, FATAL). Run with
-   RX_VK_RECORDER=thread (mode 3, logged once) and with RX_VK_PARALLEL=4 (refused).
+   thread; an 8 KB ring (backpressure); a packet bigger than its room (made directly, in order; again first in an empty ring); no
+   memory for the ring; teardown with work queued (stop, join, lazy restart, vkDestroyDevice); par_active; >= 1e6 packets through a
+   16 KB ring, twice, hashed against the direct stream. --throw: a driver call that throws on the recorder thread ends the process
+   (exit code 3, FATAL). Run with RX_VK_RECORDER=thread (mode 3, logged once) and with RX_VK_PARALLEL=4 (refused).
 3. The test has teeth: vk_recorder.h with a copy left shallow (all of them, or only the descriptor writes' image infos), with the
    fallback's drain left out, with no drain before vkEndCommandBuffer, with the replay lock let go without a drain, with a throwing
    allocation (exception safety broken), with the failure's drain left out, or with the parallel refusal left out, must fail it.
    Thread (each run with --only thread, so the recorder thread's checks alone catch it): no wait before vkEndCommandBuffer, before
    vkQueueSubmit2, at the replay lock's release, before vkResetCommandPool; no backpressure (the ring overwritten); no join at
-   teardown; the recorder's exception swallowed (--throw).
+   teardown; a packet bigger than its room written into the ring when the ring has more free; the recorder's exception swallowed
+   (--throw).
 4. (Windows) the process ends cleanly with the recorder parked in idle() holding its lock: tests/recorder_exit_test.cpp, a DLL with
    the real headers and an exe that calls ExitProcess (as the window's close does); exit code 0 within 20 s (a watchdog ends only
    that child) and the DLL's last global destructor run. Broken: the old global recorder with its destructor (wake, join).
@@ -443,8 +444,11 @@ def main():
         ("thread: a command pool reset without waiting for the recorder", rec, no_wait(work_h, "vkResetCommandPool"), ("--only", None)),
         ("thread: no backpressure (the ring overwritten)",
          broken(broken(rec, "    void wait_room(uint64_t need) {\n", "    void wait_room(uint64_t need) {\n        if (need) return;\n", "room"),
-                "        lim = base + off + std::min<uint64_t>(tail, cap - (w - r_seen));", "        lim = base + off + tail;", "lim"), work_h,
+                "        lim = base + off + room;", "        lim = base + off + tail;", "lim"), work_h,
          ("--only", None)),
+        ("thread: a packet bigger than its room written into the ring when it has more free (the room not the limit)",
+         broken(rec, "        lim = base + off + room;", "        lim = base + off + std::min<uint64_t>(tail, cap - (w - r_seen));",
+                "room limit"), work_h, ("--only", None)),
         ("thread: no join at teardown", broken(rec, "    th.join();\n    ready.store(false);", "    ready.store(false);", "join"), work_h,
          ("--only", None)),
         ("thread: the recorder thread's exception swallowed",
