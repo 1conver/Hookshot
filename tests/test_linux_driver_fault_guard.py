@@ -48,7 +48,7 @@ VkResult vkCreateComputePipelines(uintptr_t device, VkPipelineCache cache, unsig
                                   const VkComputePipelineCreateInfo *ci, const void *allocator, VkPipeline *out) {
     if (device != dev.device || cache != 0 || count != 1 || !ci || allocator || !out) return -1;
     ++calls;
-    if (mode == 1) fault_now();
+    if (mode == 1) { *out = 0xdead; fault_now(); }   /* (a handle written, then the fault: not a pipeline) */
     *out = 0xcafe;
     return VK_SUCCESS;
 }
@@ -56,7 +56,7 @@ VkResult vkCreateGraphicsPipelines(uintptr_t device, VkPipelineCache cache, unsi
                                    const VkGraphicsPipelineCreateInfo *ci, const void *allocator, VkPipeline *out) {
     if (device != dev.device || cache != 0 || count != 1 || !ci || allocator || !out) return -1;
     ++calls;
-    if (mode == 2) fault_now();
+    if (mode == 2) { *out = 0xdead; fault_now(); }
     *out = 0xbeef;
     return VK_SUCCESS;
 }
@@ -81,7 +81,7 @@ int main(int argc, char **argv) {
         if (pl != VK_NULL_HANDLE) { std::printf("fail: a pipeline was published\n"); return 6; }
     } else if (!std::strcmp(what, "fault-graphics")) {
         mode = 2;
-        if (guarded_graphics(0, &gci, &gpl) != VK_ERROR_UNKNOWN) { std::printf("fail: the fault was not reported\n"); return 5; }
+        if (guarded_graphics(0, &gci, &gpl) != DRIVER_FAULT) { std::printf("fail: the fault was not reported\n"); return 5; }
         if (gpl != VK_NULL_HANDLE) { std::printf("fail: a pipeline was published\n"); return 6; }
     } else {
         std::printf("fail: unknown case %s\n", what);

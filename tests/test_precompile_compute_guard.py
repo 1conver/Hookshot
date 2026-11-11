@@ -59,7 +59,7 @@ VkResult vkCreateComputePipelines(uintptr_t device,VkPipelineCache cache,unsigne
  CHECK(ci->stage.pName&&std::string(ci->stage.pName)=="main");
  if(expected_ci)CHECK(ci==expected_ci); if(expected_out)CHECK(out==expected_out);
  ++calls;
- if(mode==1)RaiseException(EXCEPTION_ACCESS_VIOLATION,0,0,nullptr);
+ if(mode==1){*out=0xdead;RaiseException(EXCEPTION_ACCESS_VIOLATION,0,0,nullptr);}   // (a handle written, then the fault)
  if(mode==2){*out=VK_NULL_HANDLE;return -4;}
  *out=0xcafe;return VK_SUCCESS;
 }

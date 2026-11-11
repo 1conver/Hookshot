@@ -47,6 +47,7 @@
 #include "vk_texture.h"
 #include "movie_upscale_policy.h"
 #include "skip_code.h"
+#include "driver_faults.h"
 
 #include "shaders/clear_f_frag_spv.h"
 #include "shaders/clear_i_frag_spv.h"
@@ -1015,20 +1016,79 @@ bool depth_aspect(VkFormat f) {
     return is_depth_format(f) && f != VK_FORMAT_S8_UINT;
 }
 
+// (hookshot) The programs the driver faulted on (driver_faults.h): not asked of it again in this run, nor in later runs on the
+// same driver (hookshot_driver_faults.txt beside the executable). One program's builds go to the driver one at a time on AMD,
+// where a build behind a faulted one hung (issue 996); other drivers keep building a program's variants in parallel.
+// RX_VK_DRIVER_FAULTS=0: off; =1: the default; =2: one at a time on every driver
+constexpr VkResult kDriverFault = (VkResult)-77;   // (what the guards below answer for a fault in the driver)
+int driver_faults_mode() {
+    static const int mode = getenv("RX_VK_DRIVER_FAULTS") ? std::clamp(atoi(getenv("RX_VK_DRIVER_FAULTS")), 0, 2) : 1;
+    return mode;
+}
+bool driver_faults_on() { return driver_faults_mode() != 0; }
+std::string driver_faults_path() {
+    char exe[MAX_PATH];
+    const DWORD n = game_module_path(exe, MAX_PATH);
+    std::string dir(exe, n);
+    return dir.substr(0, dir.find_last_of("\\/") + 1) + "hookshot_driver_faults.txt";
+}
+driver_faults::Quarantine& fault_quarantine() {
+    static driver_faults::Quarantine q;
+    static std::once_flag once;
+    std::call_once(once, [] {   // (the earlier runs' faults, this device's driver only)
+        std::string text;
+        if (FILE* f = fopen(driver_faults_path().c_str(), "rb")) {
+            char b[4096];
+            size_t n;
+            while ((n = fread(b, 1, sizeof b, f)) > 0) text.append(b, n);
+            fclose(f);
+        }
+        const auto keys = driver_faults::parse(text, dev.props.vendorID, dev.props.driverVersion);
+        q.load(keys);
+        q.set_serial(driver_faults_mode() == 2 || dev.props.vendorID == 0x1002);
+        if (!keys.empty())
+            logf("vk: %zu programs the driver faulted on in earlier runs are not asked of it (%s; RX_VK_DRIVER_FAULTS=0: they are)",
+                 keys.size(), driver_faults_path().c_str());
+        if (q.serial())
+            logf("vk: one build of a program goes to the driver at a time (%s; RX_VK_DRIVER_FAULTS=0: as many as ask)",
+                 driver_faults_mode() == 2 ? "RX_VK_DRIVER_FAULTS=2" : "AMD");
+    });
+    return q;
+}
+void driver_fault_note(uint64_t key) {
+    static std::mutex mu;
+    std::lock_guard lk(mu);
+    const std::string path = driver_faults_path();
+    FILE* f = fopen(path.c_str(), "ab");
+    if (!f) {   // (a folder the game cannot write to: Program Files)
+        static bool told;
+        if (!told) told = true, logf("vk: %s could not be written: the faulted programs are kept out for this run only", path.c_str());
+        return;
+    }
+    fseek(f, 0, SEEK_END);   // (in append mode ftell says 0 until the first write, on Windows: the file's own end)
+    if (ftell(f) == 0)
+        fputs("# Hookshot: programs the graphics driver's compiler faulted on, not asked of it again on that driver\n"
+              "# (gpu/vk/driver_faults.h). <vendor> <driver version> <program key>. Delete this file to try them again.\n", f);
+    fputs(driver_faults::line(dev.props.vendorID, dev.props.driverVersion, key).c_str(), f);
+    fclose(f);
+}
+
 // (hookshot) A driver's compiler that faults on a shader (amdvlk64.dll on a mesh program, Hookshot issue 26) costs that one draw, not the game
 #ifdef _WIN32
 __declspec(noinline) VkResult guarded_graphics(VkPipelineCache cache, const VkGraphicsPipelineCreateInfo* ci, VkPipeline* pl) {
     __try {
         return vkCreateGraphicsPipelines(dev.device, cache, 1, ci, nullptr, pl);
     } __except (1) {
+        *pl = VK_NULL_HANDLE;   // (whatever the driver wrote before it faulted is not a pipeline)
         logf("vk: the driver faulted compiling a graphics pipeline (exception %#lx): that one is left out", (unsigned long)GetExceptionCode());
-        return VK_ERROR_UNKNOWN;
+        return (VkResult)-77;   // (a fault in the driver, as guarded_compute's: driver_faults.h keeps the program out)
     }
 }
 __declspec(noinline) VkResult guarded_compute(VkPipelineCache cache, const VkComputePipelineCreateInfo* ci, VkPipeline* pl) {
     __try {
         return vkCreateComputePipelines(dev.device, cache, 1, ci, nullptr, pl);
     } __except (1) {
+        *pl = VK_NULL_HANDLE;   // (whatever the driver wrote before it faulted is not a pipeline)
         logf("vk: the driver faulted compiling a compute pipeline (exception %#lx): that one is left out", (unsigned long)GetExceptionCode());
         return (VkResult)-77;   // (a fault in the driver, told apart from what it returns)
     }
@@ -1074,8 +1134,9 @@ static void install_driver_fault_guard() {
 VkResult guarded_graphics(VkPipelineCache cache, const VkGraphicsPipelineCreateInfo* ci, VkPipeline* pl) {
     install_driver_fault_guard();
     if (sigsetjmp(fault_jmp, 1) != 0) {
+        *pl = VK_NULL_HANDLE;   // (whatever the driver wrote before it faulted is not a pipeline)
         logf("vk: the driver faulted compiling a graphics pipeline: that one is left out");
-        return VK_ERROR_UNKNOWN;
+        return (VkResult)-77;
     }
     fault_armed = 1;
     const VkResult r = vkCreateGraphicsPipelines(dev.device, cache, 1, ci, nullptr, pl);
@@ -1085,6 +1146,7 @@ VkResult guarded_graphics(VkPipelineCache cache, const VkGraphicsPipelineCreateI
 VkResult guarded_compute(VkPipelineCache cache, const VkComputePipelineCreateInfo* ci, VkPipeline* pl) {
     install_driver_fault_guard();
     if (sigsetjmp(fault_jmp, 1) != 0) {
+        *pl = VK_NULL_HANDLE;   // (whatever the driver wrote before it faulted is not a pipeline)
         logf("vk: the driver faulted compiling a compute pipeline: that one is left out");
         return (VkResult)-77;
     }
@@ -2118,16 +2180,37 @@ VkPipeline build_graphics(const Program& p, const NvnState& s, const Targets& at
     // (measured: 21 of 21). gpl_libs_cached: RX_VK_GPL_NO_CACHE=1 keeps them out, as before. With our cache: through
     // graphics_with, so in play one compiled goes into the play generation, and an ask under the flag still goes to pcache)
     const bool lib_cached = (part == 1 || part == 2) && gpl_libs_cached();
+    // (hookshot) a program the driver faulted on is not asked of it again, and on AMD one program's builds go to it one at a
+    // time, so a second build waits here and not inside the driver behind a faulted one (driver_faults.h, issue 996). A cold
+    // probe does not wait: another build of its program under way is, for it, a compile that is required
+    const bool gated = driver_faults_on();
+    if (gated) {
+        const auto gate = fault_quarantine().begin(p.key, !cold);
+        if (gate == driver_faults::Quarantine::kBusy) return *cold = true, VK_NULL_HANDLE;
+        if (gate == driver_faults::Quarantine::kFaulted) {
+            static std::atomic<int> told{0};
+            if (told++ < 10)
+                logf("vk: a pipeline of %016llx left out: the driver faulted on that program (%s)", (unsigned long long)p.key,
+                     driver_faults_path().c_str());
+            return VK_NULL_HANDLE;
+        }
+    }
     const VkPipelineCache cache = lib_cached || (part < 0 && !driver_cache_only) ? pcache : VK_NULL_HANDLE;
     VkResult r = graphics_with(cache, &ci, &pl);
-    // The AMD Windows compiler can reject ordinary graphics pipelines with its optimizer on.
-    if (dev.props.vendorID == 0x1002 && dev.task_mesh_fallback && !p.mesh && part < 0 && r == VK_ERROR_UNKNOWN &&
-        !(ci.flags & VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT)) {
+    // The AMD Windows compiler can reject ordinary graphics pipelines with its optimizer on. (A fault caught in it is kDriverFault
+    // now, VK_ERROR_UNKNOWN before: the retry stays for both, under the gate)
+    if (dev.props.vendorID == 0x1002 && dev.task_mesh_fallback && !p.mesh && part < 0 &&
+        (r == VK_ERROR_UNKNOWN || r == kDriverFault) && !(ci.flags & VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT)) {
         ci.flags |= VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT;
         pl = VK_NULL_HANDLE;
         r = graphics_with(cache, &ci, &pl);
         if (r == VK_SUCCESS)
             logf("vk: graphics pipeline for %016llx recovered with optimization disabled", (unsigned long long)p.key);
+    }
+    if (gated && fault_quarantine().end(p.key, r == kDriverFault)) {
+        logf("vk: the driver faulted building a pipeline of %016llx: that program is not asked of it again (%s)",
+             (unsigned long long)p.key, driver_faults_path().c_str());
+        driver_fault_note(p.key);
     }
     if (cold && r == VK_PIPELINE_COMPILE_REQUIRED) return *cold = true, VK_NULL_HANDLE;
     if (part >= 0) {
