@@ -296,35 +296,43 @@ int prepare(VkCommandBuffer cmd, uint32_t rw, uint32_t rh, uint32_t ow, uint32_t
     else
         snprintf(why, sizeof why, "the render size %ux%u left its range, %ux%u to %ux%u", rw, rh, s.min_rw, s.min_rh,
                  s.feature_rw, s.feature_rh);
-    if (s.feature) {
+    // (the quality mode whose range of render sizes holds this one: the network's 3/4 is DLSS's MaxQuality range; one it
+    // misses by a pixel or two, a rounded size, takes it too: dlss_checks.h mode_for. DLAA's when the render size is the
+    // output's)
+    static const NVSDK_NGX_PerfQuality_Value scaled[] = {NVSDK_NGX_PerfQuality_Value_MaxQuality, NVSDK_NGX_PerfQuality_Value_DLAA,
+                                                        NVSDK_NGX_PerfQuality_Value_Balanced, NVSDK_NGX_PerfQuality_Value_MaxPerf,
+                                                        NVSDK_NGX_PerfQuality_Value_UltraPerformance};
+    const bool aa = rw == ow && rh == oh;
+    NVSDK_NGX_PerfQuality_Value mode = NVSDK_NGX_PerfQuality_Value_DLAA;
+    unsigned max_w = ow, max_h = oh, min_w = ow, min_h = oh;   // (DLAA: the render size is the output's, one size)
+    if (!aa) {
+        dlss_checks::ModeRange ranges[5];
+        NVSDK_NGX_PerfQuality_Value which[5];
+        int n = 0;
+        for (const NVSDK_NGX_PerfQuality_Value m : scaled) {
+            unsigned w = 0, h = 0, xw = 0, xh = 0, nw = 0, nh = 0;
+            float sharp = 0;
+            if (NVSDK_NGX_FAILED(NGX_DLSS_GET_OPTIMAL_SETTINGS(s.caps, ow, oh, m, &w, &h, &xw, &xh, &nw, &nh, &sharp)) || !w) continue;
+            ranges[n] = {nw, nh, xw, xh}, which[n++] = m;
+        }
+        dlss_checks::ModeRange took;
+        const int k = dlss_checks::mode_for(rw, rh, ow, oh, ranges, n, &took);
+        if (k < 0) {   // (the size in the log; the feature kept for the sizes it takes, not let go and made again)
+            static char refused[112];
+            snprintf(refused, sizeof refused, "no DLSS mode takes the render size %ux%u for %ux%u", rw, rh, ow, oh);
+            return *fail = refused, 0;
+        }
+        mode = which[k], max_w = took.max_w, max_h = took.max_h, min_w = took.min_w, min_h = took.min_h;
+        if (took.max_w != ranges[k].max_w || took.max_h != ranges[k].max_h || took.min_w != ranges[k].min_w ||
+            took.min_h != ranges[k].min_h)
+            logf("vk: NVIDIA DLSS: the render size %ux%u is a little outside quality mode %d's range (%ux%u to %ux%u): taken by "
+                 "it (a rounded size)", rw, rh, (int)mode, ranges[k].min_w, ranges[k].min_h, ranges[k].max_w, ranges[k].max_h);
+    }
+    if (s.feature) {   // (the old one, once a new one is to be made)
         NVSDK_NGX_Handle* old = s.feature;
         temporal_later([old] { NVSDK_NGX_VULKAN_ReleaseFeature(old); });
         s.feature = nullptr;
     }
-    // (the quality mode whose range of render sizes holds this one: the network's 3/4 is DLSS's MaxQuality range)
-    // (DLAA's when the render size is the output's)
-    static const NVSDK_NGX_PerfQuality_Value scaled[] = {NVSDK_NGX_PerfQuality_Value_MaxQuality, NVSDK_NGX_PerfQuality_Value_DLAA,
-                                                        NVSDK_NGX_PerfQuality_Value_Balanced, NVSDK_NGX_PerfQuality_Value_MaxPerf,
-                                                        NVSDK_NGX_PerfQuality_Value_UltraPerformance};
-    static const NVSDK_NGX_PerfQuality_Value same[] = {NVSDK_NGX_PerfQuality_Value_DLAA, NVSDK_NGX_PerfQuality_Value_MaxQuality};
-    const bool aa = rw == ow && rh == oh;
-    const NVSDK_NGX_PerfQuality_Value* modes = aa ? same : scaled;
-    const size_t nmodes = aa ? 2 : 5;
-    NVSDK_NGX_PerfQuality_Value mode = modes[0];
-    unsigned max_w = 0, max_h = 0, min_w = 0, min_h = 0;
-    bool found = aa;
-    if (aa) max_w = min_w = ow, max_h = min_h = oh;   // (DLAA: the render size is the output's, one size)
-    for (size_t i = 0; i < nmodes && !found; i++) {
-        const NVSDK_NGX_PerfQuality_Value m = modes[i];
-        unsigned w = 0, h = 0, xw = 0, xh = 0, nw = 0, nh = 0;
-        float sharp = 0;
-        if (NVSDK_NGX_FAILED(NGX_DLSS_GET_OPTIMAL_SETTINGS(s.caps, ow, oh, m, &w, &h, &xw, &xh, &nw, &nh, &sharp)) || !w) continue;
-        if (rw >= nw && rh >= nh && rw <= xw && rh <= xh) {
-            mode = m, max_w = xw, max_h = xh, min_w = nw, min_h = nh, found = true;
-            break;
-        }
-    }
-    if (!found) return *fail = "no DLSS mode takes this render size", 0;
     // (the DLSS model row's preset for every mode, K by default: NVIDIA's transformer model. 0: NVIDIA's own per mode)
     static_assert(NVSDK_NGX_DLSS_Hint_Render_Preset_K == 11 && NVSDK_NGX_DLSS_Hint_Render_Preset_L == 12 &&
                   NVSDK_NGX_DLSS_Hint_Render_Preset_M == 13 && NVSDK_NGX_DLSS_Hint_Render_Preset_Default == 0);

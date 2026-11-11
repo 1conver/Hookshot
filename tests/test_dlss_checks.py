@@ -1,5 +1,6 @@
 """NVIDIA DLSS's small checks (gpu/vk/dlss_checks.h): which scene sizes DLSS takes for an output (the handheld profile's
-512x288 at Ultra Performance too, which a fixed 640x360 floor turned away), and Linux paths for NGX: which are ASCII (NGX's
+512x288 at Ultra Performance too, which a fixed 640x360 floor turned away), which quality mode takes a render size (one a
+pixel or two outside a mode's range, a rounded size, too), and Linux paths for NGX: which are ASCII (NGX's
 Linux library takes only those; the others go to it as /proc/self/fd/<n>), and UTF-8 decoded (accents, CJK, bytes that are
 not UTF-8). Built as C++ and run; also that vk_dlss.cpp and vk_draw.cpp use them. No game,
 GPU or NVIDIA SDK required.
@@ -33,6 +34,11 @@ def check_sources():
     # (NGX's Linux library converts its wide paths back in the "C" locale, ASCII only: a folder named otherwise goes to it
     # as /proc/self/fd/<n>)
     assert "dlss_checks::ascii(s)" in dlss and '"/proc/self/fd/"' in dlss, "wide(): non-ASCII folders by descriptor"
+    # (prepare picks the mode with mode_for, and lets the old feature go only once a mode takes the size: a refused size keeps
+    # it, rather than letting it go and making it again a frame later)
+    prepare = dlss[dlss.index("int prepare(VkCommandBuffer cmd"):dlss.index("bool start()")]
+    assert "dlss_checks::mode_for(rw, rh, ow, oh," in prepare, "prepare: the mode by dlss_checks::mode_for"
+    assert prepare.index("dlss_checks::mode_for(") < prepare.index("ReleaseFeature(old)"),         "prepare: the old feature let go before a mode was found"
 
 
 def main():
