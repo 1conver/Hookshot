@@ -34,6 +34,7 @@
 #include "upscaler_rows.h"
 #include "vk_menu.h"
 #include "vk_paths.h"
+#include "vk_reactive.h"
 #include "vk_temporal.h"
 #include "vk_texture.h"
 
@@ -418,6 +419,15 @@ bool evaluate(VkCommandBuffer cmd, const TemporalFrame& f) {
     ep.InRenderSubrectDimensions = {f.render_w, f.render_h};
     ep.InReset = f.reset ? 1 : 0;
     ep.InMVScaleX = ep.InMVScaleY = 1.0f;
+    // (what the scene's transparent draws changed, when RX_VK_REACTIVE asks for it and there were any (vk_reactive.h):
+    // DLSS's mask of where to lean on this frame's colour, as large as the chain's inputs. Without one the parameter stays
+    // null, as before)
+    NVSDK_NGX_Resource_VK bias{};
+    if (reactive::Mask m; reactive::mask(cmd, f.render_w, f.render_h, f.color.width, f.color.height, f.color.view, m)) {
+        bias = NVSDK_NGX_Create_ImageView_Resource_VK(m.view, m.image, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}, m.format,
+                                                      m.image_width, m.image_height, false);
+        ep.pInBiasCurrentColorMask = &bias;
+    }
     ::mkwvk::rec::boundary(::mkwvk::rec::B_DIRECT);   // (NGX records into cmd itself: what this thread recorded through vk_work.h reaches cmd first)
     const NVSDK_NGX_Result r = NGX_VULKAN_EVALUATE_DLSS_EXT(cmd, s.feature, s.params, &ep);
     note_work();   // (as at its creation: the barrier after it, and the game's next one, are recorded)

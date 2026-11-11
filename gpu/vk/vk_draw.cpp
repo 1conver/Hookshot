@@ -40,6 +40,9 @@
 #include "vk_temporal.h"
 #include "vk_fsr3.h"          // (AMD FSR 3.1 in the gameplay upscale's place)
 #include "vk_fsr3_inputs.h"
+#include "reactive_policy.h"
+#include "upscaler_rows.h"
+#include "vk_reactive.h"   // (the upscalers' reactive mask: the scene copied before its transparent draws)
 #include "vk_dump.h"
 #include "vk_gprof.h"
 #include "vk_jobs.h"
@@ -4439,6 +4442,41 @@ void clear_after_draws(VkCommandBuffer cmd) {
     end_pass(cmd);
 }
 
+/// (hookshot) The temporal upscalers' reactive mask (vk_reactive.h, RX_VK_REACTIVE=1): before the scene's transparent draws
+/// (reactive_policy.h: blended over it, tested against its depth without writing it) the scene's colour is copied, in a
+/// break of the pass. The scene is the B10G11R11 target with a depth of the size the upscaler last took, as its jitter is
+/// given (temporal_jitter_size, fsr3_inputs::jitter_size: 0 while neither draws). Not while AMD FSR 4 draws on the frame
+/// chain: it is given no mask, so nothing is copied for it
+void reactive_scene_draw(VkCommandBuffer cmd, const Program& p, const NvnState& s, const Targets& at) {
+    if (!reactive::wanted()) return;
+    if (!at.n || !at.color[0] || !at.depth || at.color_format[0] != VK_FORMAT_B10G11R11_UFLOAT_PACK32) return;
+    const uint64_t now = texture_frame_no();
+    struct Seen { uint64_t frame; uint32_t w, h; };
+    static thread_local Seen seen{~0ull, 0, 0};
+    if (seen.frame != now) {   // (once a frame on each thread, not once a draw)
+        const bool chain = temporal_jitter_size(0) != 0;   // (one upscaler at a time: the chain's engine, else FSR 3.1)
+        if (chain && upscaler_rows::is_fsr4(temporal_mode()))
+            seen = {now, 0, 0};
+        else
+            seen = {now, chain ? temporal_jitter_size(0) : fsr3_inputs::jitter_size(0),
+                    chain ? temporal_jitter_size(1) : fsr3_inputs::jitter_size(1)};
+    }
+    if (!seen.w || at.width != seen.w || at.height != seen.h) return;
+    static thread_local reactive_policy::Run run;
+    const reactive_policy::Draw kind =
+        reactive_policy::classify(target_write_mask(p, s, 0) != 0, (s.color.blend_en & 1) != 0, s.ds.dt != 0, s.ds.dw != 0);
+    const bool capped = run.capped && run.frame == now;
+    if (!reactive_policy::copy_before(run, now, (uint64_t)(uintptr_t)at.color[0], kind)) {
+        static std::atomic<int> told{0};
+        if (run.capped && !capped && told.fetch_add(1, std::memory_order_relaxed) < 4)
+            logf("vk: reactive mask: the scene's transparent draws come in more than %d runs (frame %llu): the mask holds what "
+                 "was drawn after the last copy too",
+                 reactive_policy::kCopies, (unsigned long long)now);
+        return;
+    }
+    end_pass(cmd);   // (a copy cannot be made in a pass)
+    reactive::copy_scene(cmd, at.color[0], at.color_level[0], at.color_layer[0], at.width, at.height);
+}
 bool writes_sampled_target(uint16_t writes, uint16_t sampled_targets) {
     return (writes & sampled_targets) != 0;
 }
@@ -6526,6 +6564,7 @@ void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d) {
     if (!same_desc) gfx_sampled() = draw_sampled();
     static const bool barrier_every = env_on("RX_VK_BARRIER_EVERY_DRAW");   // (an experiment: a pass each)
     if (barrier_every) end_pass(cmd);
+    reactive_scene_draw(cmd, p, s, at);
     uint16_t writes;
     {
         FINE_SCOPE(FT_HAZARD);

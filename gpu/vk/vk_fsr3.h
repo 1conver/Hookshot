@@ -29,6 +29,9 @@ struct Inputs {
     VkImageView color = VK_NULL_HANDLE;
     VkImageView depth = VK_NULL_HANDLE;
     VkImageView motion = VK_NULL_HANDLE;
+    /// The reactive mask, or null for none: R8 at the render size, 0..1, how much of the pixel was blended over the scene
+    /// without depth or motion of its own (vk_reactive.h)
+    VkImageView reactive = VK_NULL_HANDLE;
     uint32_t render_width = 0, render_height = 0;
     uint32_t upscale_width = 0, upscale_height = 0;
     float jitter[2]{};
