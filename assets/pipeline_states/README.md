@@ -2,7 +2,9 @@
 
 **These are not Nintendo files, and they hold no game code or game data.** Each is a list of Vulkan pipelines that
 Hookshot's renderer made while someone played on their own PC, written by Hookshot itself. Keep it that way: only lists
-written by Hookshot and this folder's tool go in here.
+written by Hookshot and this folder's tool go in here. The lists named `contrib/pmwork-personal-fritchii-recipe*` are converted
+instead: made from the pipeline records another emulator ships for the game (hashes and draw state, no code), matched to
+Hookshot's shader hashes; their notes say how. They hold the same records as any other list and nothing more.
 
 - **What a record is:** one pipeline the game asked for. Each record holds:
   - the hashes of its shaders and of the program variant
