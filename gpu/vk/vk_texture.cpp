@@ -1846,6 +1846,14 @@ bool texture_size_ok(VkImageType type, uint32_t w, uint32_t h, uint32_t z, uint3
     return w <= most && h <= most && z <= lim.maxImageDimension3D && layers <= lim.maxImageArrayLayers &&
            (samples <= 1 || samples == 2 || samples == 4 || samples == 8 || samples == 16);
 }
+/// (hookshot) One level of an image as the texture budget counts it (create): its texels, or for an ASTC image the GPU samples
+/// itself (Intel's) its blocks of bw x bh texels, which are what its 16 bytes a unit are. Counted as texels, those were 16 bytes a
+/// texel, 16 to 144 times their size: a UHD 770 counted 17608 MB of textures against an integrated GPU's 2560 MB budget while
+/// every allocation of the process was 4766 MB, so the budget's eviction ran at every frame (tests/test_native_astc_texture_count.py)
+uint64_t texture_level_units(uint32_t w, uint32_t h, uint32_t d, uint32_t bw, uint32_t bh) {
+    w = std::max(1u, w), h = std::max(1u, h), d = std::max(1u, d), bw = std::max(1u, bw), bh = std::max(1u, bh);
+    return (uint64_t)((w + bw - 1) / bw) * ((h + bh - 1) / bh) * d;
+}
 Texture* create(const Key& key, const nvn_tex* t, VkFormat vf, bool astc, int bw, int bh, int bpb, bool as_target) {
     PROF_EXACT();   // (texture_get's slow path: PROF_TEXGET samples the rest)
     auto tex = std::make_unique<Texture>();
@@ -2114,10 +2122,11 @@ Texture* create(const Key& key, const nvn_tex* t, VkFormat vf, bool astc, int bw
                  x.levels, (int)x.format, d.format);
         return nullptr;
     }
-    // what it costs: the level chain's texels
+    // what it costs: the level chain's texels (an ASTC image the GPU samples itself: its blocks, texture_level_units)
+    const bool astc_blocks = !astc && is_astc(x.format);
     uint64_t px = 0;
     for (uint32_t l = 0; l < x.levels; l++)
-        px += (uint64_t)std::max(1u, x.width >> l) * std::max(1u, x.height >> l) * std::max(1u, x.depth >> l);
+        px += texture_level_units(x.width >> l, x.height >> l, x.depth >> l, astc_blocks ? (uint32_t)bw : 1u, astc_blocks ? (uint32_t)bh : 1u);
     const uint32_t texel = x.bc || is_bc(x.format) ? 1 : astc ? 4 : std::max(1, from ? (from == 3 ? 4 : from == 6 ? 8 : 16) : bpb);
     x.bytes = x.sparse ? 0 : px * x.layers * texel * x.samples;   // (a sparse image's: as its layers are bound)
     // (the budget counts what the allocator gave it: the texels' 8% short of that over a scene's 2000 textures, 3228 MB counted for 3504
