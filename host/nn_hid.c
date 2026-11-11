@@ -365,6 +365,13 @@ static void live_input(void) {
                 if (!strncmp(line, "!flasharm", 9)) rx_flash_dark_arm();
                 extern volatile int hos_oot_live_action;   /* host/hos_main.c: "!cheat <action>", as the Cheats page sends */
                 if (!strncmp(line, "!cheat ", 7)) __atomic_store_n(&hos_oot_live_action, atoi(line + 7), __ATOMIC_RELAXED);
+                void hos_bind(int set, int button, int slot, int code);   /* "!bind <HOS_SW_*> <HOS_PAD_*>", as the Controls page */
+                int bind_b = -1, bind_pad = -2;
+                if (!strncmp(line, "!bind ", 6) && sscanf(line + 6, "%d %d", &bind_b, &bind_pad) == 2 &&
+                    bind_b >= 0 && bind_b < HOS_SW_N)
+                    hos_bind(HOS_BIND_PAD, bind_b, 0, bind_pad);
+                extern volatile int hos_prompts_row;   /* host/prompts.c: "!prompts <0 Auto, HOS_PROMPT_* + 1>", as the row */
+                if (!strncmp(line, "!prompts ", 9)) __atomic_store_n(&hos_prompts_row, atoi(line + 9), __ATOMIC_RELAXED);
                 hos_log("hid: live command at %.1f s: %.*s", at / 1000.0, (int)(n > 1 ? n - 1 : 0), line);
                 continue;
             }
@@ -897,6 +904,8 @@ static void npad_states(Ctx *c) {
             hos_log("hid: the game read no controller for %.1f s (lr %#llx)", (now - last_read) / 1e9,
                     (unsigned long long)c->x[30]);
         if (connected) last_read = hos_hid_last_read = now;
+        void hos_prompts_live(void);   /* (hookshot, prompts.c: a new face or new controls shown at once) */
+        if (connected) hos_prompts_live();
         int known = 0;
         for (int i = 0; i < nseen; i++) known |= seen_ids[i] == id;
         if (!known && nseen < 16) {

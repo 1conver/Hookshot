@@ -173,6 +173,16 @@ static void discard_pages(uint64_t addr, uint64_t size) {
 #endif
 }
 
+/* (hookshot) the address regions (hos_region_alloc's), at most cap of them into out ({start, end}); how many there are. For
+   host/prompts.c: where the game keeps its resources */
+int hos_regions(uint64_t (*out)[2], int cap) {
+    LOCK();
+    const int n = nregions;
+    for (int i = 0; i < n && i < cap; i++) out[i][0] = regions[i].addr, out[i][1] = regions[i].addr + regions[i].size;
+    UNLOCK();
+    return n;
+}
+
 void hos_region_free(uint64_t addr) {
     uint64_t freed = 0, freed_size = 0;
     LOCK();

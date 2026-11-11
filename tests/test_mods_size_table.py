@@ -185,9 +185,12 @@ def routing_checks(cc, tmp, zstandard):
     posix = (ROOT / "host/posix/win32_posix.c").read_text(encoding="utf-8")
     src = tmp / "src"
     src.mkdir(parents=True)
-    for f in ("mods.c", "prompts.c"):   # (beside a hos.h of the test's: hos_log alone)
+    for f in ("mods.c", "prompts.c"):   # (beside a hos.h of the test's: hos_log, and what the live prompts read: none here)
         (src / f).write_bytes((ROOT / "host" / f).read_bytes())
-    (src / "hos.h").write_text("#pragma once\n#include <stddef.h>\n#include <stdint.h>\nvoid hos_log(const char *f, ...);\n")
+    (src / "hos.h").write_text("#pragma once\n#include <stddef.h>\n#include <stdint.h>\nvoid hos_log(const char *f, ...);\n"
+                               "#define HOS_WRITTEN(p, n) ((void)0)\n"
+                               "static inline void *hos_guest_range(uint64_t a, uint64_t n) { (void)a; (void)n; return NULL; }\n"
+                               "int hos_regions(uint64_t (*out)[2], int cap);\nint64_t hos_now_ns(void);\n")
     pieces = [block(posix, m) for m in POSIX_PIECES]
     pieces.insert(1, "static BOOL fail_errno(void) { last_error = error_of(errno); return FALSE; }\n"
                      "enum { H_THREAD = 0x48540001, H_EVENT, H_SEMA, H_TIMER, H_FILE, H_FIND };\n"
@@ -218,6 +221,9 @@ void hos_log(const char *f, ...) { va_list ap; va_start(ap, f); printf("log: ");
 int hos_binding(int set, int button, int slot) { (void)set; (void)button; (void)slot; return -1; }
 int hos_sdl_pads(uint64_t *buttons, int32_t stick[4]) { (void)buttons; (void)stick; return 0; }
 void hos_sdl_pad_first_name(char *out, size_t cap) { if (cap) *out = 0; }
+int hos_regions(uint64_t (*out)[2], int cap) { (void)out; (void)cap; return 0; }
+int64_t hos_now_ns(void) { return 0; }
+int rx_option(int id, int otherwise) { (void)id; return otherwise; }
 void hos_mods_init(const char *image_path);
 int hos_mods_romfs(const char *rel, char *out, size_t cap);
 int main(int argc, char **argv) {
@@ -237,13 +243,13 @@ int main(int argc, char **argv) {
                     *(str(ZSTD / f) for f in ZSTD_SOURCES), "-o", str(exe)], check=True)
 
     def case(name, mods, ours=OURS, opens=(TABLE, FONT)):
-        """a game folder with the prompts (a face's font, ours as their table unless None) and mods {folder: {path: bytes}};
+        """a game folder with the prompts (the faces' font, ours as their table unless None) and mods {folder: {path: bytes}};
         the fixture opens each of opens: {path: what was served}, the merged table's content if served, the log"""
         top = tmp / name
         game = top / "game"
         (game / "prompts/xbox").mkdir(parents=True)
         (game / "hookshot_options.ini").write_text("button_prompts=2\n")   # (Xbox: no controller asked for)
-        (game / "prompts/xbox/External.bfotf").write_bytes(struct.pack("<I", 0x18029A7F) + bytes(28))
+        (game / "prompts/External.bfotf").write_bytes(struct.pack("<I", 0x18029A7F) + bytes(28))   # (every face's: one font)
         if ours is not None:
             (game / "prompts/rsizetable.zs").write_bytes(frame(ours))
         (top / "mods").mkdir()

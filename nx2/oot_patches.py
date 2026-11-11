@@ -247,6 +247,48 @@ def patch_menu_tick(source):
         '#include "a64.h"\n', '#include "a64.h"\nextern void hos_oot_menu_tick(Ctx *c, uint64_t screen);\n', 1)
 
 
+TEXT_DRAW_HEAD = "void f_8152b670(Ctx *__restrict A64_NOESC c) {\n"
+TEXT_LAYOUT_HEAD = "void f_8152aec0(Ctx *__restrict A64_NOESC c) {\n"
+GLYPH_HEAD = "void f_81680c60(Ctx *__restrict A64_NOESC c) {\n"
+
+
+def _hook_head(source, head, call, decl):
+    """call put first in the function that starts with head, once, and decl declared; None without the function"""
+    start = source.find(head)
+    if start < 0:
+        return None
+    if call.split("(")[0] + "(" in source:   # (made before: a lift patched again)
+        return source
+    at = start + len(head)
+    return (source[:at] + call + source[at:]).replace('#include "a64.h"\n', '#include "a64.h"\n' + decl, 1)
+
+
+def patch_text_draw(source):
+    """f_8152b670, a text box's draw (x0 the box: each time the game shows it), calls hos_prompts_text_draw first with the box: the
+    button prompts changed while the game runs, the box's codes for them rewritten and the box marked to be laid out again
+    (host/prompts.c)"""
+    return _hook_head(source, TEXT_DRAW_HEAD,
+                      "    hos_prompts_text_draw(c->x[0]);   /* (nx2/oot_patches.py: the button prompts changed) */\n",
+                      "extern void hos_prompts_text_draw(uint64_t box);\n")
+
+
+def patch_text_layout(source):
+    """f_8152aec0, a text box's layout (x0 the box: it lays its text out again when its status says so, at +8: bit 0x20000),
+    calls hos_prompts_text_layout first with the box: the button prompts changed while the game runs, the box's codes for them
+    rewritten and the box laid out again (host/prompts.c)"""
+    return _hook_head(source, TEXT_LAYOUT_HEAD,
+                      "    hos_prompts_text_layout(c->x[0]);   /* (nx2/oot_patches.py: the button prompts changed) */\n",
+                      "extern void hos_prompts_text_layout(uint64_t box);\n")
+
+
+def patch_glyph(source):
+    """f_81680c60, FreeType's ft_smooth_render (x1 the glyph slot), calls hos_prompts_glyph first with the slot: where the game
+    keeps the button prompts' font, for a change while it runs (host/prompts.c)"""
+    return _hook_head(source, GLYPH_HEAD,
+                      "    hos_prompts_glyph(c->x[1]);   /* (nx2/oot_patches.py: where the button prompts' font is) */\n",
+                      "extern void hos_prompts_glyph(uint64_t slot);\n")
+
+
 TEXT_HEAD = "void f_80b1e140(Ctx *__restrict A64_NOESC c) {"
 # (the letters' block: past the early returns, the auto-advance timer and the hidden / no-text checks; reached once a call)
 TEXT_OLD = ("L_80b1e1b4:;\n"
@@ -462,6 +504,9 @@ def apply(gen, *, protect_hearts=False, required=False):
     if protect_hearts:   # (the supported build's: these places are its functions)
         done["menu focus hook"] = 0
         done["menu tick hook"] = 0
+        done["text draw hook"] = 0
+        done["glyph hook"] = 0
+        done["text layout hook"] = 0
         done["player heart protection"] = 0
         done["player flight"] = 0
         done["player flight rotation"] = 0
@@ -496,6 +541,21 @@ def apply(gen, *, protect_hearts=False, required=False):
             out = tick
             done["menu tick hook"] += 1
             print("oot_patches: the menus' update hook in", os.path.basename(path))
+        draw = patch_text_draw(out) if protect_hearts else None
+        if draw is not None:
+            out = draw
+            done["text draw hook"] += 1
+            print("oot_patches: the text boxes' draw hook in", os.path.basename(path))
+        glyph = patch_glyph(out) if protect_hearts else None
+        if glyph is not None:
+            out = glyph
+            done["glyph hook"] += 1
+            print("oot_patches: the glyphs' hook in", os.path.basename(path))
+        layout = patch_text_layout(out) if protect_hearts else None
+        if layout is not None:
+            out = layout
+            done["text layout hook"] += 1
+            print("oot_patches: the text boxes' layout hook in", os.path.basename(path))
         movie = patch_movie_frames(out)
         if movie is not None:
             if MOVIE_NEW in movie:   # (made now, or by an earlier run over this file)
