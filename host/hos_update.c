@@ -206,6 +206,8 @@ void hos_update_check(void) {
     fprintf(stderr, "update: this folder is %s, the latest release is %s\n", have, tag);
     if (!strcmp(tag, have) || !strcmp(tag, skipped)) return;
     if (strchr(have, '-') && !nightly_version(have) && !newer_version(tag, have)) return;   /* (a release candidate: newer only) */
+    if (!nightly_version(have) && newer_version(have, tag)) return;   /* (a release or release candidate newer than the latest:
+        a test build of the next release, before it is out. "Update" would build the older one over it, 2026-11-11) */
 
     wchar_t wtag[128], whave[128], wbuilder[MAX_PATH], text[2048];
     MultiByteToWideChar(CP_UTF8, 0, tag, -1, wtag, 128);
@@ -386,6 +388,8 @@ void hos_update_check(void) {
     fprintf(stderr, "update: this folder is %s, the latest release is %s\n", have, tag);
     if (!strcmp(tag, have) || !strcmp(tag, skipped)) return;
     if (strchr(have, '-') && !nightly_version(have) && !newer_version(tag, have)) return;   /* (a release candidate: newer only) */
+    if (!nightly_version(have) && newer_version(have, tag)) return;   /* (a release or release candidate newer than the latest:
+        a test build of the next release, before it is out. "Update" would build the older one over it, 2026-11-11) */
     snprintf(path, sizeof path, "%shookshot_version.txt", dir);
     const int has_builder = installed_builder(builder, sizeof builder) ||
                             (read_value(path, "builder", builder, sizeof builder) && access(builder, X_OK) == 0);
