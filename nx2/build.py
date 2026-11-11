@@ -634,8 +634,76 @@ def flag_text(fl):
 
 
 def object_key(src, fl, deps):
-    """What an object depends on: its source, the flags (flag_text), and the headers."""
+    """What an object depends on: its source, the flags (flag_text), and the headers. (A lifted file the last build's clean-up let
+    go, KEPT, is named by the key that build wrote down: main puts it in PLANNED once it checked its flags and headers)"""
     return hashlib.sha1(open(src, "rb").read() + flag_text(fl).encode() + deps, usedforsecurity=False).hexdigest()
+
+
+# (a player's update: make_game.py deletes the lifted C (1.5 GB) once the game folder is ready, but keeps the compiled objects and
+# this list, gen/lifted_objects.txt: each lifted file's name, its object key, its size, and what of the key is not the source
+# (flags and headers, kept_part). The next build with the same lift key (make_game.py kept_before) skips the lift and passes
+# --kept-lift: the lifted files are then these names, linked from the object cache by these keys, the same objects as
+# before. When a key's object is gone or the flags or headers changed, the build stops with KEPT_STALE before compiling anything,
+# and make_game.py translates the game again)
+# The list's first line names the lift it was written for (the lift key in gen/.lift_key) and KEPT_SCHEME: a list another lift
+# left, or one of another format, is not used. KEPT_STALE is not 3, abort()'s exit status on Windows.
+KEPT_LIST = "lifted_objects.txt"
+KEPT_SCHEME = 1
+KEPT_STALE = 75
+KEPT = {}   # (source path -> (object key, size, kept_part)) for the lifted files that are not on disk
+
+
+def kept_part(fl, deps):
+    return hashlib.sha1(flag_text(fl).encode() + deps, usedforsecurity=False).hexdigest()
+
+
+def src_size(src):
+    """A source's size; a kept lifted file's as it was"""
+    if src in KEPT and not os.path.exists(src):
+        return KEPT[src][1]
+    return os.path.getsize(src)
+
+
+def lift_key_of(gen):
+    """The key of the lift in gen (the first line of make_game.py's .lift_key), or "-" without one"""
+    try:
+        with open(os.path.join(gen, ".lift_key"), encoding="utf-8") as f:
+            return (f.read().split() or ["-"])[0]
+    except OSError:
+        return "-"
+
+
+def kept_header(key):
+    return "# lift %s %d\n" % (key, KEPT_SCHEME)
+
+
+def read_kept(path):
+    """The list's files, or {} when its first line is not the header of this lift (lift_key_of) and scheme"""
+    kept = {}
+    gen = os.path.dirname(path)
+    with open(path, encoding="utf-8") as f:
+        if f.readline() != kept_header(lift_key_of(gen)):
+            return kept
+        for line in f:
+            parts = line.split()
+            if len(parts) == 4 and parts[2].isdigit():
+                kept[os.path.join(gen, parts[0])] = (parts[1], int(parts[2]), parts[3])
+    return kept
+
+
+def write_kept(gen, jobs):
+    """gen/lifted_objects.txt for the lifted files of a build that compiled every file (see KEPT_LIST)"""
+    lines = []
+    for cc, src, obj, fl, deps in jobs:
+        name = os.path.basename(src)
+        if os.path.dirname(src) == gen and name.startswith("code_") and name.endswith(".c"):
+            lines.append("%s %s %d %s\n" % (name, PLANNED.get((src, obj)) or object_key(src, fl, deps), src_size(src),
+                                            kept_part(fl, deps)))
+    tmp = os.path.join(gen, KEPT_LIST + ".new")
+    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
+        f.write(kept_header(lift_key_of(gen)))
+        f.writelines(sorted(lines))
+    os.replace(tmp, os.path.join(gen, KEPT_LIST))
 
 
 def times_from(path):
@@ -663,7 +731,7 @@ def per_file_seconds(jobs, history):
     """One expected duration for each job, in order: the seconds this PC measured for that module before, or, for a
     module it never compiled (a new release adds or renames files), the rate those measurements ran at. On a PC with
     no measurements at all, the first build uses the rates a full build on the development PC showed."""
-    sizes = [max(0.0, os.path.getsize(src) / (1 << 20)) for _, src, *_ in jobs]
+    sizes = [max(0.0, src_size(src) / (1 << 20)) for _, src, *_ in jobs]
     measured = [(history[os.path.basename(src)], mb) for (_, src, *_), mb in zip(jobs, sizes)
                 if os.path.basename(src) in history and mb > 0]
     rate = sum(secs for secs, _ in measured) / sum(mb for _, mb in measured) if measured else None
@@ -685,7 +753,7 @@ def plan_jobs(jobs):
     The keys go to compile_one, which then does not hash every source a second time."""
     work, keys = [], {}
     for cc, src, obj, fl, deps in jobs:
-        key = object_key(src, fl, deps)
+        key = PLANNED.get((src, obj)) or object_key(src, fl, deps)
         keys[(src, obj)] = key
         stamp = obj + ".sha1"
         if os.path.exists(obj) and os.path.exists(stamp) and open(stamp).read() == key:
@@ -739,12 +807,13 @@ def chunk_costs(gen):
 def compile_cost(src, costs):
     """A file's compile time, roughly (see HOT_COST)"""
     name = os.path.basename(src)
-    return costs.get(name, os.path.getsize(src)) * (HOT_COST if name.startswith("code_hot") else 1)
+    return costs.get(name, src_size(src)) * (HOT_COST if name.startswith("code_hot") else 1)
 
 
 def compile_one(job):
     cc, src, obj, fl, deps = job
     key = PLANNED.get((src, obj)) or object_key(src, fl, deps)
+    PLANNED[(src, obj)] = key   # (for write_kept)
     stamp = obj + ".sha1"
     if os.path.exists(obj) and os.path.exists(stamp) and open(stamp).read() == key:
         return src, 0.0, None
@@ -788,6 +857,8 @@ def main():
     # (CI: a player's build started from the tree the AppImage carries, with no game. Everything up to the compile, without the
     # lift's files; every other file the compile would read must be there, and nothing is compiled. scripts/linux/check_player_build.sh)
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--kept-lift", metavar="LIST", help="(make_game.py) the lifted C was let go after the last build: its objects "
+                   "by this list (KEPT_LIST); exit status KEPT_STALE when it no longer fits")
     a = p.parse_args()
     sa = os.path.join(kit.WORK, "sa")
     gen = os.path.join(sa if a.standalone else kit.WORK, "gen")
@@ -814,6 +885,16 @@ def main():
                    (["-DA64_POLL_CTX"] if a.dll else []), deps)   # (as fl below: the flags its objects were built with)
     migrate_stamps(gen, obj_dir, fl, deps)
     chunks = sorted(f for f in os.listdir(gen) if f.startswith("code_") and f.endswith(".c"))
+    if a.kept_lift and a.standalone and not chunks:   # (the lifted C of the last build, let go: KEPT_LIST)
+        try:
+            KEPT.update(read_kept(a.kept_lift))
+        except (OSError, UnicodeDecodeError) as e:
+            print("the list of the kept translation could not be read (%s): translating the game again" % e, flush=True)
+            return KEPT_STALE
+        if not KEPT:
+            print("the list of the kept translation is empty or from another translation: translating the game again", flush=True)
+            return KEPT_STALE
+        chunks = sorted(os.path.basename(s) for s in KEPT)
     srcs = [os.path.join(gen, c) for c in chunks]
     host_srcs = []
     srcs += [os.path.join(gen, f) for f in ("a64_table.c", "a64_hooks.c", "a64_suyu.c")] + \
@@ -852,13 +933,22 @@ def main():
     jobs = [(cc, s, os.path.join(obj_dir, os.path.basename(s)[:-2] + ".o"),
              hot_fl if os.path.basename(s).startswith("code_hot") else fl,
              shim_deps if os.path.dirname(s) == NX2_RT else deps) for s in srcs]
+    if KEPT:   # (the kept translation is used only as it was: the same flags and headers, and every object still cached)
+        stale = [os.path.basename(j[1]) for j in jobs if j[1] in KEPT and not os.path.exists(j[1]) and
+                 (kept_part(j[3], j[4]) != KEPT[j[1]][2] or not os.path.exists(os.path.join(OBJ_CACHE, KEPT[j[1]][0] + ".o")))]
+        if stale:
+            print("the translation kept from the last build does not fit this one (%d of %d files: %s): translating the game again"
+                  % (len(stale), len(KEPT), ", ".join(stale[:4])), flush=True)
+            return KEPT_STALE
+        print("the translation kept from the last build: %d files, their objects cached" % len(KEPT), flush=True)
+        PLANNED.update({(j[1], j[2]): KEPT[j[1]][0] for j in jobs if j[1] in KEPT and not os.path.exists(j[1])})
     # (issue 624) what the game code's object keys are made of, as short fingerprints: two builds' logs side by side say which part
     # changed when an update compiled everything again (the headers, the flags, the profile, or the lifted code itself)
     fp = lambda b: hashlib.sha1(b, usedforsecurity=False).hexdigest()[:10]
     norm = lambda f: flag_text(f).encode()
     code = hashlib.sha1(usedforsecurity=False)
     for code_src in sorted(x for x in srcs if os.path.basename(x).startswith("code_")):
-        code.update(os.path.basename(code_src).encode() + open(code_src, "rb").read())
+        code.update(os.path.basename(code_src).encode() + (KEPT[code_src][0].encode() if code_src in KEPT else open(code_src, "rb").read()))
     print("object keys: game-code headers %s, flags %s, hot flags %s, lifted code %s (%d files)" % (
         fp(deps), fp(norm(fl)), fp(norm(hot_fl)), code.hexdigest()[:10],
         sum(1 for x in srcs if os.path.basename(x).startswith("code_"))), flush=True)
@@ -1063,7 +1153,7 @@ def main():
         submitted = {ex.submit(compile_one, job): job for job in jobs}
         for future in concurrent.futures.as_completed(submitted):
             src, secs, err = future.result()
-            size = os.path.getsize(src) >> 20
+            size = src_size(src) >> 20
             if err:
                 failed.append(submitted[future])
                 print("not compiled yet: %s (%d MB, %.0fs), tried again alone at the end:\n%s"
@@ -1081,7 +1171,7 @@ def main():
     still = 0
     for job in failed:
         src, secs, err = compile_one(job)
-        size = os.path.getsize(src) >> 20
+        size = src_size(src) >> 20
         if err:
             still += 1
             print("FAILED %s (%d MB, %.0fs, alone too):\n%s" % (os.path.basename(src), size, secs, err), flush=True)
@@ -1095,6 +1185,8 @@ def main():
     print("compiled in %.0fs, %d failed" % (time.time() - t0, still), flush=True)
     if still:
         return 1
+    if a.standalone and not vk_only:
+        write_kept(gen, jobs)
     vk_objs = {j[2] for j in vk_jobs}
     objs = [j[2] for j in jobs if j[2] not in vk_objs]
     rsp = os.path.join(out, "objs.rsp")

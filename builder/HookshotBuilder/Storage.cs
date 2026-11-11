@@ -77,13 +77,26 @@ static class Storage
         return running.StartsWith(Path.GetFullPath(versionDir).TrimEnd('\\') + "\\", StringComparison.OrdinalIgnoreCase);
     }
 
+    /// make_game.py keep_translation left the lift's small files in sa (its .lift_key marked "kept"): the next update with the same
+    /// tools skips the lift with them. Not let go after a build (Free up space still lets them go)
+    static bool KeptTranslation(string sa)
+    {
+        try
+        {
+            var words = File.ReadAllText(Path.Combine(sa, "gen", ".lift_key")).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+            return words.Length >= 3 && words[2] == "kept";
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return false; }
+    }
+
     /// What Free lets go. afterBuild: what goes once the game is ready, the compiled objects of the build (objcache, which make_game.py
     /// prunes to them) and their system headers' stamp kept, so that the next update compiles only what changed (issue 1287: every
     /// update compiled all ~600 files again, an hour and more). The Free up space button lets those go too
     static IEnumerable<string> Freeable(bool afterBuild = false)
     {
         foreach (var d in afterBuild ? new[] { "sa", "exefs", "probe" } : new[] { "objcache", "sa", "exefs", "probe" })
-            yield return Path.Combine(Work, d);
+            if (!(afterBuild && d == "sa" && KeptTranslation(Path.Combine(Work, d))))
+                yield return Path.Combine(Work, d);
         foreach (var d in new[] { "downloads", "update" })
             yield return Path.Combine(Base, d);
         var versions = Path.Combine(Base, "versions");

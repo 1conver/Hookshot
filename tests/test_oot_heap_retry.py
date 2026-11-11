@@ -270,7 +270,7 @@ def main():
                   .replace("0x80456f1cULL", "0x80456f20ULL").replace("0x80457098ULL", "0x8045709cULL")
     assert oot_patches.patch_heap_retry(other) == (other, [0, 0]), "another version's text was edited"
     import inspect
-    assert "patch_heap_retry(out) if protect_hearts else" in inspect.getsource(oot_patches.apply), \
+    assert "patch_heap_retry(out) if protect_hearts else" in inspect.getsource(oot_patches.patch_file), \
         "the edits are made on builds other than the supported one"
     print("PASS: nx2/oot_patches.py: the four places edited once (f_80522050's other callers left), a second run changes "
           "nothing, other text is left alone, the supported build only")
