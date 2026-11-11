@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import types
 import unittest
 from unittest import mock
@@ -61,7 +62,7 @@ def handlers(answer, run_worker=False):
                                 fetched=True, update_folder="prior", out=Value("authored-game"),
                                 switching=lambda: False, launch_folder="", build_button=Widget(),
                                 status=Value(), launch_status=Value(), launch_update=Widget(), px=lambda n: n,
-                                dlss=Value(True), dlss_toggled=False,
+                                dlss=Value(True), dlss_toggled=False, stop_update=threading.Event(),
                                 show_progress=lambda _: events.append("progress"))
     app.lines = types.SimpleNamespace(put=lambda row: events.append(row))
     for name in names:

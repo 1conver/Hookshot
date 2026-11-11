@@ -416,6 +416,7 @@ class Builder(tk.Tk):
         move_old_ngx_sdk()   # (before the settings are read: it may record the license in them)
         self.cfg = load_config()
         self.proc = None
+        self.stop_update = threading.Event()   # (Cancel while an update downloads: its thread ends the download)
         self.lines = queue.Queue()
         self.started = 0.0
         self.launch_folder = launch
@@ -1069,6 +1070,8 @@ class Builder(tk.Tk):
         # (a game older than this builder is built again with it: nothing to download, and GitHub need not answer. So is one
         # from a builder that is not an older release, e.g. from the Actions tab: issue 902)
         fetched = self.fetched or bool(folder and self.tools and target == self.tools)
+        stop = self.stop_update
+        stop.clear()
 
         def run():
             try:
@@ -1081,7 +1084,8 @@ class Builder(tk.Tk):
                         raise RuntimeError("These tools are a source checkout, so they cannot download a release. Start the AppImage to update.")
                     # (another track's build, or a Track switch: that version's own list)
                     named = target if target and (self.switching() or linux_update.track_of(target) != "release") else None
-                    manifest = linux_update.startup_manifest(root, tag=named)
+                    manifest = linux_update.startup_manifest(root, get=lambda url: linux_update.fetch_bytes(url, 30, stop),
+                                                             tag=named)
                     # The API and its download list can disagree right after a release. Check even when the list
                     # names the running tools: otherwise a newer target silently rebuilds with those older tools.
                     if target and manifest.tag != target:
@@ -1089,7 +1093,8 @@ class Builder(tk.Tk):
                                            "Try Update again in a few minutes." % (manifest.tag, target))
                     if manifest.tag != linux_update.tools_tag(root):
                         source =linux_update.read_manifest(root)
-                        apprun = linux_update.install(manifest, root, source, note=lambda message: self.lines.put(("note", message)))
+                        apprun = linux_update.install(manifest, root, source, note=lambda message: self.lines.put(("note", message)),
+                                                      stop=stop)
                         for name in ("APPDIR", "APPIMAGE", "ARGV0", "OWD", "LD_LIBRARY_PATH"):
                             os.environ.pop(name, None)
                         args = [apprun]
@@ -1098,6 +1103,8 @@ class Builder(tk.Tk):
                             if downgrade_from:
                                 args += ["--allow-downgrade-from", downgrade_from]
                         os.execv(apprun, args)
+                if stop.is_set():
+                    raise linux_update.Cancelled()
                 self.lines.put(("do-build", folder or ""))
             except Exception as error:
                 self.lines.put(("update-error", str(error)))
@@ -1254,10 +1261,13 @@ class Builder(tk.Tk):
                     self.latest = v or None
                     self.apply_mode()
                 elif kind == "note":
-                    if hasattr(self, "stage_text"):
+                    if hasattr(self, "stage_text") and not self.stop_update.is_set():
                         self.stage_text.set(v)
                 elif kind == "do-build":
-                    self.start_make_update(v)
+                    if self.stop_update.is_set():   # (Cancel after the thread's last look at it: no make_game.py)
+                        self.lines.put(("update-error", str(linux_update.Cancelled())))
+                    else:
+                        self.start_make_update(v)
                 elif kind == "update-error":
                     if hasattr(self, "stage_text"):
                         self.stage_text.set(v + " Your game folder is unchanged.")
@@ -1370,6 +1380,9 @@ class Builder(tk.Tk):
         if self.proc and self.proc.poll() is None:
             os.killpg(self.proc.pid, signal.SIGTERM)
             self.error = "Build cancelled. You can start again from the same folder."
+        elif self.proc is None:   # (an update still downloading: there is no make_game.py yet, its thread ends the download)
+            self.stop_update.set()
+            self.stage_text.set("Stopping the update")
 
     def play_and_close(self, folder):
         play(folder)
