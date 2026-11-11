@@ -1209,6 +1209,12 @@ void EmitContext::DefineGlobalMemoryFunctions(const Info& info) {
     const auto define_body{[&](DefPtr ssbo_member, Id addr, Id element_pointer, u32 shift,
                                auto&& callback, bool add_label = true) {
         if (add_label) AddLabel();
+        // (hookshot, global_table_loop: the tables' entries in a loop, its counter here, where the function's variables must be.
+        // The CAS loops' callers open the block themselves: theirs stay written out)
+        const Id table_counter{global_table_loop && add_label && !ssbo_tables.empty()
+                                   ? AddLocalVariable(TypePointer(spv::StorageClass::Function, U32[1]), spv::StorageClass::Function)
+                                   : Id{}};
+        if (Sirit::ValidId(table_counter)) AddCapability(spv::Capability::StorageBufferArrayDynamicIndexing);   // (the tables by k)
         const size_t num_buffers{info.storage_buffers_descriptors.size()};
         // (from Fritchii) Info::native_global_bounds: the candidate pointers the storage buffer pass bound for accesses it
         // left global (any single descriptor not in the driver bank) carry no NVN size word: the address goes to the
@@ -1304,6 +1310,58 @@ void EmitContext::DefineGlobalMemoryFunctions(const Info& info) {
         for (const GlobalTableVars& table : ssbo_tables) {   // (hookshot: Info::global_tables)
             const Id table_id{table.vars.*ssbo_member};
             if (!Sirit::ValidId(table_id) || !Sirit::ValidId(cbufs[table.cbuf_index].U32x2)) {
+                continue;
+            }
+            if (Sirit::ValidId(table_counter)) {
+                // (mma_layout.h global_table_loop) the same test as the written-out one below, entry k of the loop's counter, the
+                // driver asked not to unroll it. k is the same in every invocation that runs it: dynamic indexing, not non-uniform.
+                // The written-out form below is left as it was: other GPUs' SPIR-V, and their drivers' caches of it, do not change
+                const Id header{OpLabel()};
+                const Id check{OpLabel()};
+                const Id body{OpLabel()};
+                const Id next{OpLabel()};
+                const Id done{OpLabel()};
+                OpStore(table_counter, zero);
+                OpBranch(header);
+                AddLabel(header);
+                OpLoopMerge(done, next, spv::LoopControlMask::DontUnroll);
+                OpBranch(check);
+                AddLabel(check);
+                const Id k{OpLoad(U32[1], table_counter)};
+                OpBranchConditional(OpULessThan(U1, k, Const(table.count)), body, done);
+                AddLabel(body);
+                // (entry k at cbuf_offset + 16k: its address in the U32x2 word cbuf_offset / 8 + 2k, its size in the next)
+                const Id word{OpIAdd(U32[1], Const(table.cbuf_offset / 8), OpShiftLeftLogical(U32[1], k, Const(1U)))};
+                const Id entry_pointer{OpAccessChain(uniform_types.U32x2, cbufs[table.cbuf_index].U32x2, zero, word)};
+                const Id size_pointer{OpAccessChain(uniform_types.U32x2, cbufs[table.cbuf_index].U32x2, zero,
+                                                    OpIAdd(U32[1], word, Const(1U)))};
+                const u64 ssbo_align_mask{~(profile.min_ssbo_alignment - 1U)};
+                const Id unaligned_addr{OpBitcast(U64, OpLoad(U32[2], entry_pointer))};
+                const Id ssbo_addr{OpBitwiseAnd(U64, unaligned_addr, Constant(U64, ssbo_align_mask))};
+                const Id size_word{OpCompositeExtract(U32[1], OpLoad(U32[2], size_pointer), 0U)};
+                Id ssbo_end{OpIAdd(U64, unaligned_addr, OpUConvert(U64, size_word))};
+                if (const Id struct_pointer{struct_pointer_of(ssbo_member)}; Sirit::ValidId(struct_pointer)) {
+                    const Id elements{OpArrayLength(U32[1], OpAccessChain(struct_pointer, table_id, k), 0U)};
+                    const Id bound_end{
+                        OpIAdd(U64, ssbo_addr, OpUConvert(U64, OpShiftLeftLogical(U32[1], elements, Const(shift))))};
+                    const Id capped{OpSelect(U64, OpULessThan(U1, bound_end, ssbo_end), bound_end, ssbo_end)};
+                    ssbo_end = OpSelect(U64, OpIEqual(U1, size_word, zero), bound_end, capped);
+                }
+                const Id cond{OpLogicalAnd(U1, OpUGreaterThanEqual(U1, addr, ssbo_addr), OpULessThan(U1, addr, ssbo_end))};
+                const Id then_label{OpLabel()};
+                const Id else_label{OpLabel()};
+                OpSelectionMerge(else_label, spv::SelectionControlMask::MaskNone);
+                OpBranchConditional(cond, then_label, else_label);
+                AddLabel(then_label);
+                const Id ssbo_offset{OpUConvert(U32[1], OpISub(U64, addr, ssbo_addr))};
+                const Id ssbo_index{OpShiftRightLogical(U32[1], ssbo_offset, Const(shift))};
+                callback(OpAccessChain(element_pointer, table_id, k, zero, ssbo_index));   // (ends in a return)
+                AddLabel(else_label);
+                OpBranch(next);
+                AddLabel(next);
+                OpStore(table_counter, OpIAdd(U32[1], k, Const(1U)));
+                OpBranch(header);
+                AddLabel(done);
                 continue;
             }
             for (u32 k = 0; k < table.count; ++k) {

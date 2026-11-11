@@ -25,5 +25,11 @@ inline bool frag_nan_guard = false;
 // the colour pass is then rejected in spots: holes showing the bright sky, blown up by bloom (the glowing flowers).
 // On for every card but NVIDIA (vk_coopmat.cpp); RX_VK_NO_INVARIANT=1 off. From NX2navi patch 0007.
 inline bool position_invariant = false;
+// (hookshot) a storage buffer table's entries searched in a loop the driver is asked not to unroll (DefineGlobalMemoryFunctions),
+// not one test an entry written out sixteen times. Mesa inlines every function, DontInline or not: OoT's foliage culling
+// (53caac5f) has 46 global accesses, each with its ~70 table entries written out, over 100k instructions that Intel's
+// compiler did not finish in minutes, and every compute pipeline queued behind it on Intel's one build thread waited:
+// mesh-drawn rocks and doors white, the forest grey. In a loop: 12 s. On for Intel's Mesa driver (vk_coopmat.cpp); RX_VK_GM_LOOP=0 or 1
+inline bool global_table_loop = false;
 
 } // namespace Shader::Backend::SPIRV
