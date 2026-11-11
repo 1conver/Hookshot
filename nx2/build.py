@@ -585,7 +585,7 @@ WRITE_TRACK = [] if os.environ.get("RX_SOFT_WRITE_WATCH") == "0" else ["-DA64_WR
 # written (the exact bodies and FPX1's proofs assume it). RX_MARCH=x86-64: the old baseline
 # (issue 363: a Xeon E5-2667 v2 (Ivy Bridge, no AVX2) built the game and then stopped at its first AVX2 instruction,
 # 0xc000001d. The game is built on the PC it runs on: a CPU without x86-64-v3's features gets x86-64-v2, or x86-64)
-from host_cpu import host_march   # (make_game.py asks it too: the AppImage's renderer)
+from host_cpu import host_march, host_mtune   # (make_game.py asks it too: the AppImage's renderer)
 
 MARCH = os.environ.get("RX_MARCH") or host_march()
 if os.environ.get("RX_MARCH"):
@@ -594,6 +594,9 @@ if os.environ.get("RX_MARCH"):
 elif MARCH != "x86-64-v3":
     print("build: this CPU has no AVX2: the game is built for %s (a little slower)" % MARCH, flush=True)
 CPU = ["-march=" + MARCH, "-ffp-contract=off"]
+MTUNE = os.environ.get("RX_MTUNE") or host_mtune()
+if MTUNE:
+    CPU += ["-mtune=" + MTUNE]
 OPT = "O1"   # (the lifted code's level; code_hot.c's is RX_HOT_OPT)
 
 

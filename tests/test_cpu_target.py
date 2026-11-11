@@ -56,6 +56,21 @@ class HostMarch(unittest.TestCase):
     def test_unreadable_cpu_keeps_v3(self):
         self.assertEqual(march_on_linux("processor\t: 0\n"), "x86-64-v3")
 
+    def test_steamdeck_mtune(self):
+        real_open = builtins.open
+
+        def fake_deck(path, *args, **kwargs):
+            if path == "/proc/cpuinfo":
+                return io.StringIO("model name\t: AMD Custom APU 0405\nflags\t\t: fpu\n")
+            return real_open(path, *args, **kwargs)
+
+        with mock.patch.object(host_cpu.os, "name", "posix"), mock.patch.object(builtins, "open", fake_deck), \
+                mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(host_cpu.host_mtune(), "znver2")
+
+        with mock.patch.dict(os.environ, {"RX_STEAMDECK": "1"}, clear=True):
+            self.assertEqual(host_cpu.host_mtune(), "znver2")
+
     def test_windows(self):
         class K32:
             def __init__(self, present):
