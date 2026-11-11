@@ -395,13 +395,49 @@ def long_path(p):
     return "\\\\?\\" + p
 
 
-def extraction_path(out, part, rel, temporary_suffix=".part"):
-    """A package path stays under its part, without following existing output links."""
+def package_parts(rel):
     parts = rel.split("/")
     if (not rel or "\\" in rel or any(not p or p in (".", "..") or p[-1] in " ." or
             any(c in '<>:"|?*' or ord(c) < 32 for c in p) or p.split(".")[0].rstrip(" ").upper() in WINDOWS_DEVICES
             for p in parts)):
         raise SystemExit("unsafe path in the package: %r" % rel)
+    return parts
+
+
+def is_link(info):
+    return stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+
+
+class Destination:
+    """extraction_path over a whole extraction: the output resolved once, each folder checked or made once"""
+    def __init__(self, out):
+        self.root = long_path(os.path.realpath(os.path.abspath(out)))
+        self.folders = set()
+
+    def folder(self, path):
+        if path not in self.folders:
+            try:
+                info = os.lstat(path)
+            except FileNotFoundError:
+                os.makedirs(path, exist_ok=True)
+            else:
+                if is_link(info):
+                    raise SystemExit("extraction path is a link or reparse point: %s" % path)
+            self.folders.add(path)
+
+    def path(self, part, rel):
+        parts = package_parts(rel)
+        at = self.root
+        self.folder(at)
+        for name in (part, *parts[:-1]):
+            at = os.path.join(at, name)
+            self.folder(at)
+        return os.path.join(at, parts[-1])
+
+
+def extraction_path(out, part, rel, temporary_suffix=".part"):
+    """A package path stays under its part, without following existing output links."""
+    parts = package_parts(rel)
     root = long_path(os.path.realpath(os.path.abspath(out)))
     base = os.path.join(root, part)
     dst = os.path.join(base, *parts)
@@ -419,7 +455,7 @@ def extraction_path(out, part, rel, temporary_suffix=".part"):
             info = os.lstat(path)
         except FileNotFoundError:
             continue
-        if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0):
+        if is_link(info):
             raise SystemExit("extraction path is a link or reparse point: %s" % path)
         if path == temporary and info.st_nlink > 1:
             raise SystemExit("extraction temporary file has other hard links: %s" % path)
@@ -507,15 +543,24 @@ def extract(nup, t, out, only=None, quiet=False):
             print("  %.1f MiB written (%d files completed)" % (written / (1 << 20), n), flush=True)
             next_report = now + interval
 
+    where = Destination(out)
+    stale = True
     for part in ("exefs", "romfs"):
         if only and part != only:
             continue
         damaged = [] if part == "romfs" else None
         for rel, r in nup.walk(t[part]):
-            dst = extraction_path(out, part, rel)
+            dst = where.path(part, rel)
             checked = damaged is not None and rel.endswith(".zs")
             expected = digests.get(id(r)) if checked else None
-            if os.path.exists(dst) and os.path.getsize(dst) == r[2]:
+            try:
+                info = os.lstat(dst)
+            except FileNotFoundError:
+                info = None
+            if info is not None and is_link(info):
+                raise SystemExit("extraction path is a link or reparse point: %s" % dst)
+            # (an interrupted member is shorter than its size: written again)
+            if info is not None and stat.S_ISREG(info.st_mode) and info.st_size == r[2]:
                 if checked:
                     with open(dst, "rb") as f:
                         prefix = f.read(4)
@@ -528,21 +573,26 @@ def extract(nup, t, out, only=None, quiet=False):
                             if digest.digest() != expected:
                                 damaged.append(rel)
                 continue
-            os.makedirs(os.path.dirname(dst), exist_ok=True)
-            temporary = dst + ".part"
-            g = open(temporary, "wb")
+            # Written in place: a temporary and a rename per member took most of an extraction's time on Windows.
+            # A stale file is unlinked, not truncated, so another hard link to it keeps its data.
+            if info is not None:
+                os.unlink(dst)
+            if stale:   # (an interrupted builder that wrote through a temporary left it beside the first member still to write)
+                stale = False
+                with suppress(OSError):
+                    os.unlink(dst + ".part")
+            g = open(os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)), "wb")
             try:
                 with g:
                     sink = HeadSink(g, expected) if checked else g
                     nup.copy_to(r, sink if quiet else ProgressSink(sink, progress), rel)
-                os.replace(temporary, dst)
                 if checked and sink.damaged():
                     damaged.append(rel)
             except BaseException as error:
                 full = out_of_space(error, dst, part, rel, r[2])   # (measured before the member's space is freed)
                 # Free the failed member's space without hiding the extraction error.
                 with suppress(OSError):
-                    os.unlink(temporary)
+                    os.unlink(dst)
                 if full:
                     raise full from error
                 raise
