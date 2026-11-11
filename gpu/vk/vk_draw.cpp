@@ -6098,10 +6098,13 @@ static void skin_check(const NvnState& s, const Program& p, const DrawArgs& d, c
 /// grass blades and leaf edges those neighbours flip between the blade and the ground behind it with the camera's sub-pixel
 /// shift, so pixels flip between lit and shadowed every frame: fast thin streaks over sunlit ground (the console's TAAU
 /// averages them away). The mask is evened out over frames right after that draw (shaders/shadow_stab.comp).
-/// RX_VK_MASK_BLEND=<weight> (default 0.85, 0: off), RX_VK_MASK_RADIUS=<r> (the history's bound, a (2r+1)^2 neighbourhood;
-/// default 0: unbounded. A 3x3 bound kept nothing: the streaks move as blocks wider than that)
+/// RX_VK_MASK_BLEND=<weight> (0.85 was the default; 0: off), RX_VK_MASK_RADIUS=<r> (the history's bound, a (2r+1)^2
+/// neighbourhood; default 0: unbounded. A 3x3 bound kept nothing: the streaks move as blocks wider than that).
+/// OFF BY DEFAULT since 2026-11-11: with it on, the GPU hung on the mesh draw before this pass (b0b3b40244c71ec7) near Hyrule
+/// Castle, device lost after ~8 minutes on the owner's save, twice, and in 2 of the night's route runs. The same build with
+/// RX_VK_MASK_BLEND=0 ran 14 minutes there clean, as v2.1.0 (before this pass) did. Opt-in until the hang is found
 float mask_weight() {
-    static const float w = std::clamp(getenv("RX_VK_MASK_BLEND") ? (float)atof(getenv("RX_VK_MASK_BLEND")) : 0.85f, 0.0f, 0.95f);
+    static const float w = std::clamp(getenv("RX_VK_MASK_BLEND") ? (float)atof(getenv("RX_VK_MASK_BLEND")) : 0.0f, 0.0f, 0.95f);
     return w;
 }
 int mask_radius_env() {
