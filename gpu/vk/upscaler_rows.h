@@ -40,10 +40,14 @@ inline int percent(int v) { return v > 0 && v < kValues ? kPercent[v] : 0; }
 /// full size)
 /// Off: the game's and 33% (no network to have one for each share: any size is stretched the same way), Auto too (the game's
 /// dynamic size, stretched as it comes)
+/// FSR 3.1 (no Native of its own, so not on step_render's slider): Auto, 100 % (FSR 3.1's native AA: it takes any size up to the
+/// output), then the slider's stops, 92 % down to 33 % (players asked for sharper than Quality without going to full size)
 constexpr int kGameSteps[] = {0, 1, 2, 3, 4};
 constexpr int kDlssSteps[] = {0, 3, 5, 4, 6};
+constexpr int kFsr3Steps[] = {0, 1, 9, 8, 2, 3, 5, 4, 6};
 constexpr int kOffSteps[] = {0, 1, 2, 3, 4, 6};
 inline const int* steps(int upscaler, int& n) {
+    if (upscaler == FSR3) return n = sizeof kFsr3Steps / sizeof kFsr3Steps[0], kFsr3Steps;
     if (scales_by_mode(upscaler)) return n = sizeof kDlssSteps / sizeof kDlssSteps[0], kDlssSteps;
     if (upscaler == OFF) return n = sizeof kOffSteps / sizeof kOffSteps[0], kOffSteps;
     return n = sizeof kGameSteps / sizeof kGameSteps[0], kGameSteps;

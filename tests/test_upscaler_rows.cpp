@@ -77,8 +77,12 @@ int main() {
                                                           ur::upscaler_shown(ur::bit(GAME) | ur::fsr4_bits(true)));
         CHECK("FSR 3.1's modes are DLSS's shares", ur::scales_by_mode(ur::FSR3) && ur::scales_by_mode(DLSS) &&
                                                      !ur::scales_by_mode(DLAA) && !ur::scales_by_mode(GAME));
-        CHECK("FSR 3.1 steps as DLSS does", ur::step(ur::FSR3, 0, 1) == 3 && ur::step(ur::FSR3, 3, 1) == 5 &&
-                                              ur::step(ur::FSR3, 6, 1) == 0 && ur::snap(ur::FSR3, 2) == 3);
+        // (FSR 3.1: Auto, 100 % (its native AA), 92 % to 75 %, then AMD's modes)
+        CHECK("FSR 3.1 steps: above Quality too", ur::step(ur::FSR3, 0, 1) == 1 && ur::step(ur::FSR3, 1, 1) == 9 &&
+                                                    ur::step(ur::FSR3, 9, 1) == 8 && ur::step(ur::FSR3, 8, 1) == 2 &&
+                                                    ur::step(ur::FSR3, 2, 1) == 3 && ur::step(ur::FSR3, 3, 1) == 5 &&
+                                                    ur::step(ur::FSR3, 6, 1) == 0 && ur::step(ur::FSR3, 0, -1) == 6 &&
+                                                    ur::snap(ur::FSR3, 2) == 2 && ur::snap(ur::FSR3, 7) == 4);
         CHECK("the model row waits with FSR 3.1", ur::model_fixed(ur::FSR3, false) && !ur::model_fixed(DLSS, false) &&
                                                     !ur::model_fixed(DLAA, false));
         CHECK("FSR 3.1 has a Render resolution", !ur::resolution_fixed(ur::FSR3));
@@ -229,7 +233,7 @@ int main() {
         CHECK("snap_render: engines without a Native as snap", ur::snap_render(GAME, 5) == ur::snap(GAME, 5) &&
                                                                    ur::snap_render(ur::FSR3, 2) == ur::snap(ur::FSR3, 2));
         ur::step_render(FSR3, 0, 1, &up, &res);
-        CHECK("render: FSR 3.1 has no Native", up == FSR3 && res == 3);
+        CHECK("render: FSR 3.1 has no Native: its 100 % is its native AA", up == FSR3 && res == 1);
         ur::step_render(GAME, 0, 1, &up, &res);
         CHECK("render: the game's own as before", up == GAME && res == 1);
         CHECK("render row never fixed", !ur::render_fixed(DLAA) && !ur::render_fixed(FSR4_AA) && !ur::render_fixed(DLSS) &&
