@@ -233,8 +233,8 @@ def python_check(rel, decl, tools, timeout):
 
 def cpp_checks(tools, timeout):
     """gpu/vk/tests: the presentation rectangle (all of it), the lowering harness built and run over no programs
-    (the programs it reads are dumped from the game, so here it only shows the lowering still compiles), and the
-    lowering's register-marker regression"""
+    (the programs it reads are dumped from the game, so here it only shows the lowering still compiles), the
+    lowering's register-marker regression and LDSM's address copy"""
     cxx = tools["cxx"]
     out = []
 
@@ -256,6 +256,8 @@ def cpp_checks(tools, timeout):
     out.append((lower, build_and_run(lower, ["-O1", "-Wno-everything", "-I" + eden, "-I" + compat], ["{tmp}"])))
     regmap = "gpu/vk/tests/regmap_marker_test.cpp"   # (the lowering's renamed-register markers: no number mapped twice)
     out.append((regmap, build_and_run(regmap, ["-O1", "-Wno-everything", "-I" + eden, "-I" + compat], [])))
+    ldsm = "gpu/vk/tests/ldsm_address_test.cpp"   # (LDSM's row addresses kept apart from its shuffles' registers)
+    out.append((ldsm, build_and_run(ldsm, ["-O1", "-Wno-everything", "-I" + eden, "-I" + compat], [])))
     return out, ([] if cxx else ["a C++ compiler"])
 
 
