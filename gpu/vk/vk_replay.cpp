@@ -186,8 +186,10 @@ bool batch_on() {
         p2.pNext = &dp;
         if (dev.physical) vkGetPhysicalDeviceProperties2(dev.physical, &p2), radv = dp.driverID == VK_DRIVER_ID_MESA_RADV;
         const char* e = getenv("RX_VK_BATCH");
-        const bool v = e ? atoi(e) != 0 : radv;
-        logf("vk: batched submits %s (RX_VK_BATCH%s)", v ? "on" : "off", !e && radv ? ", on with RADV" : "");
+        // (k10) not on GCN (no stage pinned to 32 lanes, 64-lane waves): an RX 580 ran Kokiri Forest at 24 fps without and 20 with
+        const bool gcn = dev.sg32_stages == 0 && dev.subgroup_size > 32;
+        const bool v = e ? atoi(e) != 0 : radv && !gcn;
+        logf("vk: batched submits %s (RX_VK_BATCH%s)", v ? "on" : "off", !e && radv ? gcn ? ", off on GCN" : ", on with RADV" : "");
         return v;
     }();
     return on && batch_tl != VK_NULL_HANDLE;

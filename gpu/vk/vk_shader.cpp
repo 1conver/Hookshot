@@ -578,7 +578,9 @@ Shader::HostTranslateInfo host_info() {
     h.support_float64 = true;
     // (RX_VK_NO_F16, a test: the game's f16 math lowered to f32, as a card without f16 shaders would need (GTX 10xx, issue 98). Eden's
     // lowering made a picture of noise of Kokiri on an RTX card, so it is not used by itself)
-    h.support_float16 = !env_on("RX_VK_NO_F16");
+    // (k10) and only where the GPU runs f16 shaders: RADV gives Polaris (RX 400/500) none (shaderFloat16 false), and f16 SPIR-V
+    // there drew Kokiri Forest as coloured noise on an RX 580. Eden's lowering to f32 is what Pascal takes as well
+    h.support_float16 = !env_on("RX_VK_NO_F16") && dev.vk12.shaderFloat16;
     h.support_int64 = true;
     h.needs_demote_reorder = false;
     h.support_snorm_render_buffer = true;
@@ -1125,6 +1127,11 @@ uint64_t translator_stamp() {
                               profile().has_broken_spirv_fragment_shuffle ? 1u : 0u, (uint32_t)dev.sg32_stages,
                               getenv("RX_VK_WARP64") ? 1u : 0u};
     add(lanes, sizeof lanes);
+    // (k10) f16 lowered to f32 on a GPU without f16 shaders (host_info): only then, so other GPUs keep their caches
+    if (!dev.vk12.shaderFloat16) {
+        const uint32_t no_f16 = 0x6e663136u;   // ("nf16")
+        add(&no_f16, sizeof no_f16);
+    }
     // (the records keep Shader::Info as it lies in memory: a cache written by another C++ library (the MSVC build's, then the
     // llvm-mingw one's libc++) has other layouts, and reading it crashed at start. The library and the sizes, so it starts again)
     const uint32_t abi[] = {(uint32_t)sizeof(Shader::Info), (uint32_t)sizeof(Program), (uint32_t)sizeof(std::vector<uint32_t>),
@@ -1228,7 +1235,7 @@ void translate_into(Program& p, const NvnState& s, const Code* vsc, const Code* 
                     kept_one = !k.empty() && !strncmp(hex, k.c_str(), k.size());
                     at = e == std::string::npos ? keep.size() : e + 1;
                 }
-                if ((!kept_one && (Shader::Backend::SPIRV::mma_software || dev.props.vendorID != 0x10DE)) || env_on("RX_VK_NO_F16"))
+                if ((!kept_one && (Shader::Backend::SPIRV::mma_software || dev.props.vendorID != 0x10DE)) || env_on("RX_VK_NO_F16") || !dev.vk12.shaderFloat16)
                     throw std::runtime_error("a network left out on this card");
             }
             const std::vector<uint32_t> spirv = Shader::Backend::SPIRV::EmitSPIRV(profile_pinned(), rt, t->program, bindings);

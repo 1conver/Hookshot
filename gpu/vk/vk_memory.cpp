@@ -2096,8 +2096,11 @@ bool mirror_on() {
     static const int on = [] {
         const char* e = getenv("RX_VK_MIRROR");
         const bool discrete = dev.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
-        const int v = e ? atoi(e) != 0 : discrete;
-        logf("vk: VRAM mirror of buffer pools %s", v ? "on" : "off");
+        // (k10) off by default on GCN (no stage pinned to 32 lanes, 64-lane waves: RX 400/500, Vega): an RX 580 ran Kokiri Forest
+        // at 20 fps with them and 24.5 without, and an RX 590 (#1001) played with them off
+        const bool gcn = dev.sg32_stages == 0 && dev.subgroup_size > 32;
+        const int v = e ? atoi(e) != 0 : discrete && !gcn;
+        logf("vk: VRAM mirror of buffer pools %s%s", v ? "on" : "off", !e && discrete && gcn ? " (GCN)" : "");
         return v;
     }();
     return on != 0;
