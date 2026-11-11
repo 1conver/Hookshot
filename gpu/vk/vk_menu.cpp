@@ -1352,7 +1352,8 @@ void save() {
             const char* eq = strchr(line, '=');
             if (!eq || eq == line) continue;
             const std::string key(line, (size_t)(eq - line));
-            bool mine = key == "microphone_device" || key == "options_version";
+            // (memory_budget too: save() writes it, and the file's old line, kept after it, won at the next start)
+            bool mine = key == "microphone_device" || key == "options_version" || key == "memory_budget";
             for (const Row& r : rows)
                 if (!mine && r.value && key == ini_key(r)) mine = true;
             if (!mine) others += line, others += others.back() == '\n' ? "" : "\n";
